@@ -15,6 +15,20 @@ const MODULES = 'node_modules/'
 const LICENCE_FILE = /^(licen[cs]e|copying)(\.|-|$)/i
 const RULE = '='.repeat(80)
 
+/** For a package that ships no licence file. Each entry says where its text comes from. */
+export const LICENCE_OVERRIDES: Record<string, string> = {
+  // Its package.json says `"license": "MIT"` and names the author. It ships no licence file, so this is the MIT text.
+  'lazy-val': `MIT License
+
+Copyright (c) Vladimir Krivosheev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`,
+}
+
 const readManifest = (root: string) => JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Manifest
 
 /** The package folder of each input under node_modules. Only `inputs` are in the bundle. */

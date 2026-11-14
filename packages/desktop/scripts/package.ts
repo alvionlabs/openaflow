@@ -8,26 +8,12 @@ import { fileURLToPath } from 'node:url'
 import { Arch, build, Platform } from 'electron-builder'
 import { builderOptions, parsePackageArgs } from '../src/build-config.ts'
 import { bundleDesktop } from '../src/bundle-desktop.ts'
-import { packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
+import { LICENCE_OVERRIDES, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 const root = join(pkg, '..', '..')
 const server = join(pkg, '..', 'server')
 const web = join(pkg, '..', 'web')
-
-/** For a package that ships no licence file. Each entry says where its text comes from. */
-const LICENCE_OVERRIDES: Record<string, string> = {
-  // Its package.json says `"license": "MIT"` and names the author. It ships no licence file, so this is the MIT text.
-  'lazy-val': `MIT License
-
-Copyright (c) Vladimir Krivosheev
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`,
-}
 
 const readMeta = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as BundleMeta
 
