@@ -266,7 +266,8 @@ describe('confirm modal details look', () => {
     expect(block, `.modal-details margin-block`).not.toBeNull()
     expect(panelGap + px(block![1], 'details margin-top'), 'detail to Details').toBe(16)
     expect(panelGap + px(block![2] ?? block![1], 'details margin-bottom'), 'Details to the next group').toBe(16)
-    expect(px(declsOf(css, '.modal-details dl')['margin-top'], 'summary to list')).toBe(8)
+    // The whole margin, so the browser's 1em under a <dl> can't add to the space below the list.
+    expect(declsOf(css, '.modal-details dl')['margin'], 'summary to list, nothing below').toBe('8px 0 0')
     const actionsTop = px(declsOf(css, '.confirm-modal .modal-actions')['margin-top'], 'confirm actions margin-top')
     // The status line leaves the grid while empty, so the last group above the actions is the details, a note, or the alert.
     expect(panelGap + actionsTop, 'last group to the actions').toBeGreaterThanOrEqual(24)
