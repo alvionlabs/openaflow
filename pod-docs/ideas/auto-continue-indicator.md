@@ -1,6 +1,6 @@
 # Idea: Show that a run is on Auto-continue
 
-Status: planned — pod-docs/plans/ui-rework.md
+Status: built — PR #108 (plan ui-rework)
 
 ## The idea
 
