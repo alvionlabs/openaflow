@@ -153,7 +153,7 @@ export function confirmView(s: RemoveState): ModalView | undefined {
   const v: ModalView = {
     heading: `Remove ${s.target.name}?`,
     detail: DETAIL,
-    mono: [s.target.path],
+    details: [{ label: 'Folder', value: s.target.path }],
     confirmLabel: 'Remove',
     busy: s.kind === 'removing',
     returnFocusTo: s.target.returnTo,

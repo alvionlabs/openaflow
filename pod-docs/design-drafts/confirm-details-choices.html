@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forget and Remove repo: how the details show</title>
+<style>
+  @font-face { font-family:"Geist"; src:url("../../packages/web/public/fonts/geist-400.woff2") format("woff2"); font-weight:400; }
+  @font-face { font-family:"Geist"; src:url("../../packages/web/public/fonts/geist-500.woff2") format("woff2"); font-weight:500; }
+  @font-face { font-family:"Geist"; src:url("../../packages/web/public/fonts/geist-600.woff2") format("woff2"); font-weight:600; }
+  @font-face { font-family:"Geist Mono"; src:url("../../packages/web/public/fonts/geist-mono-400.woff2") format("woff2"); font-weight:400; }
+  :root { color-scheme: light dark; --pg-bg: light-dark(#fff, #111); --pg-fg: light-dark(#171717, #ededed); --pg-muted: light-dark(#666, #a1a1a1); --pg-line: light-dark(#eaeaea, #2a2a2a); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--pg-bg); color: var(--pg-fg); font: 16px/24px "Geist", system-ui, sans-serif; }
+  main { max-width: 1320px; margin-inline: auto; padding: 40px 24px 80px; display: grid; gap: 40px; }
+  h1 { margin: 0 0 8px; font-size: 32px; line-height: 40px; }
+  .lead { margin: 0; color: var(--pg-muted); max-width: 84ch; }
+  .cols { display: flex; flex-wrap: wrap; gap: 24px; align-items: start; }
+  .col { display: grid; gap: 8px; width: 400px; }
+  .col h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .col .cap { margin: 0; font-size: 14px; color: var(--pg-muted); min-height: 48px; }
+  .tagx { font: 500 12px/18px "Geist", sans-serif; padding: 0 8px; border-radius: 999px; border: 1px solid var(--pg-line); color: var(--pg-muted); }
+  .tagx.rec { border-color: #3ecf72; color: #3ecf72; }
+  .why, .note { margin: 0; font-size: 14px; color: var(--pg-muted); max-width: 90ch; }
+  .reply { font: 500 18px "Geist", sans-serif; padding: 16px 20px; border: 1px solid var(--pg-line); border-radius: 12px; }
+
+  .app { --bg:#000; --surface:#0a0a0a; --hover:#1a1a1a; --border:#262626; --border-strong:#3a3a3a; --fg:#ededed; --muted:#a1a1a1; --danger:#ff5f5f; --danger-fg:#0a0a0a;
+    background: color-mix(in srgb, #000 60%, #1a1a1a); padding: 16px; border-radius: 12px; color: var(--fg); }
+  .panel { display: grid; gap: 8px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; }
+  .heading { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+  .detail { margin: 0; font-size: 14px; color: var(--muted); }
+  .mono { font: 13px/20px "Geist Mono", monospace; overflow-wrap: anywhere; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .btn { display: inline-flex; align-items: center; height: 40px; padding: 0 20px; font: 500 14px/1 "Geist", sans-serif; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--fg); }
+  .btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn.danger { background: var(--danger); border-color: var(--danger); color: var(--danger-fg); }
+  .dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+  .dl dt { font-size: 13px; color: var(--muted); }
+  .dl dd { margin: 0; font: 13px/20px "Geist Mono", monospace; overflow-wrap: anywhere; }
+  .dl.plain { border: 0; background: transparent; padding: 0; }
+  details { margin-top: 4px; font-size: 14px; color: var(--muted); }
+  summary { cursor: pointer; }
+  .mark { outline: 1px dashed #f5a623; outline-offset: 3px; border-radius: 6px; }
+  .legend { font-size: 13px; color: var(--pg-muted); margin: 0; }
+  .legend i { display: inline-block; width: 14px; height: 10px; outline: 1px dashed #f5a623; margin-right: 6px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Forget and Remove repo: how the details show</h1>
+  <p class="lead">The details (worktree, run, port base) are there so you can undo a Forget by hand: write the claim file back. Today they are three unlabelled mono lines that read like plain text. Remove repo shows its path the same way and changes with it.</p>
+</header>
+<div class="cols">
+  <div class="col"><h3>a. Unlabelled lines <span class="tagx">now</span></h3><p class="cap">"run" and "port base" are mixed into the values. Nothing says what the path is.</p>
+    <div class="app"><div class="panel"><p class="heading">Forget Stale cleanup?</p><p class="detail">The board stops listing this run. Its worktree and branch stay.</p>
+      <div class="mark" style="display:grid;gap:8px"><span class="mono">/home/you/code/ui-polish/.claude/worktrees/task-stale-cleanup</span><span class="mono">run task-stale-cleanup</span><span class="mono">port base 4300</span></div>
+      <div class="actions"><span class="btn quiet">Cancel</span><span class="btn danger">Forget</span></div></div></div></div>
+  <div class="col"><h3>b. Labelled list in a box <span class="tagx rec">recommended</span></h3><p class="cap">A muted label beside each mono value, in a quiet box that sets them apart from the sentence above.</p>
+    <div class="app"><div class="panel"><p class="heading">Forget Stale cleanup?</p><p class="detail">The board stops listing this run. Its worktree and branch stay.</p>
+      <dl class="dl mark"><dt>Run</dt><dd>task-stale-cleanup</dd><dt>Port base</dt><dd>4300</dd><dt>Worktree</dt><dd>/home/you/code/ui-polish/.claude/worktrees/task-stale-cleanup</dd></dl>
+      <div class="actions"><span class="btn quiet">Cancel</span><span class="btn danger">Forget</span></div></div></div></div>
+  <div class="col"><h3>c. Labelled, folded under "Details"</h3><p class="cap">The cleanest modal. The undo facts are one click away, closed by default.</p>
+    <div class="app"><div class="panel"><p class="heading">Forget Stale cleanup?</p><p class="detail">The board stops listing this run. Its worktree and branch stay.</p>
+      <details class="mark" open><summary>Details</summary><dl class="dl plain" style="margin-top:8px"><dt>Run</dt><dd>task-stale-cleanup</dd><dt>Port base</dt><dd>4300</dd><dt>Worktree</dt><dd>/home/you/code/ui-polish/.claude/worktrees/task-stale-cleanup</dd></dl></details>
+      <div class="actions"><span class="btn quiet">Cancel</span><span class="btn danger">Forget</span></div></div></div></div>
+</div>
+<p class="legend"><i></i>Dashed outline: the piece that differs (not part of the design). Option c is drawn open; it starts closed.</p>
+<p class="why">Why b: a label says what each value is, and the box keeps facts apart from the sentence. The facts stay in view, which matters because Forget can't be undone by the app.</p>
+<p class="note">Remove repo follows the same pick, with one row: <b>Folder</b> and its path.</p>
+<p class="reply">Reply: b</p>
+</main>
+</body>
+</html>

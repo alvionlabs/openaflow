@@ -186,12 +186,12 @@ describe('modal view', () => {
     expect(REMOVE_ITEM).toBe('Remove repo')
   })
 
-  it('has the heading, the detail, and the path as a mono line', () => {
+  it('has the heading, the detail, and the path as the Folder detail', () => {
     const v = confirmView({ kind: 'confirm', seq: 1, target: A })!
     expect(v).toEqual({
       heading: 'Remove alpha-repo?',
       detail: 'The board stops watching this folder. No files change.',
-      mono: [A.path],
+      details: [{ label: 'Folder', value: A.path }],
       confirmLabel: 'Remove',
       busy: false,
       returnFocusTo: 'run-menu-trigger',
@@ -219,10 +219,10 @@ describe('modal view', () => {
     expect(v.status).toBe('Removing…')
   })
 
-  it('renders as the shared modal: a dialog named by its heading, the path in mono, Cancel then a danger Remove', () => {
+  it('renders as the shared modal: a dialog named by its heading, the path as the Folder detail, Cancel then a danger Remove', () => {
     const html = renderToStaticMarkup(createElement(ConfirmModal, { ...confirmView({ kind: 'confirm', seq: 1, target: A })!, onConfirm: () => {}, onCancel: () => {} }))
     expect(html).toMatch(/^<dialog[^>]*class="modal confirm-modal"/)
-    expect(html).toContain(`<p class="mono modal-mono">${A.path}</p>`)
+    expect([...html.matchAll(/<dt[^>]*>([^<]*)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map((m) => [m[1], m[2]])).toEqual([['Folder', A.path]])
     expect(html).not.toMatch(/runs? leaves? the sidebar/)
     const buttons = [...html.matchAll(/<button class="([^"]*)"[^>]*>([^<]*)<\/button>/g)].map((m) => [m[2], m[1]])
     expect(buttons).toEqual([

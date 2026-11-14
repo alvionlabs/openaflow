@@ -47,11 +47,15 @@ describe('forget view', () => {
     expect(FORGET_ITEM).toBe('Forget this run')
   })
 
-  it('names the run, says the worktree and branch stay, and shows the worktree path, the run and the port base in mono', () => {
+  it('names the run, says the worktree and branch stay, and lists the run, the port base and the worktree path, labelled', () => {
     expect(forgetView({ kind: 'confirm', seq: 0, target: T })).toEqual({
       heading: 'Forget Fix the scroll?',
       detail: 'The board stops listing this run. Its worktree and branch stay.',
-      mono: ['C:\\code\\web\\.claude\\worktrees\\task-scroll', 'run task-scroll', 'port base 3400'],
+      details: [
+        { label: 'Run', value: 'task-scroll' },
+        { label: 'Port base', value: '3400' },
+        { label: 'Worktree', value: 'C:\\code\\web\\.claude\\worktrees\\task-scroll' },
+      ],
       confirmLabel: 'Forget',
       busy: false,
       returnFocusTo: 'run-menu-trigger',
@@ -76,10 +80,14 @@ describe('forget view', () => {
     expect(worktreePath('/home/me/web', 'alpha', false)).toBe('/home/me/web/.claude/worktrees')
   })
 
-  it('names the run in mono, the name an undo needs, for a one-off run and a plan run', () => {
-    expect(forgetView({ kind: 'confirm', seq: 0, target: T })!.mono).toContain('run task-scroll')
+  it('names the run, the name an undo needs, for a one-off run and a plan run', () => {
+    expect(forgetView({ kind: 'confirm', seq: 0, target: T })!.details).toContainEqual({ label: 'Run', value: 'task-scroll' })
     const plan: ForgetTarget = { repoId: 'rw', run: 'alpha', name: 'Alpha plan', worktree: 'C:\\code\\web\\.claude\\worktrees', portBase: 3500 }
-    expect(forgetView({ kind: 'confirm', seq: 0, target: plan })!.mono).toEqual(['C:\\code\\web\\.claude\\worktrees', 'run alpha', 'port base 3500'])
+    expect(forgetView({ kind: 'confirm', seq: 0, target: plan })!.details).toEqual([
+      { label: 'Run', value: 'alpha' },
+      { label: 'Port base', value: '3500' },
+      { label: 'Worktree', value: 'C:\\code\\web\\.claude\\worktrees' },
+    ])
   })
 
   it('forgetting disables both buttons and says so', () => {
@@ -88,10 +96,14 @@ describe('forget view', () => {
     expect(v.status).toBe('Forgetting…')
   })
 
-  it('renders as the shared modal: Cancel, then a danger Forget, with its mono lines', () => {
+  it('renders as the shared modal: Cancel, then a danger Forget, with its labelled details', () => {
     const html = renderToStaticMarkup(createElement(ConfirmModal, { ...forgetView({ kind: 'confirm', seq: 0, target: T })!, onConfirm: () => {}, onCancel: () => {} }))
     expect(html).toMatch(/^<dialog[^>]*class="modal confirm-modal"/)
-    expect([...html.matchAll(/<p class="mono modal-mono">([^<]*)<\/p>/g)].map((m) => m[1])).toEqual([T.worktree, 'run task-scroll', 'port base 3400'])
+    expect([...html.matchAll(/<dt[^>]*>([^<]*)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ['Run', 'task-scroll'],
+      ['Port base', '3400'],
+      ['Worktree', T.worktree],
+    ])
     expect([...html.matchAll(/<button class="([^"]*)"[^>]*>([^<]*)<\/button>/g)].map((m) => [m[2], m[1]])).toEqual([
       ['Cancel', 'btn quiet'],
       ['Forget', 'btn danger'],

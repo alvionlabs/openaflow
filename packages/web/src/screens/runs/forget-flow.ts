@@ -124,13 +124,17 @@ export const FORGET_ERRORS: ReadonlyMap<string, string> = new Map([
   ['ambiguous repo', 'Two repos share this id, so nothing changed'],
 ])
 
-/** The modal's words and state; undefined while closed. The mono lines are what a hand undo needs. */
+/** The modal's words and state; undefined while closed. The details are what a hand undo needs: the claim file `<port base>` holding `<repo path> <run>`. */
 export function forgetView(s: ForgetState): ModalView | undefined {
   if (s.kind === 'idle') return undefined
   const v: ModalView = {
     heading: `Forget ${s.target.name}?`,
     detail: DETAIL,
-    mono: [s.target.worktree, `run ${s.target.run}`, `port base ${s.target.portBase}`],
+    details: [
+      { label: 'Run', value: s.target.run },
+      { label: 'Port base', value: String(s.target.portBase) },
+      { label: 'Worktree', value: s.target.worktree },
+    ],
     confirmLabel: 'Forget',
     busy: s.kind === 'forgetting',
     returnFocusTo: RETURN_TO,

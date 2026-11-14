@@ -43,4 +43,5 @@ Decided on 2026-11-13 in the Add repo modal ([choices](pod-docs/design-drafts/ad
 - Open a form with its field first. A picker button fills the field; it never submits by itself.
 - Put a picker button, such as **Browse…**, on the same row as its field, at the right. On a narrow screen it may wrap under the field.
 - In a form, a field and its label or error sit 8 px apart. Groups sit 16 px apart. The actions row sits at least 24 px below the last group.
+- Show facts in a dialog as a labelled list (muted label, mono value in `--fg`) under an open Details disclosure, never as unlabelled lines.
 - Keep error text short and warm: a few plain words, no period at the end, and what you can do next ('Something went wrong. Please try again'). Put the exact cause in the console.

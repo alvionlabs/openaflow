@@ -11,7 +11,7 @@ const confirm = (over: Partial<ConfirmModalProps> = {}) =>
     createElement(ConfirmModal, {
       heading: 'Remove chess-web?',
       detail: 'The board stops watching this folder. No files change.',
-      mono: ['E:\\code\\chess-web'],
+      details: [{ label: 'Folder', value: 'E:\\code\\chess-web' }],
       confirmLabel: 'Remove',
       busy: false,
       onConfirm: () => {},
@@ -128,7 +128,13 @@ describe('shared modal', () => {
   })
 
   it('confirm markup and button order', () => {
-    const html = confirm({ mono: ['E:\\code\\chess-web', 'port base 3400'], notes: ['Its 1 run leaves the sidebar.'] })
+    const html = confirm({
+      details: [
+        { label: 'Folder', value: 'E:\\code\\chess-web' },
+        { label: 'Port base', value: '3400' },
+      ],
+      notes: ['Its 1 run leaves the sidebar.'],
+    })
     // A native dialog named by its heading.
     const dialog = /^<dialog[^>]*>/.exec(html)?.[0] ?? ''
     expect(dialog).toMatch(/class="modal[ "]/)
@@ -136,13 +142,22 @@ describe('shared modal', () => {
     expect(labelledBy).toBeTruthy()
     expect(html).toContain(`<h2 id="${labelledBy}"`)
     expect(html).toMatch(/<h2[^>]*>Remove chess-web\?<\/h2>/)
-    // Heading, detail, the mono lines, the muted note, then the buttons.
-    const order = ['Remove chess-web?', 'The board stops watching', 'E:\\code\\chess-web', 'port base 3400', 'Its 1 run leaves', '>Cancel<', '>Remove<']
+    // Heading, detail, the details (each label before its value), the muted note, then the buttons.
+    const order = ['Remove chess-web?', 'The board stops watching', '>Details<', '>Folder<', 'E:\\code\\chess-web', '>Port base<', '>3400<', 'Its 1 run leaves', '>Cancel<', '>Remove<']
     const at = order.map((s) => html.indexOf(s))
     expect(at.every((i) => i >= 0), JSON.stringify(at)).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
-    expect(html).toMatch(/<p class="[^"]*\bmono\b[^"]*">E:\\code\\chess-web<\/p>/)
-    expect(html).toMatch(/<p class="[^"]*\bmono\b[^"]*">port base 3400<\/p>/)
+    // The details: an open disclosure with a real summary, then a list of label and value pairs.
+    expect(html).toMatch(/<details[^>]*\bopen=""[^>]*><summary[^>]*>Details<\/summary><dl[^>]*>/)
+    expect(html.match(/<details\b/g)).toHaveLength(1)
+    const pairs = /<dl[^>]*>([\s\S]*?)<\/dl>/.exec(html)?.[1] ?? ''
+    expect([...pairs.matchAll(/<(dt|dd)[^>]*>([^<]*)<\/\1>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ['dt', 'Folder'],
+      ['dd', 'E:\\code\\chess-web'],
+      ['dt', 'Port base'],
+      ['dd', '3400'],
+    ])
+    expect(html).not.toContain('modal-mono')
     expect(html).toMatch(/<p class="[^"]*\bmuted\b[^"]*">Its 1 run leaves the sidebar\.<\/p>/)
     // Cancel is quiet and first; the confirm is the danger button.
     const buttons = [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => [m[2], m[1]])
@@ -153,8 +168,13 @@ describe('shared modal', () => {
   })
 
   it('confirm leaves out what it is not given', () => {
-    const html = confirm({ mono: undefined, notes: [] })
-    expect(html).not.toMatch(/class="[^"]*\bmono\b/)
+    const html = confirm({ details: undefined, notes: [] })
+    for (const none of [html, confirm({ details: [], notes: [] })]) {
+      // No details, no disclosure: no empty Details to open.
+      expect(none).not.toContain('<details')
+      expect(none).not.toContain('<dl')
+      expect(none).not.toContain('Details')
+    }
     expect(html).not.toMatch(/class="[^"]*\bmuted\b[^"]*">/)
     expect(html).not.toContain('role="alert"')
     // The live region is there before any status, so a screen reader hears the first one.

@@ -218,6 +218,65 @@ describe('modal and list look', () => {
   })
 })
 
+// The confirm modal's facts (Forget's run, port base and worktree; Remove repo's folder): a labelled list under an
+// open Details disclosure, no box (DESIGN.md, "Forms and errors"; draft confirm-details-choices.html, c with b's text).
+describe('confirm modal details look', () => {
+  const px = (value: string | undefined, what: string) => {
+    if (value === '0') return 0
+    const m = /^(\d+)px$/.exec(value ?? '')
+    expect(m, `${what}: ${value}`).not.toBeNull()
+    return Number(m![1])
+  }
+  const BOXY = ['border', 'border-width', 'border-style', 'outline', 'background', 'background-color', 'box-shadow', 'padding']
+
+  it('label --muted at 13 px; value --fg in --mono at 13 px, wrapping anywhere; a summary in --muted', () => {
+    const css = readCss('modal.css')
+    const label = declsOf(css, '.modal-details dt')
+    expect(label['color']).toBe('var(--muted)')
+    expect(label['font-size']).toBe('var(--size-small)')
+    const value = declsOf(css, '.modal-details dd')
+    expect(value['color']).toBe('var(--fg)')
+    expect(value['font-family']).toBe('var(--mono)')
+    expect(value['font-size']).toBe('var(--size-small)')
+    expect(value['overflow-wrap']).toBe('anywhere')
+    expect(value['margin']).toBe('0')
+    // A grid cell shrinks below its longest word only with min-width 0, so a long path wraps inside the panel.
+    expect(value['min-width']).toBe('0')
+    // Label and value share one line height, so each label sits on its value's first line.
+    expect(value['line-height']).toBe(label['line-height'])
+    expect(declsOf(css, '.modal-details summary')['color']).toBe('var(--muted)')
+  })
+
+  it('a two-column grid, about 6 px by 16 px, with no box: no border, background, or padding', () => {
+    const css = readCss('modal.css')
+    const list = declsOf(css, '.modal-details dl')
+    expect(list['display']).toBe('grid')
+    expect(list['grid-template-columns']).toBe('max-content minmax(0, 1fr)')
+    expect(list['gap']).toBe('6px 16px')
+    for (const sel of ['.modal-details', '.modal-details dl', '.modal-details dt', '.modal-details dd']) {
+      const d = declsOf(css, sel)
+      for (const p of BOXY) expect(d[p], `${sel} ${p}`).toBeUndefined()
+    }
+  })
+
+  it('spacing by DESIGN.md: 16 px between groups, 8 px from the summary to its list, at least 24 px before the actions', () => {
+    const css = readCss('modal.css')
+    const panelGap = px(declsOf(css, '.modal-panel')['gap'], 'panel gap')
+    const block = /^(\d+px|0)(?: (\d+px|0))?$/.exec(declsOf(css, '.modal-details')['margin-block'] ?? '')
+    expect(block, `.modal-details margin-block`).not.toBeNull()
+    expect(panelGap + px(block![1], 'details margin-top'), 'detail to Details').toBe(16)
+    expect(panelGap + px(block![2] ?? block![1], 'details margin-bottom'), 'Details to the next group').toBe(16)
+    expect(px(declsOf(css, '.modal-details dl')['margin-top'], 'summary to list')).toBe(8)
+    const actionsTop = px(declsOf(css, '.confirm-modal .modal-actions')['margin-top'], 'confirm actions margin-top')
+    // The status line leaves the grid while empty, so the last group above the actions is the details, a note, or the alert.
+    expect(panelGap + actionsTop, 'last group to the actions').toBeGreaterThanOrEqual(24)
+  })
+
+  it('the old unlabelled mono line is gone', () => {
+    expect(readCss('modal.css')).not.toContain('.modal-mono')
+  })
+})
+
 // The Add repo modal's own rules live in runs.css (its field error is the shared `.modal-field-error`), scoped under `.add-repo-modal`, so Remove repo and Forget keep
 // the shared modal's spacing.
 describe('Add repo modal look', () => {

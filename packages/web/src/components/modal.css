@@ -50,8 +50,43 @@
   max-width: 72ch;
 }
 
-.modal-mono {
+/*
+ * A confirm's facts (draft confirm-details-choices.html, c with b's text): a labelled list under a Details disclosure
+ * that opens with the modal. No box. 16 px from the groups around it (the panel's 8 px gap and 8 px here); 8 px from
+ * the summary to the list. Labels are --muted, values --fg in --mono; both 13 px on a 20 px line, so each label sits
+ * on its value's first line.
+ */
+.modal-details {
+  margin-block: 8px;
+  min-width: 0;
+}
+
+.modal-details summary {
+  width: fit-content;
+  font-size: var(--size-dense);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.modal-details dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin-top: 8px;
+}
+
+.modal-details dt {
   font-size: var(--size-small);
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.modal-details dd {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--size-small);
+  line-height: 20px;
   color: var(--fg);
   overflow-wrap: anywhere;
 }
@@ -127,4 +162,9 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+/* A confirm's actions sit 24 px below the last group (the panel's 8 px gap and 16 px here), DESIGN.md "Forms and errors". */
+.confirm-modal .modal-actions {
+  margin-top: 16px;
 }
