@@ -5,8 +5,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { build } from 'esbuild'
 
-/** `testFeed` keeps the update test feed's code, for `pnpm package --test-feed` only. */
-export async function bundleDesktop(o: { entry: string; outfile: string; testFeed?: boolean }): Promise<{ externalImports: string[] }> {
+/**
+ * `testFeed` keeps the update test feed's code, for `pnpm package --test-feed` only. `testHooks` keeps the test hooks
+ * (`globalThis.__openaflowTest`), for the Electron harness and `pnpm package --test-hooks` only.
+ */
+export async function bundleDesktop(o: { entry: string; outfile: string; testFeed?: boolean; testHooks?: boolean }): Promise<{ externalImports: string[] }> {
   await mkdir(dirname(o.outfile), { recursive: true })
   const result = await build({
     bundle: true,
@@ -14,7 +17,7 @@ export async function bundleDesktop(o: { entry: string; outfile: string; testFee
     format: 'cjs',
     target: 'node22',
     external: ['electron'],
-    define: { __OPENAFLOW_TEST_FEED__: String(o.testFeed === true) },
+    define: { __OPENAFLOW_TEST_FEED__: String(o.testFeed === true), __OPENAFLOW_TEST_HOOKS__: String(o.testHooks === true) },
     logLevel: 'warning',
     entryPoints: [o.entry],
     outfile: o.outfile,

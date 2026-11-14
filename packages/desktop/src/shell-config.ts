@@ -12,3 +12,5 @@ export const SERVER_SERVICE_NAME = `${APP_NAME} server`
 export function dataDirOverride(env: Env): string | undefined {
   return envValue(env, 'OPENAFLOW_DESKTOP_DATA_DIR')
 }
+/** The pty host's process name in Task Manager. */
+export const PTY_HOST_SERVICE_NAME = `${APP_NAME} terminal host`

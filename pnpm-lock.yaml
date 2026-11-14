@@ -26,6 +26,9 @@ importers:
       '@openaflow/model':
         specifier: workspace:*
         version: link:../model
+      '@openaflow/pty-host':
+        specifier: workspace:*
+        version: link:../pty-host
       '@openaflow/server':
         specifier: workspace:*
         version: link:../server

@@ -13,6 +13,7 @@
   "devDependencies": {
     "@electron/asar": "4.3.1",
     "@openaflow/model": "workspace:*",
+    "@openaflow/pty-host": "workspace:*",
     "@openaflow/server": "workspace:*",
     "@openaflow/web": "workspace:*",
     "@types/pngjs": "6.0.5",
