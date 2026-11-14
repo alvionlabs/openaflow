@@ -2,7 +2,7 @@
 
 ## What it is
 
-The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the full-height left sidebar ("OpenAFlow" with `lost · retrying` only while the connection is lost, the runs list, and `Add repo` at the bottom, which opens the Windows folder dialog in the desktop app, or a path field in the shared modal in the browser build), the ⋯ menu at the right end of the run header, the theme (System, Dark, Light, in the ⋯ menu; Dark when nothing is stored), the theme applied before first paint, the shared look (tokens, fonts, controls, icons). Covers the features.md rows Web shell, Theme, and Theme boot. Theme code lives in `packages/web/src/theme/`; the boot script is inline in `packages/web/index.html`.
+The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the full-height left sidebar ("OpenAFlow" with `lost · retrying` only while the connection is lost, the runs list, and `Add repo` at the bottom, which opens the shared modal with a path field in both builds; in the desktop app, `Browse…` beside the field fills it from the system folder dialog), the ⋯ menu at the right end of the run header, the theme (System, Dark, Light, in the ⋯ menu; Dark when nothing is stored), the theme applied before first paint, the shared look (tokens, fonts, controls, icons). Covers the features.md rows Web shell, Theme, and Theme boot. Theme code lives in `packages/web/src/theme/`; the boot script is inline in `packages/web/index.html`.
 
 ## How it works
 
