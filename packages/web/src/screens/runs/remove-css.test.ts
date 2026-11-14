@@ -269,3 +269,28 @@ describe('the ⋯ offsets and the word limit', () => {
   })
 })
 const WIDTH_BEFORE_THE_BREAK = 134
+
+describe('the Auto-continue icon on a sidebar card', () => {
+  const ICON = '.run-body > .run-auto'
+  const HAS = '.run-body:has(> .run-auto)'
+  const stacked = () => rules(/@container run-card \(max-width: \d+px\) \{([\s\S]*?)\n\}/.exec(runs())![1]!)
+  const inStacked = (sel: string) => Object.assign({}, ...stacked().filter((r) => r.selectors.includes(sel)).map((r) => decls(r.body))) as Record<string, string>
+
+  it('is a 16 px blue icon', () => {
+    expect(style(runs(), `${ICON} svg`)['color']).toBe('var(--running)')
+    expect(style(runs(), `${ICON} svg`)['width']).toBe('16px')
+  })
+
+  it('in two columns, sits at the end of the title row, and the status keeps its 88 px column at the right', () => {
+    expect(style(runs(), HAS)['grid-template-columns']).toBe('minmax(0, 1fr) auto 88px')
+  })
+
+  it('stacked, sits in the top-right corner beside the name, and the status line takes the full width under it', () => {
+    expect(inStacked(HAS)['grid-template-columns']).toBe('minmax(0, 1fr) auto')
+    expect(inStacked(`${HAS} > .status`)['grid-column']).toBe('1 / -1')
+  })
+
+  it('leaves no rule for the old auto chip', () => {
+    expect(runs()).not.toMatch(/\.run-body[^{]*\.chip\.tag/)
+  })
+})

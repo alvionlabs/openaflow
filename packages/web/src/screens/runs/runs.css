@@ -147,26 +147,40 @@
   padding-right: 17px;
 }
 
-/* The Add repo dialog: a sizing box; the picker inside keeps its own frame. */
-.add-dialog {
-  width: min(720px, calc(100vw - 32px));
-  max-width: none;
-  max-height: calc(100dvh - 32px);
-  margin: auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--fg);
-  overflow: auto;
+/*
+ * The Add repo modal (picks 1 b and 2 b). Three groups, 16 px apart: the heading, the field group, and a system
+ * error's alert box; the actions sit 24 px below the last. Inside the field group, the label, the row, and a path
+ * error (`.modal-field-error`, in modal.css) sit 8 px apart. Scoped here, so Remove repo and Forget keep the shared modal's spacing.
+ */
+.add-repo-modal .modal-panel {
+  gap: 16px;
 }
 
-.add-dialog::backdrop {
-  background: var(--bg);
-  opacity: 0.72;
+.add-repo-modal .modal-alert {
+  margin-top: 0;
 }
 
-.add-dialog .picker {
-  max-width: none;
+.add-repo-modal .modal-actions {
+  margin-top: 8px;
+}
+
+.add-repo-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The path field and Browse… share a row; the field takes the rest. Under 168 px of field, Browse… wraps below. */
+.add-repo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.add-repo-row .input {
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
 .banners {
@@ -298,6 +312,28 @@
 }
 
 /*
+ * The Auto-continue sign: a 16 px fast-forward icon on the title row while the board sends `continue` for the run
+ * by itself. In two columns it takes its own column between the name and the status, so the status keeps its 88 px
+ * column and every dot stays on one rail. Its word is in the tooltip and the card's link name.
+ */
+.run-body:has(> .run-auto) {
+  grid-template-columns: minmax(0, 1fr) auto 88px;
+}
+
+.run-body > .run-auto {
+  display: flex;
+  align-items: center;
+  /* As tall as the name's first line, so the icon centres on it. */
+  min-height: calc(var(--size-dense) * 1.55);
+}
+
+.run-body > .run-auto svg {
+  width: 16px;
+  height: 16px;
+  color: var(--running);
+}
+
+/*
  * Stacked by default: name at full width, status, then the repo line. At 256 px of content or less (a card of
  * 290 px, a sidebar of 323 px, so the default 260 px too) a two-column name is under 156 px, and a long word such
  * as `open_aflow_long_repo` would break. Above that, a word with a hyphen or an underscore breaks only there. A
@@ -316,6 +352,16 @@
 
   .run-wrap:has(> .run-more-wrap) .run-line:empty {
     display: none;
+  }
+
+  /* Stacked, the icon sits in the top-right corner beside the name, and the status line spans the card under it. */
+  .run-body:has(> .run-auto) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+  }
+
+  .run-body:has(> .run-auto) > .status {
+    grid-column: 1 / -1;
   }
 }
 
@@ -355,13 +401,6 @@
 .run-wrap:focus-within .run-more,
 .run-more[aria-expanded="true"] {
   opacity: 1;
-}
-
-/* The sidebar's confirm sits right under its card, at the sidebar's dense size. */
-.run-item > .remove-confirm {
-  margin: 8px 0 0;
-  padding: 12px;
-  font-size: var(--size-dense);
 }
 
 /* base.css makes every icon button 44 px on a phone; this one keeps its 24 px box, and touch gets the target below. */
@@ -423,7 +462,7 @@
   min-width: 0;
 }
 
-/* The title and its meta line on the left, the wave board link and the ⋯ menu at the right end. */
+/* The title and its meta line on the left, Auto-continue and the ⋯ menu at the right end. */
 .run-top {
   display: flex;
   align-items: flex-start;
@@ -439,11 +478,54 @@
 .run-actions {
   display: flex;
   flex: none;
-  align-items: center;
+  /* Top, so a failed save's message under Auto-continue grows the row down, not the ⋯ with it. */
+  align-items: flex-start;
   gap: 8px;
 }
 
+/*
+ * Auto-continue, a toggle button as narrow as its label. On: pressed, with a blue tint, a blue-mixed border and a
+ * blue fast-forward icon. Off: a plain button, its pause icon and label muted. The wrapper is as wide as the button,
+ * so a failed save's message wraps under it and never widens the header.
+ */
+.auto-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min-content;
+}
+
+.auto-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--running) 14%, var(--bg));
+  border-color: color-mix(in srgb, var(--running) 55%, var(--border-strong));
+}
+
+.auto-button[aria-pressed="true"]:hover {
+  background: color-mix(in srgb, var(--running) 20%, var(--bg));
+}
+
+.auto-button[aria-pressed="true"] svg {
+  color: var(--running);
+}
+
+.auto-button[aria-pressed="false"] {
+  color: var(--muted);
+}
+
+.auto-button[aria-pressed="false"]:hover {
+  color: var(--fg);
+}
+
+.auto-continue-error {
+  display: flex;
+  align-items: center;
+  font-size: var(--size-small);
+  overflow-wrap: anywhere;
+}
+
+/* A quiet link at the right end of the progress row, with a right arrow. */
 .board-link {
+  margin-left: auto;
   white-space: nowrap;
 }
 
@@ -895,7 +977,7 @@
 .merge-why::before,
 .merge-error::before,
 .resume-error::before,
-.auto-switch-error::before,
+.auto-continue-error::before,
 .answer-error::before {
   content: "";
   display: inline-block;
@@ -1186,21 +1268,6 @@
   overflow-wrap: anywhere;
 }
 
-/* The auto-continue switch beside the run's state chip; a failed save's message beside it. */
-.auto-switch {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.auto-switch-error {
-  font-size: var(--size-small);
-  overflow-wrap: anywhere;
-}
-
 /* Phone: each row stacks, the copy and send buttons under its text, full width. */
 @media (max-width: 480px) {
   .board-link-long {
@@ -1297,11 +1364,6 @@
   .main {
     width: calc(100% - 32px);
     padding: 20px 16px 40px;
-  }
-
-  .add-dialog {
-    width: calc(100vw - 16px);
-    max-height: calc(100dvh - 16px);
   }
 
   .runs-head {
@@ -1597,28 +1659,4 @@
   .wait-more {
     min-height: 44px;
   }
-}
-
-/* Remove from the board: in place under the run header, like the merge confirm. Its text stays near 72ch. */
-.remove-confirm {
-  margin: 16px 0 32px;
-  max-width: 640px;
-}
-
-.remove-confirm:focus {
-  outline: none;
-}
-
-.remove-confirm:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.remove-path {
-  overflow-wrap: anywhere;
-}
-
-.remove-body {
-  margin: 0;
-  max-width: 72ch;
 }

@@ -31,12 +31,12 @@ describe('menu contents', () => {
     expect(html).toMatch(/class="menu[ "][^>]*role="group"/)
   })
 
-  it('has the auto-continue switch only with autoContinue', () => {
-    expect(render({})).not.toContain('role="switch"')
-    const html = render({ autoContinue: { target, on: true } })
-    expect(html).toMatch(/role="switch"[^>]*aria-checked="true"/)
-    expect(text(html)).toContain('Auto-continue')
-    expect(render({ autoContinue: { target, on: false } })).toMatch(/aria-checked="false"/)
+  it('has no Auto-continue switch: the run header holds the one control', () => {
+    for (const on of [true, false]) {
+      const html = render({ autoContinue: { target, on }, portBase: 3100 })
+      expect(html).not.toContain('role="switch"')
+      expect(text(html)).not.toContain('Auto-continue')
+    }
   })
 
   it('has the ports only with portBase', () => {
@@ -70,5 +70,20 @@ describe('Remove repo item', () => {
 
   it('gives the trigger a stable id, so focus can come back to it after the confirm closes', () => {
     expect(render({ open: false })).toMatch(/<button[^>]*id="run-menu-trigger"/)
+  })
+})
+
+describe('Forget item', () => {
+  it('shows only with forget, as a danger item that reads Forget this run, right above Remove repo', () => {
+    expect(render({ remove: { onPick: noop } })).not.toContain('Forget this run')
+    const html = render({ forget: { onPick: noop }, remove: { onPick: noop }, portBase: 3400 })
+    expect(html).toMatch(/<button type="button" class="mi mi-action mi-danger">Forget this run<\/button><button type="button" class="mi mi-action mi-danger">Remove repo<\/button>/)
+    expect(html.indexOf('Ports')).toBeLessThan(html.indexOf('Forget this run'))
+  })
+
+  it('shows alone, after a rule, for a repo only its claim lists (no Remove repo)', () => {
+    const html = render({ forget: { onPick: noop }, portBase: 3400 })
+    expect(html).toMatch(/<hr\/><button type="button" class="mi mi-action mi-danger">Forget this run<\/button><\/div>/)
+    expect(html).not.toContain('Remove repo')
   })
 })

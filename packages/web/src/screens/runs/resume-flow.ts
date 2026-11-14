@@ -42,8 +42,12 @@ export const TOGGLE_INITIAL: ToggleState = { kind: 'idle', seq: 0 }
 
 export type ToggleView = { on: boolean; disabled: boolean; error?: string }
 
-/** What the switch shows, given the Board's value for its run. */
-export function toggleView(boardOn: boolean, s: ToggleState): ToggleView {
+/**
+ * What the switch shows, given the Board's value for its run. `text` turns a refusal's word into the words on screen
+ * (`toggleText` in AutoContinueButton.tsx); it lives there because this file must not import the confirm modal's
+ * modules (the desktop app type-checks it through next-step.ts, with no JSX).
+ */
+export function toggleView(boardOn: boolean, s: ToggleState, text: (word: string) => string): ToggleView {
   switch (s.kind) {
     case 'idle':
       return { on: boardOn, disabled: false }
@@ -52,7 +56,7 @@ export function toggleView(boardOn: boolean, s: ToggleState): ToggleView {
     case 'saved':
       return { on: s.on, disabled: false }
     case 'error':
-      return { on: boardOn, disabled: false, error: s.message }
+      return { on: boardOn, disabled: false, error: text(s.message) }
   }
 }
 
@@ -60,7 +64,7 @@ export function reduceToggle(s: ToggleState, e: ToggleEvent): ToggleState {
   switch (e.type) {
     case 'press':
       if (s.kind === 'saving') return s
-      return { kind: 'saving', seq: s.seq + 1, on: !toggleView(e.boardOn, s).on }
+      return { kind: 'saving', seq: s.seq + 1, on: !toggleView(e.boardOn, s, String).on }
     case 'reply': {
       if (s.kind !== 'saving' || e.seq !== s.seq) return s
       if (!e.reply.ok) return { kind: 'error', seq: s.seq, on: e.boardOn, message: e.reply.message }
@@ -81,8 +85,11 @@ export type ToggleFlow = {
   board(on: boolean): void
 }
 
+/** `onRefused`: called once per refused reply, so the owner can send the exact cause to the console. */
+export type ToggleHooks = { onRefused?: (reply: { status: number; message: string }) => void }
+
 /** Runs the toggle reducer and posts auto-continue as it moves to saving. */
-export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) => void, post: Post = defaultPost): ToggleFlow {
+export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) => void, post: Post = defaultPost, { onRefused }: ToggleHooks = {}): ToggleFlow {
   let state = TOGGLE_INITIAL
   let boardOn = false
   const dispatch = (e: ToggleEvent) => {
@@ -90,6 +97,7 @@ export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) =
     state = reduceToggle(state, e)
     if (state === prev) return
     onChange(state)
+    if (onRefused && state.kind === 'error' && e.type === 'reply' && !e.reply.ok) onRefused(e.reply)
     const s = state
     if (s.kind === 'saving' && prev.kind !== 'saving') {
       void post<{ on: boolean }>('auto-continue', { repoId: target.repoId, run: target.run, on: s.on }).then((reply) =>
@@ -145,13 +153,25 @@ export type ResumeFlow = {
   close(): void
 }
 
+/**
+ * `onSent`: each send's result goes to the owner (the Next step card's list) with the time. A `started` one then
+ * leaves no result block: the flow goes to idle. A failed one keeps its block; a refused request isn't a result.
+ * `now` is for tests.
+ */
+export type ResumeHooks = { onSent?: (word: ResumeWord, at: number, result: ResumeResult) => void; now?: () => number }
+
 /** Runs the resume reducer and posts resume once per press. */
-export function createResumeFlow(target: RunTarget, onChange: (s: ResumeState) => void, post: Post = defaultPost): ResumeFlow {
+export function createResumeFlow(target: RunTarget, onChange: (s: ResumeState) => void, post: Post = defaultPost, { onSent, now = Date.now }: ResumeHooks = {}): ResumeFlow {
   let state = RESUME_INITIAL
   const dispatch = (e: ResumeEvent) => {
     const prev = state
     state = reduceResume(state, e)
     if (state === prev) return
+    if (onSent && state.kind === 'result') {
+      const { word, result } = state
+      if (result.outcome === 'started') state = { kind: 'idle', seq: state.seq }
+      onSent(word, now(), result)
+    }
     onChange(state)
     const s = state
     if (s.kind === 'sending') {
@@ -172,6 +192,13 @@ export const NOT_LOGGED = 'Not saved to the action log.'
 export function startedText(resume: string | undefined): string {
   const base = "The session started again. A terminal open on it won't show the board's send"
   return resume ? `${base}: run ${resume} to see it.` : `${base}.`
+}
+
+export const SEND_LABEL: Record<ResumeWord, string> = { continue: 'Continue', go: 'Go' }
+
+/** A send button's words: `Sending…` on the one in flight, else its word. Every button is off while `busy`. */
+export function sendLabel(view: ResumeView, send: ResumeWord): string {
+  return view.busy && view.word === send ? 'Sending…' : SEND_LABEL[send]
 }
 
 export type ResumeView = {

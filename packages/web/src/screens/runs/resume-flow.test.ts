@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Board, ResumeResult, RunSummary } from '@openaflow/model'
-import { NEED_RELOAD, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { NEED_RELOAD, RESTARTED, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { RELOAD, TRY_AGAIN } from '../../add-repo.ts'
 import {
   NOT_LOGGED,
   RESUME_FAILED,
@@ -9,16 +10,21 @@ import {
   reduceResume,
   reduceToggle,
   resumeView,
+  sendLabel,
   startedText,
   switchView,
-  toggleView,
+  toggleView as rawToggleView,
   type Post,
   type ResumeState,
+  type ResumeWord,
   type RunTarget,
   type ToggleState,
 } from './resume-flow.ts'
+import { toggleText, warnToggle } from './AutoContinueButton.tsx'
 
 const T: RunTarget = { repoId: 'r1', run: 'alpha' }
+/** The view as the button builds it, with its real refusal words. */
+const toggleView = (boardOn: boolean, s: ToggleState) => rawToggleView(boardOn, s, toggleText)
 const RESUME = 'claude --resume 0f6c1e2a-5b7d'
 
 type Call = { path: string; body: object; resolve: (r: ActionReply<unknown>) => void }
@@ -75,14 +81,14 @@ describe('auto-continue switch', () => {
     // It fails: back to the previous state, with the message.
     p.calls[0]!.resolve(fail(500, "Couldn't save the toggle."))
     await tick()
-    expect(toggleView(false, flow.state())).toEqual({ on: false, disabled: false, error: "Couldn't save the toggle." })
+    expect(toggleView(false, flow.state())).toEqual({ on: false, disabled: false, error: TRY_AGAIN })
     expect(flow.state()).toMatchObject({ kind: 'error', on: false })
 
     // The action client's own failures read the same way.
     flow.press()
     p.calls[1]!.resolve(fail(0, UNREACHABLE))
     await tick()
-    expect(toggleView(false, flow.state())).toEqual({ on: false, disabled: false, error: UNREACHABLE })
+    expect(toggleView(false, flow.state())).toEqual({ on: false, disabled: false, error: TRY_AGAIN })
 
     // Pressing again clears the message and sends again; this time it saves.
     flow.press()
@@ -120,7 +126,64 @@ describe('auto-continue switch', () => {
     expect(p.calls[0]!.body).toEqual({ repoId: 'r1', run: 'alpha', on: false })
     p.calls[0]!.resolve(fail(404, 'not a run'))
     await tick()
-    expect(toggleView(true, flow.state())).toEqual({ on: true, disabled: false, error: 'not a run' })
+    expect(toggleView(true, flow.state())).toEqual({ on: true, disabled: false, error: 'This run is already gone' })
+  })
+
+  describe('a refused reply', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    /** Presses once, answers with `reply`, and returns what the button shows and what went to the console. */
+    async function refuse(reply: ActionReply<never>) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const p = fakePost()
+      const flow = createToggleFlow(T, () => {}, p.post, { onRefused: warnToggle })
+      flow.board(false)
+      flow.press()
+      p.calls[0]!.resolve(reply)
+      await tick()
+      // Each render reads the view again: the warning must not follow it.
+      toggleView(false, flow.state())
+      const view = toggleView(false, flow.state())
+      return { error: view.error, warns: warn.mock.calls.map((c) => String(c[0])) }
+    }
+
+    it('shows the short, warm words for the route words it knows, with no warning', async () => {
+      expect(await refuse(fail(403, RESTARTED))).toEqual({ error: RELOAD, warns: [] })
+      expect(await refuse(fail(0, NEED_RELOAD))).toEqual({ error: RELOAD, warns: [] })
+      expect(await refuse(fail(404, 'not a run'))).toEqual({ error: 'This run is already gone', warns: [] })
+      expect(await refuse(fail(400, 'bad request'))).toEqual({ error: "Something's off. Please reload and try again", warns: [] })
+    })
+
+    it('shows the try-again words for any other word, and warns once with the raw word and status', async () => {
+      for (const [status, word] of [
+        [500, 'HTTP 500'],
+        [0, UNREACHABLE],
+        [409, 'some new word'],
+      ] as const) {
+        const { error, warns } = await refuse(fail(status, word))
+        expect(error).toBe(TRY_AGAIN)
+        expect(warns).toHaveLength(1)
+        expect(warns[0]).toContain(word)
+        expect(warns[0]).toContain(`HTTP ${status}`)
+        vi.restoreAllMocks()
+      }
+    })
+
+    it('a saved reply and a later Board warn nothing', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const p = fakePost()
+      const flow = createToggleFlow(T, () => {}, p.post, { onRefused: warnToggle })
+      flow.board(false)
+      flow.press()
+      p.calls[0]!.resolve(fail(500, 'HTTP 500'))
+      await tick()
+      flow.board(false)
+      flow.board(true)
+      flow.press()
+      p.calls[1]!.resolve(ok({ on: false }))
+      await tick()
+      expect(warn).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('a reply for an older press is dropped', () => {
@@ -237,5 +300,51 @@ describe('Continue and Go', () => {
       const v = await send(fail(status, message))
       expect(v, message).toEqual({ busy: false, word: 'continue', error: message })
     }
+  })
+
+  it('Sending label', async () => {
+    const { flow, calls } = setup()
+    const labels = () => {
+      const v = resumeView(flow.state(), RESUME)
+      return { busy: v.busy, continue: sendLabel(v, 'continue'), go: sendLabel(v, 'go') }
+    }
+    expect(labels()).toEqual({ busy: false, continue: 'Continue', go: 'Go' })
+    // In flight: the pressed row reads Sending…, the other keeps its word, and every send button is off.
+    flow.press('continue')
+    expect(labels()).toEqual({ busy: true, continue: 'Sending…', go: 'Go' })
+    calls[0]!.resolve(ok(started()))
+    await tick()
+    expect(labels()).toEqual({ busy: false, continue: 'Continue', go: 'Go' })
+    flow.press('go')
+    expect(labels()).toEqual({ busy: true, continue: 'Continue', go: 'Sending…' })
+    // An error gives the word back.
+    calls[1]!.resolve(fail(409, 'session is busy'))
+    await tick()
+    expect(labels()).toEqual({ busy: false, continue: 'Continue', go: 'Go' })
+  })
+
+  it('onSent takes the result; a started one leaves no result block', async () => {
+    const p = fakePost()
+    const sent: [ResumeWord, number, ResumeResult][] = []
+    const flow = createResumeFlow(T, () => {}, p.post, { onSent: (w, at, r) => sent.push([w, at, r]), now: () => 42 })
+    flow.press('continue')
+    p.calls[0]!.resolve(ok(started({ logged: false })))
+    await tick()
+    expect(sent).toEqual([['continue', 42, { outcome: 'started', logged: false }]])
+    // No result to show, and no word left: an empty slot draws nothing after the Board drops the reply.
+    expect(flow.state().kind).toBe('idle')
+    expect(resumeView(flow.state(), RESUME)).toEqual({ busy: false })
+    // A failed start is passed on too, and keeps its result block, with Close.
+    flow.press('go')
+    p.calls[1]!.resolve(ok({ outcome: 'failed', message: 'claude not found', logged: true }))
+    await tick()
+    expect(sent[1]).toEqual(['go', 42, { outcome: 'failed', message: 'claude not found', logged: true }])
+    expect(resumeView(flow.state(), RESUME)).toMatchObject({ word: 'go', result: { words: 'claude not found' } })
+    // A refused request isn't a result: no call, and its error stays.
+    flow.press('continue')
+    p.calls[2]!.resolve(fail(404, 'no session'))
+    await tick()
+    expect(sent).toHaveLength(2)
+    expect(resumeView(flow.state(), RESUME)).toMatchObject({ error: 'no session' })
   })
 })

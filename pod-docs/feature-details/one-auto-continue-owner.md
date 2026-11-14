@@ -43,7 +43,7 @@ flowchart TD
 ## Watch out
 
 - **The start time comes from `Get-CimInstance Win32_Process`.** `Get-Process` gives no `StartTime` for another account's process unless the caller is elevated, so a stale file whose ID went to a service kept auto-continue off. A stale file is most likely after a reboot, when low process IDs repeat.
-- **The page shows nothing** when this server doesn't own the check. The switch still reads on, and only the log says why. The packaged app shows that log to nobody.
+- **The page shows nothing** when this server doesn't own the check. The Auto-continue button in the run header still reads on, and only the log says why. The packaged app shows that log to nobody.
 - **Open queue item (now):** a PowerShell start over 5 s at login reads as can't tell. Not reproduced: about 0.8 s measured here.
 - The lookup blocks the start for up to 5 s, and runs only when a live process holds the file. It starts PowerShell by its absolute path, with no window.
 - Outside Windows there is no lookup, so a reused ID reads as can't tell until that process ends or you delete the file.

@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { BoardRepo, RunSummary } from '@openaflow/model'
+import type { Board, BoardRepo, RunSummary } from '@openaflow/model'
 import { RunMoreMenuView } from './RunMoreMenu.tsx'
 import { RunsList } from './RunsList.tsx'
 import { moreButtonId } from './remove-flow.ts'
+import { switchView } from './resume-flow.ts'
 
 const noop = () => {}
 const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
@@ -40,7 +41,7 @@ const run = (repoId: string, name: string, plan: string): RunSummary => ({ repoI
 describe('runs list with the ⋯ button', () => {
   const runs = [run('ra', 'alpha-repo', 'x'), run('rc', 'claimed', 'y')]
   const repos = [repo({}), repo({ id: 'rc', name: 'claimed', path: 'C:/code/claimed', source: 'claim' })]
-  const render = (panelFor?: (r: RunSummary) => unknown) =>
+  const render = () =>
     renderToStaticMarkup(
       createElement(RunsList, {
         runs,
@@ -48,7 +49,6 @@ describe('runs list with the ⋯ button', () => {
         repos,
         removable: (r: RunSummary) => r.repoId === 'ra',
         onRemove: noop,
-        ...(panelFor ? { panelFor: panelFor as never } : {}),
       }),
     )
 
@@ -67,10 +67,8 @@ describe('runs list with the ⋯ button', () => {
     expect(items[1]).not.toContain('run-more')
   })
 
-  it('shows the confirm panel under the card it was opened from', () => {
-    const items = render((r) => (r.plan === 'x' ? createElement('section', { className: 'inplace remove-confirm' }) : null)).match(/<li class="run-item">[\s\S]*?<\/li>/g)!
-    expect(items[0]).toMatch(/<\/div><\/div><section class="inplace remove-confirm"><\/section><\/li>$/)
-    expect(items[1]).not.toContain('remove-confirm')
+  it('ends each card with its link and ⋯: the confirm is the screen modal, never a panel under the card', () => {
+    for (const item of render().match(/<li class="run-item">[\s\S]*?<\/li>/g)!) expect(item).toMatch(/<\/div><\/li>$/)
   })
 })
 
@@ -151,5 +149,49 @@ describe("the card link's accessible name", () => {
   it('ends with the fix tag on a fix run, where the card shows it', () => {
     // With no PR on the Board, a fix run is named from its slug, as on the card.
     expect(link({ repo: 'chess-web', state: 'running', fix: 'list-timeouts' })).toContain('aria-label="List timeouts running chess-web fix"')
+  })
+})
+
+describe('Auto-continue sign on a card', () => {
+  const runs = [run('ra', 'alpha-repo', 'x'), run('ra', 'alpha-repo', 'y'), { repoId: 'ra', repo: 'alpha-repo', where: '', state: 'idle' } as RunSummary]
+  const fix = { ...run('ra', 'alpha-repo', 'task-scroll'), fix: 'scroll', state: 'needs-you' } as RunSummary
+  const board = { generatedAt: 0, gh: 'ok', repos: [repo({})], autoContinue: [{ repoId: 'ra', run: 'x' }, { repoId: 'ra', run: 'task-scroll' }] } as Board
+  const items = (list: RunSummary[]) =>
+    renderToStaticMarkup(createElement(RunsList, { runs: list, selected: list[0], repos: [repo({})], auto: (r: RunSummary) => switchView(r, board)?.on === true })).match(
+      /<li class="run-item">[\s\S]*?<\/li>/g,
+    )!
+  const FF = '<path d="M2 3.5l5.5 4.5L2 12.5zM8.5 3.5L14 8l-5.5 4.5z"></path>'
+  const SIGN = `<span class="run-auto" role="img" aria-label="Auto-continue on" title="Auto-continue on"><svg[^>]*>${FF.replace(/[.()]/g, (c) => `\\${c}`)}</svg></span>`
+
+  it('an auto-continue run shows the fast-forward icon on the title row, named Auto-continue on, and no chip', () => {
+    const [on] = items(runs)
+    // Right after the name, before the status: the title row.
+    expect(on).toMatch(new RegExp(`<b>x</b>${SIGN}<span class="status [^"]*">idle</span><span class="run-line">`))
+    expect(on).not.toContain('chip tag">auto')
+    expect(on).toContain('aria-label="x idle auto-continue on alpha-repo"')
+    // The status line holds only the dot and the word: nothing follows the status before the repo line.
+    expect(/<span class="status [^"]*">([\s\S]*?)<\/span>/.exec(on!)![1]).toBe('idle')
+  })
+
+  it('an off run and a repo row show no icon, and their names have no auto-continue', () => {
+    const [, off, row] = items(runs)
+    for (const item of [off!, row!]) {
+      expect(item).not.toContain('run-auto')
+      expect(item).not.toContain('>auto<')
+      expect(/aria-label="([^"]*)"/.exec(item)![1]).not.toMatch(/\bauto/)
+    }
+  })
+
+  it('a one-off run keeps its kind tag on the repo line, and the icon on the title row', () => {
+    const [card] = items([fix])
+    expect(card).toMatch(new RegExp(`</b>${SIGN}<span class="status [^"]*">needs you</span>`))
+    expect(card).toMatch(/<span class="run-repo muted">alpha-repo<\/span><span class="chip tag">task<\/span>/)
+    expect(card).toMatch(/aria-label="Scroll needs you auto-continue on alpha-repo task"/)
+  })
+
+  it('with no auto rule, no card has the icon', () => {
+    const html = renderToStaticMarkup(createElement(RunsList, { runs, selected: runs[0], repos: [repo({})] }))
+    expect(html).not.toContain('run-auto')
+    expect(html).not.toContain('>auto<')
   })
 })
