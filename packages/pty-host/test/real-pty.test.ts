@@ -46,10 +46,15 @@ describe('real pty', () => {
     await until('exit', () => sent.some((m) => m.type === 'exit'))
     expect(sent.filter((m) => m.type === 'exit')).toEqual([{ type: 'exit', id: 'real-1', exitCode: 7 }])
 
-    host.handle({ type: 'snapshot', id: 'real-1' })
-    await until('snapshot', () => sent.some((m) => m.type === 'snapshot'))
-    const snap = sent.find((m) => m.type === 'snapshot') as { text: string | null }
-    expect(snap.text).toContain('pty-says-hello')
+    // ConPTY can pass the last output a moment after the exit, so ask until the line shows.
+    const snapshots = () => sent.filter((m): m is Extract<HostToMain, { type: 'snapshot' }> => m.type === 'snapshot')
+    await until('the output on the screen', () => {
+      if (snapshots().at(-1)?.text?.includes('pty-says-hello')) return true
+      host.handle({ type: 'snapshot', id: 'real-1' })
+      return false
+    })
+    expect(snapshots().at(-1)).toMatchObject({ type: 'snapshot', id: 'real-1' })
+    expect(snapshots().at(-1)!.text).toContain('pty-says-hello')
 
     host.handle({ type: 'shutdown' })
     await until('host exit', () => exits.length > 0, 4_000)
