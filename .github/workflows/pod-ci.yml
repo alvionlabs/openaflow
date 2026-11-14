@@ -28,3 +28,39 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: pnpm verify
+
+  # node-pty in the real Electron app, unpackaged, then in a `pnpm package --test-hooks` build. That build never
+  # leaves the runner. On Ubuntu 24.04, Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
+  pty-proof:
+    name: pty proof (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            display: ""
+            app: packages/desktop/release/win-unpacked/OpenAFlow.exe
+          - os: ubuntu-latest
+            display: xvfb-run -a
+            app: packages/desktop/release/linux-unpacked/openaflow
+    steps:
+      - uses: actions/checkout@v7
+      # Version comes from packageManager in package.json.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # pnpm skips Electron's install script, so fetch its binary here.
+      - run: node node_modules/electron/install.js
+        working-directory: packages/desktop
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if: runner.os == 'Linux'
+      - run: pnpm build
+      - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+      - run: pnpm package --test-hooks
+      - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
