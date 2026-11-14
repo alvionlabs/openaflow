@@ -106,3 +106,16 @@ export const FIRST_FOCUS = 'data-first-focus'
 export function focusFirst(dialog: { querySelector(selector: string): { focus(): void } | null } | null): void {
   dialog?.querySelector(`[${FIRST_FOCUS}]`)?.focus()
 }
+
+/**
+ * Runs after each render of a confirm dialog. Both buttons are off while busy, so focus sits on the dialog itself.
+ * When busy ends with an error, the element marked with FIRST_FOCUS (Cancel, the safe button) takes focus again
+ * (DESIGN.md "Forms and errors"). Only on that change, so a later render never pulls focus off the confirm.
+ */
+export function focusAfterRefusal(
+  root: Parameters<typeof focusFirst>[0],
+  wasBusy: boolean,
+  now: { busy: boolean; error?: string | undefined },
+): void {
+  if (wasBusy && !now.busy && now.error) focusFirst(root)
+}
