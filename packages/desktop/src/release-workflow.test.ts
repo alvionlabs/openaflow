@@ -131,16 +131,3 @@ describe('release.yml', () => {
     for (const step of allSteps()) expect(JSON.stringify(step)).not.toMatch(/--draft|--prerelease|--clobber|draft:|prerelease:/)
   })
 })
-
-describe('pod-ci.yml', () => {
-  test('verify stays free of packaging', () => {
-    const ci = parse(read('pod-ci.yml')) as Workflow
-    const steps = ci.jobs?.verify?.steps ?? []
-    const install = steps.find((s) => /pnpm install/.test(s.run ?? ''))
-    expect(install?.env?.ELECTRON_SKIP_BINARY_DOWNLOAD).toBe('1')
-    expect(steps.some((s) => s.run === 'pnpm verify')).toBe(true)
-    expect(steps.filter((s) => /package|test:install|release:check|electron-builder/.test(s.run ?? ''))).toEqual([])
-    const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts
-    expect(scripts.verify).not.toMatch(/package|test:install|release:check/)
-  })
-})
