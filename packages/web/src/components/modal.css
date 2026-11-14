@@ -52,13 +52,17 @@
 
 /*
  * A confirm's facts (draft confirm-details-choices.html, c with b's text): a labelled list under a Details disclosure
- * that opens with the modal. No box. 16 px from the groups around it (the panel's 8 px gap and 8 px here); 8 px from
- * the summary to the list. Labels are --muted, values --fg in --mono; both 13 px on a 20 px line, so each label sits
+ * that opens with the modal. No box. 16 px from the groups around it (the panel's 8 px gap and 8 px more); 8 px from
+ * the summary to the list; the actions sit 24 px below it. Labels are --muted, values --fg in --mono; both 13 px on a 20 px line, so each label sits
  * on its value's first line.
  */
 .modal-details {
-  margin-block: 8px;
+  margin-top: 8px;
   min-width: 0;
+}
+
+.modal-details + .modal-note {
+  margin-top: 8px;
 }
 
 .modal-details summary {

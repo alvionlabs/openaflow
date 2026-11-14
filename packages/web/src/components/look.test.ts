@@ -259,18 +259,19 @@ describe('confirm modal details look', () => {
     }
   })
 
-  it('spacing by DESIGN.md: 16 px between groups, 8 px from the summary to its list, at least 24 px before the actions', () => {
+  it('spacing by DESIGN.md: 16 px between groups, 8 px from the summary to its list, 24 px before the actions', () => {
     const css = readCss('modal.css')
     const panelGap = px(declsOf(css, '.modal-panel')['gap'], 'panel gap')
-    const block = /^(\d+px|0)(?: (\d+px|0))?$/.exec(declsOf(css, '.modal-details')['margin-block'] ?? '')
-    expect(block, `.modal-details margin-block`).not.toBeNull()
-    expect(panelGap + px(block![1], 'details margin-top'), 'detail to Details').toBe(16)
-    expect(panelGap + px(block![2] ?? block![1], 'details margin-bottom'), 'Details to the next group').toBe(16)
+    const details = declsOf(css, '.modal-details')
+    expect(panelGap + px(details['margin-top'], 'details margin-top'), 'detail to Details').toBe(16)
+    // No space under the list itself, so the actions sit exactly 24 px below it; a note below adds its own.
+    expect(details['margin-bottom'] ?? details['margin-block'] ?? details['margin']).toBeUndefined()
+    expect(panelGap + px(declsOf(css, '.modal-details + .modal-note')['margin-top'], 'note after details'), 'Details to a note').toBe(16)
     // The whole margin, so the browser's 1em under a <dl> can't add to the space below the list.
     expect(declsOf(css, '.modal-details dl')['margin'], 'summary to list, nothing below').toBe('8px 0 0')
     const actionsTop = px(declsOf(css, '.confirm-modal .modal-actions')['margin-top'], 'confirm actions margin-top')
     // The status line leaves the grid while empty, so the last group above the actions is the details, a note, or the alert.
-    expect(panelGap + actionsTop, 'last group to the actions').toBeGreaterThanOrEqual(24)
+    expect(panelGap + actionsTop, 'last group to the actions').toBe(24)
   })
 
   it('the old unlabelled mono line is gone', () => {
