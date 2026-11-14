@@ -1,6 +1,7 @@
 // What `pnpm package` asks electron-builder for. The rules are in pod-docs/sprints/installer-and-updates.md and
 // pod-docs/feature-details/desktop.md. No `electron` import: this runs under Node.
 
+import { realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Configuration } from 'electron-builder'
@@ -9,6 +10,7 @@ import { APP_ID, APP_NAME } from './shell-config.ts'
 import { RELEASE_REPO } from './update-flow.ts'
 
 const PACKAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
+const NODE_PTY_LINK = join(PACKAGE_DIR, '..', 'pty-host', 'node_modules', 'node-pty')
 
 /**
  * The packaged app's `name`. It sets the install folder and the updater's cache folder, and NSIS's
@@ -27,6 +29,10 @@ export type BuildOptions = {
   version?: string
   /** Default: `release` in the desktop package, which git ignores. */
   output?: string
+  /** node-pty's real folder, which electron-builder copies. Default: the real path of the pty host's node_modules/node-pty, which pnpm links. */
+  nodePtyDir?: string
+  /** Default: this machine's. */
+  platform?: 'win32' | 'linux'
 }
 
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -35,8 +41,10 @@ export function checkVersion(version: string): void {
   if (!VERSION.test(version)) throw new Error(`bad version ${JSON.stringify(version)}: use <major>.<minor>.<patch>, digits only, with no leading zero`)
 }
 
-export function parsePackageArgs(argv: string[]): { version?: string; output?: string; testFeed?: true } {
-  const out: { version?: string; output?: string; testFeed?: true } = {}
+export type PackageArgs = { version?: string; output?: string; testFeed?: true; testHooks?: true }
+
+export function parsePackageArgs(argv: string[]): PackageArgs {
+  const out: PackageArgs = {}
   for (const arg of argv) {
     if (arg === '--') continue
     if (arg.startsWith('--version=')) {
@@ -47,16 +55,24 @@ export function parsePackageArgs(argv: string[]): { version?: string; output?: s
       if (out.output === '') throw new Error('--output needs a folder')
     } else if (arg === '--test-feed') {
       out.testFeed = true
+    } else if (arg === '--test-hooks') {
+      out.testHooks = true
     } else {
-      throw new Error(`unknown flag ${arg}: pnpm package takes --version=<x.y.z>, --output=<dir>, and --test-feed`)
+      throw new Error(`unknown flag ${arg}: pnpm package takes --version=<x.y.z>, --output=<dir>, --test-feed, and --test-hooks`)
     }
   }
   return out
 }
 
+/** node-pty's files in the package: no build sources, no other platform's binaries, no debug symbols. */
+function nodePtyFilter(platform: 'win32' | 'linux'): string[] {
+  return ['package.json', 'LICENSE', 'lib/**/*.js', '!lib/**/*.test.js', `prebuilds/${platform}-x64/**/*`, '!**/*.pdb']
+}
+
 export function buildConfig(o: BuildOptions): Configuration {
   const version = o.version ?? manifest.version
   checkVersion(version)
+  const platform = o.platform ?? (process.platform === 'win32' ? 'win32' : 'linux')
   return {
     appId: APP_ID,
     productName: APP_NAME,
@@ -68,6 +84,9 @@ export function buildConfig(o: BuildOptions): Configuration {
     extraResources: [
       { from: '../server/dist/app', to: 'server' },
       { from: o.noticesFile, to: 'THIRD-PARTY-NOTICES.txt' },
+      // Outside the asar: a native .node file can't load from inside one. The bundle finds node_modules/node-pty beside it.
+      { from: '../pty-host/dist/pty-host.cjs', to: 'pty-host/pty-host.cjs' },
+      { from: o.nodePtyDir ?? realpathSync.native(NODE_PTY_LINK), to: 'pty-host/node_modules/node-pty', filter: nodePtyFilter(platform) },
     ],
     npmRebuild: false,
     nodeGypRebuild: false,
@@ -78,6 +97,8 @@ export function buildConfig(o: BuildOptions): Configuration {
       // Unsigned on purpose: the GitHub account is the trust boundary.
       verifyUpdateCodeSignature: false,
     },
+    // For now an unpacked folder, release/linux-unpacked/openaflow, for the pty proof. The AppImage comes later.
+    linux: { target: [{ target: 'dir', arch: ['x64'] }], executableName: PACKAGED_NAME },
     nsis: {
       oneClick: true,
       perMachine: false,
