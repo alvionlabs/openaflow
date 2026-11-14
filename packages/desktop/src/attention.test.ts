@@ -179,6 +179,22 @@ describe('attention items', () => {
     expect(other.map((i) => i.id)).toEqual(['chess\nfix-merged:36'])
   })
 
+  test('a /pod:task run raises the same tray items as a fix run, under its task-<slug> name', () => {
+    const TASK = 'task-scroll'
+    const claims = [{ ...fixClaim, plan: TASK }]
+    const agents = [{ ...fixEngineer, branch: TASK }, { ...fixReviewer, kind: 'task', branch: TASK }]
+    const repoWith = (state: PrStatus['state'], mergedAt?: number) =>
+      chess([onlyQueue()], { claims, agents, prs: [gh(36, state, { branch: TASK, ...(mergedAt === undefined ? {} : { mergedAt }) })] })
+    // Open and reviewed: you merge.
+    expect(items(repoWith('open'))).toMatchObject([{ id: 'chess\npr:36', hash: `#/chess/${TASK}`, run: 'Scroll' }])
+    // Merged: Send continue, however old the merge, until a toggle sends it.
+    expect(items(repoWith('merged', NOW - 3 * 24 * 60 * MIN))).toMatchObject([{ id: 'chess\nfix-merged:36', hash: `#/chess/${TASK}` }])
+    const on = (lastKey?: string) => ({ autoContinue: [{ repoId: 'chess', run: TASK, ...(lastKey === undefined ? {} : { lastKey }) }] })
+    expect(attentionItems(boardOf([repoWith('merged', NOW - MIN)], on()), NOW)).toEqual([])
+    expect(attentionItems(boardOf([repoWith('merged', NOW - 45 * MIN)], on()), NOW).map((i) => i.id)).toEqual(['chess\nfix-merged:36'])
+    expect(attentionItems(boardOf([repoWith('merged', NOW - 45 * MIN)], on('fix-merged:36')), NOW)).toEqual([])
+  })
+
   test('a plan run reads its sent key as it always did: with no session to send to, it waits for you', () => {
     const noSession = chess([manual, pushed(78), onlyQueue()], { prs: [gh(78, 'merged')] })
     const on = { autoContinue: [{ repoId: 'chess', run: PLAN, lastKey: 'wave-merged:78' }] }
@@ -187,11 +203,28 @@ describe('attention items', () => {
     expect(attentionItems(boardOf([sendable()], on), NOW)).toEqual([])
   })
 
-  test('a failed send on a toggled fix run raises no item', () => {
+  test('a plan run whose send of this key failed raises the item, with a session too', () => {
+    const failed = (lastKey: string) => attentionItems(boardOf([sendable()], { autoContinue: [{ repoId: 'chess', run: PLAN, lastKey, lastFailed: true }] }), NOW).map((i) => i.id)
+    expect(failed('wave-merged:78')).toEqual(['chess\nfailed:wave-merged:78'])
+    // A mark on another key is an older stop: the board sends this one by itself.
+    expect(failed('wave-merged:77')).toEqual([])
+  })
+
+  describe('a failed send on a toggled fix run', () => {
     const repoAt = chess([onlyQueue()], { claims: [fixClaim], agents: [fixEngineer, fixReviewer], prs: [gh(36, 'merged', { branch: FIX, mergedAt: NOW - 5 * MIN })] })
     const actions = [{ at: NOW - MIN, action: 'resume', repoId: 'chess', repo: 'chess', target: `${FIX} · continue`, result: 'failed', reply: 'continue', auto: true }] as const
-    const board = boardOf([repoAt], { autoContinue: [{ repoId: 'chess', run: FIX, lastKey: 'fix-merged:36' }], actions: [...actions] })
-    expect(attentionItems(board, NOW)).toEqual([])
+    const idsWith = (toggle: { lastKey: string; lastFailed?: true }) =>
+      attentionItems(boardOf([repoAt], { autoContinue: [{ repoId: 'chess', run: FIX, ...toggle }], actions: [...actions] }), NOW).map((i) => i.id)
+
+    test('raises the item when the send for this key failed', () => {
+      // Its own id, so it sends a toast even when the stop already did.
+      expect(idsWith({ lastKey: 'fix-merged:36', lastFailed: true })).toEqual(['chess\nfailed:fix-merged:36'])
+    })
+
+    test('stays quiet when the send for this key started, whatever the action log says', () => {
+      // PR #88's fix matched the log's failure by run, so a key that started still toasted `Send continue`.
+      expect(idsWith({ lastKey: 'fix-merged:36' })).toEqual([])
+    })
   })
 
   test('a bad repo is quiet', () => {

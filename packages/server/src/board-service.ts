@@ -194,9 +194,9 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       if (deps.actions) board.actions = deps.actions()
       // The toggles that are on, under each repo's id now, with the stop each last sent, so a sent stop raises no toast.
       if (deps.autoContinue) {
-        board.autoContinue = deps.autoContinue().flatMap(({ path, run, lastKey }) => {
+        board.autoContinue = deps.autoContinue().flatMap(({ path, run, lastKey, lastFailed }) => {
           const repo = repos.find((r) => repoPathKey(r) === path)
-          return repo ? [{ repoId: repo.id, run, ...(lastKey === undefined ? {} : { lastKey }) }] : []
+          return repo ? [{ repoId: repo.id, run, ...(lastKey === undefined ? {} : { lastKey }), ...(lastFailed ? { lastFailed } : {}) }] : []
         })
       }
       return board
@@ -259,7 +259,7 @@ export function finalPrBranches(model: RepoModel, claims: Pick<Claim, 'plan'>[] 
     .map((plan) => plan.slug)
 }
 
-/** The head branches gh is asked about: each fix run's, then each final PR's. */
+/** The head branches gh is asked about: each one-off (task or fix) run's, then each final PR's. */
 const prBranches = (repo: Pick<BoardRepo, 'model' | 'claims'>) => [...fixRunNames(repo), ...finalPrBranches(repo.model, repo.claims)]
 
 function folderError(err: unknown): string {

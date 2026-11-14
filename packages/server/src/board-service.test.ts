@@ -160,12 +160,12 @@ describe('board service', () => {
     const repo = copyFixture()
     await register(repo)
     const key = caseless ? normalizeRepoPath(repo, platform).toLowerCase() : normalizeRepoPath(repo, platform)
-    toggles = [{ path: key, run: 'alpha', lastKey: 'sprint-done:one' }, { path: key, run: 'fix-scroll' }, { path: '/not/on/the/board', run: 'alpha' }]
+    toggles = [{ path: key, run: 'alpha', lastKey: 'sprint-done:one' }, { path: key, run: 'fix-scroll', lastKey: 'fix-merged:36', lastFailed: true }, { path: '/not/on/the/board', run: 'alpha' }]
     // Read on every build, under the repo's id now, with the stop it last sent. A repo that isn't on the Board reads off.
     const id = repoId(repo, platform, caseless)
     expect((await withToggles.build()).autoContinue).toEqual([
       { repoId: id, run: 'alpha', lastKey: 'sprint-done:one' },
-      { repoId: id, run: 'fix-scroll' },
+      { repoId: id, run: 'fix-scroll', lastKey: 'fix-merged:36', lastFailed: true },
     ])
     expect(await createBoardService(deps()).build()).not.toHaveProperty('autoContinue')
   })
@@ -435,6 +435,29 @@ describe('board service', () => {
       ['rev1', 'fix-clock', 'fix', 95],
     ])
     expect(model.listRuns(board, NOW).find((x) => x.fix === 'clock')).toMatchObject({ plan: 'fix-clock', where: 'review', state: 'running', portBase: 3200 })
+  })
+
+  test('a /pod:task claim: refreshGh asks gh for its branch; the Board has its branch PR, its agents, and a task run', async () => {
+    const repo = copyFixture()
+    const path = normalizeRepoPath(repo, platform)
+    await claim(3200, repo, 'task-clock')
+    // pod 0.10.12's dispatch shapes: the engineer's `branch name`, the reviewer's `kind`, `PR URL`, and `branch` fields.
+    await transcript(repo, 'eng1', 'pod:engineer', 'Standalone /pod:task dispatch (no sprint slug).\n\n- **task:** make the clock test use fake timers.\n- **branch name:** task-clock\n- **merge-target branch:** main')
+    await transcript(repo, 'rev1', 'pod:reviewer', '- **kind:** task\n- **PR URL:** https://github.com/o/r/pull/95\n- **merge-target:** main\n- **task:**\n  make the clock test use fake timers.\n- **branch:** task-clock\n- **round:** 1')
+
+    const gh = fakeGh({}, 'ok', { 'task-clock': { number: 95, state: 'open', checks: 'none', checkedAt: NOW, branch: 'task-clock' } })
+    const service = createBoardService(deps(gh))
+    const board = await service.build()
+    await service.refreshGh(board)
+    expect(gh.refreshed).toEqual([{ repoPath: path, numbers: [], branches: ['task-clock'] }])
+    const r = board.repos[0]!
+    expect(r.prs).toEqual([{ number: 95, state: 'open', checks: 'none', checkedAt: NOW, branch: 'task-clock' }])
+    expect(r.agents.map((a) => [a.id, a.branch, a.kind, a.pr])).toEqual([
+      ['eng1', 'task-clock', undefined, undefined],
+      ['rev1', 'task-clock', 'task', 95],
+    ])
+    expect(model.listRuns(board, NOW).find((x) => x.fix === 'clock')).toMatchObject({ plan: 'task-clock', where: 'review', state: 'running', portBase: 3200 })
+    expect(model.oneOffKind('task-clock')).toBe('task')
   })
 
   test("a claimed archived plan with no hand-back yet: refreshGh asks gh for the plan's branch; the Board has its final PR", async () => {
