@@ -1,8 +1,8 @@
 // A yes-or-no question in the shared modal: the heading, the detail, the facts an undo needs (a labelled list under
-// an open Details disclosure, DESIGN.md "Forms and errors"), muted notes, the status and the error (the shared alert box), then Cancel (quiet) and the confirm (danger). Busy turns both buttons off.
-import { Fragment, useId } from 'react'
+// an open Details disclosure, DESIGN.md "Forms and errors"), muted notes, the status and the error (the shared alert box), then Cancel (quiet) and the confirm (danger). Busy turns both buttons off; after a refusal, Cancel takes focus.
+import { Fragment, useEffect, useId, useRef } from 'react'
 import { Modal } from './Modal.tsx'
-import { FIRST_FOCUS } from './modal.ts'
+import { FIRST_FOCUS, focusAfterRefusal } from './modal.ts'
 import { ModalAlert } from './ModalAlert.tsx'
 
 /** One fact in the Details list: a muted label and its mono value, such as `Port base` and `3400`. */
@@ -25,6 +25,12 @@ export type ConfirmModalProps = {
 
 export function ConfirmModal({ heading, detail, details, notes, confirmLabel, busy, status, error, onConfirm, onCancel, returnFocusTo }: ConfirmModalProps) {
   const headingId = useId()
+  const actions = useRef<HTMLDivElement>(null)
+  const wasBusy = useRef(busy)
+  useEffect(() => {
+    focusAfterRefusal(actions.current, wasBusy.current, { busy, error })
+    wasBusy.current = busy
+  }, [busy, error])
   return (
     <Modal labelledBy={headingId} busy={busy} onClose={onCancel} className="confirm-modal" returnFocusTo={returnFocusTo}>
       <h2 id={headingId} className="modal-heading">
@@ -54,8 +60,8 @@ export function ConfirmModal({ heading, detail, details, notes, confirmLabel, bu
         {status}
       </p>
       {error && <ModalAlert message={error} />}
-      <div className="modal-actions">
-        {/* The safe button takes the first focus, so Enter on open deletes nothing and keeps the Details list open. */}
+      <div className="modal-actions" ref={actions}>
+        {/* The safe button takes the first focus, and focus again after a refusal, so Enter deletes nothing and keeps the Details list open. */}
         <button className="btn quiet" type="button" disabled={busy} onClick={onCancel} {...{ [FIRST_FOCUS]: '' }}>
           Cancel
         </button>

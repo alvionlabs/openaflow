@@ -42,8 +42,12 @@ export const TOGGLE_INITIAL: ToggleState = { kind: 'idle', seq: 0 }
 
 export type ToggleView = { on: boolean; disabled: boolean; error?: string }
 
-/** What the switch shows, given the Board's value for its run. */
-export function toggleView(boardOn: boolean, s: ToggleState): ToggleView {
+/**
+ * What the switch shows, given the Board's value for its run. `text` turns a refusal's word into the words on screen
+ * (`toggleText` in AutoContinueButton.tsx); it lives there because this file must not import the confirm modal's
+ * modules (the desktop app type-checks it through next-step.ts, with no JSX).
+ */
+export function toggleView(boardOn: boolean, s: ToggleState, text: (word: string) => string): ToggleView {
   switch (s.kind) {
     case 'idle':
       return { on: boardOn, disabled: false }
@@ -52,7 +56,7 @@ export function toggleView(boardOn: boolean, s: ToggleState): ToggleView {
     case 'saved':
       return { on: s.on, disabled: false }
     case 'error':
-      return { on: boardOn, disabled: false, error: s.message }
+      return { on: boardOn, disabled: false, error: text(s.message) }
   }
 }
 
@@ -60,7 +64,7 @@ export function reduceToggle(s: ToggleState, e: ToggleEvent): ToggleState {
   switch (e.type) {
     case 'press':
       if (s.kind === 'saving') return s
-      return { kind: 'saving', seq: s.seq + 1, on: !toggleView(e.boardOn, s).on }
+      return { kind: 'saving', seq: s.seq + 1, on: !toggleView(e.boardOn, s, String).on }
     case 'reply': {
       if (s.kind !== 'saving' || e.seq !== s.seq) return s
       if (!e.reply.ok) return { kind: 'error', seq: s.seq, on: e.boardOn, message: e.reply.message }
@@ -81,8 +85,11 @@ export type ToggleFlow = {
   board(on: boolean): void
 }
 
+/** `onRefused`: called once per refused reply, so the owner can send the exact cause to the console. */
+export type ToggleHooks = { onRefused?: (reply: { status: number; message: string }) => void }
+
 /** Runs the toggle reducer and posts auto-continue as it moves to saving. */
-export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) => void, post: Post = defaultPost): ToggleFlow {
+export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) => void, post: Post = defaultPost, { onRefused }: ToggleHooks = {}): ToggleFlow {
   let state = TOGGLE_INITIAL
   let boardOn = false
   const dispatch = (e: ToggleEvent) => {
@@ -90,6 +97,7 @@ export function createToggleFlow(target: RunTarget, onChange: (s: ToggleState) =
     state = reduceToggle(state, e)
     if (state === prev) return
     onChange(state)
+    if (onRefused && state.kind === 'error' && e.type === 'reply' && !e.reply.ok) onRefused(e.reply)
     const s = state
     if (s.kind === 'saving' && prev.kind !== 'saving') {
       void post<{ on: boolean }>('auto-continue', { repoId: target.repoId, run: target.run, on: s.on }).then((reply) =>

@@ -1,16 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { buildRepoModel, listRuns, type Board, type BoardRepo, type Claim, type PrStatus, type RunSummary } from '@openaflow/model'
-import { createElement } from 'react'
+import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
 import type { ActionReply } from '../../actions-client.ts'
 import type { StreamState } from '../../board-stream.ts'
 import { hashFor, type View } from '../../selection.ts'
-import { AutoContinueButtonView } from './AutoContinueButton.tsx'
+import { AutoContinueButtonView, toggleText } from './AutoContinueButton.tsx'
 import { MENU_TRIGGER_ID } from './BarMenu.tsx'
 import { confirmView, moreButtonId, removeTarget } from './remove-flow.ts'
-import { createToggleFlow, toggleView, type Post, type ToggleState } from './resume-flow.ts'
+import { createToggleFlow, toggleView, type Post, type ToggleState, type ToggleView } from './resume-flow.ts'
 import { RunsList } from './RunsList.tsx'
 import { RunsScreen } from './RunsScreen.tsx'
 import type { TabStorage } from './tab-memory.ts'
@@ -673,14 +673,40 @@ describe('Auto-continue button in the run header', () => {
     flow.press()
     expect(posts).toEqual([{ path: 'auto-continue', body: { repoId: 'chess', run: PLAN, on: true } }])
     // While it saves, the button shows the value asked for and takes no second press.
-    const saving = renderToStaticMarkup(createElement(AutoContinueButtonView, { view: toggleView(false, state!), onPress: () => {} }))
-    expect(saving).toMatch(/aria-pressed="true"[^>]*disabled=""|disabled=""[^>]*aria-pressed="true"/)
+    const saving = renderToStaticMarkup(createElement(AutoContinueButtonView, { view: toggleView(false, state!, toggleText), onPress: () => {} }))
+    expect(saving).toMatch(/aria-pressed="true"/)
+    expect(saving).toMatch(/aria-disabled="true"/)
     await Promise.resolve()
     await Promise.resolve()
-    const html = renderToStaticMarkup(createElement(AutoContinueButtonView, { view: toggleView(false, state!), onPress: () => {} }))
+    const html = renderToStaticMarkup(createElement(AutoContinueButtonView, { view: toggleView(false, state!, toggleText), onPress: () => {} }))
     expect(html).toMatch(/aria-pressed="false"/)
-    expect(html).toMatch(/<span id="auto-continue-error" class="auto-continue-error" role="alert">not a run<\/span>/)
+    expect(html).toMatch(/<span id="auto-continue-error" class="auto-continue-error" role="alert">This run is already gone<\/span>/)
     expect(html).toMatch(/aria-describedby="auto-continue-error"/)
+  })
+
+  it('keeps focus while it saves: aria-disabled, never disabled, and a press does nothing until the save ends', () => {
+    /** The button element the view returns, so the test can press it as a click would. */
+    const buttonOf = (view: ToggleView, onPress: () => void) => {
+      const root = AutoContinueButtonView({ view, onPress }) as ReactElement<{ children: ReactNode }>
+      const kids = ([] as ReactNode[]).concat(root.props.children)
+      return kids.find((k) => isValidElement(k) && k.type === 'button') as ReactElement<{ onClick: () => void }>
+    }
+    let presses = 0
+    const onPress = () => presses++
+    const saving = toggleView(false, { kind: 'saving', seq: 1, on: true }, toggleText)
+    const html = renderToStaticMarkup(createElement(AutoContinueButtonView, { view: saving, onPress }))
+    const button = autoButtonOf(html)
+    // A disabled button drops keyboard focus to <body>; aria-disabled keeps it on the button.
+    expect(button).not.toMatch(/\sdisabled=""/)
+    expect(button).toMatch(/aria-disabled="true"/)
+    buttonOf(saving, onPress).props.onClick()
+    expect(presses, 'a press while saving').toBe(0)
+    // After the save: enabled again, and a press goes through.
+    const saved = toggleView(true, { kind: 'idle', seq: 1 }, toggleText)
+    const after = autoButtonOf(renderToStaticMarkup(createElement(AutoContinueButtonView, { view: saved, onPress })))
+    expect(after).not.toMatch(/aria-disabled|\sdisabled=""/)
+    buttonOf(saved, onPress).props.onClick()
+    expect(presses, 'a press after the save').toBe(1)
   })
 })
 

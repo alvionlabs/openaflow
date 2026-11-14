@@ -52,6 +52,8 @@ flowchart TD
 
 **Example.** The app starts offline, with a queue `BLOCKED` open and the staging branch's PR #901 open on GitHub. The first Board marks the `BLOCKED` seen, lights the dot, and notes the staging ask. No toast. `gh auth status` fails, so `gh` reads `logged-out`. At 8 s a slice's row becomes `#78 | pushed`: the docs name that merge, so one toast sends at once. An hour later `gh` comes back, and the first read finds #901: seen, no toast. Later a new `BLOCKED` line arrives: one toast, and one log line. A click opens that run. After the human answers it, the plan's `Send continue` reply appears and sends one more toast.
 
+**Linux and macOS.** Toast activation is Windows only (`usesToastActivation`). Elsewhere the shell skips it: no activator is registered, and a notification gets a plain title and body (`notificationOptions`), with no `launch` (#112).
+
 **Logic lives in:** `packages/desktop/src/attention.ts`, `notifier.ts`, `board-stream.ts`, and `toast-activation.ts`. The read marks are in `packages/server/src/gh.ts` and `board-service.ts`.
 
 ## Why it's this way

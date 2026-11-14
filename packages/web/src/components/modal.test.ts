@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { ConfirmModal, type ConfirmModalProps } from './ConfirmModal.tsx'
 import { ModalAlert } from './ModalAlert.tsx'
-import { FIRST_FOCUS, backdropClose, createModalEvents, focusFirst, keepFocusInside, returnFocus } from './modal.ts'
+import { FIRST_FOCUS, backdropClose, createModalEvents, focusAfterRefusal, focusFirst, keepFocusInside, returnFocus } from './modal.ts'
 import { StopList, type StopItem } from './StopList.tsx'
 
 const confirm = (over: Partial<ConfirmModalProps> = {}) =>
@@ -258,6 +258,25 @@ describe('shared modal', () => {
     expect(plain.focus).not.toHaveBeenCalled()
     // No dialog yet: nothing happens.
     expect(() => focusFirst(null)).not.toThrow()
+  })
+
+  it('after a refused confirm, focus goes back to the first-focus element (Cancel)', () => {
+    const cancel = { focus: vi.fn() }
+    const root = { querySelector: (sel: string) => (sel === `[${FIRST_FOCUS}]` ? cancel : null) }
+    // Busy ends with an error: the buttons are back on, and Cancel, the safe one, takes focus.
+    focusAfterRefusal(root, true, { busy: false, error: 'Something went wrong. Please try again' })
+    expect(cancel.focus).toHaveBeenCalledTimes(1)
+    // A later render with the same error moves nothing: the person may have tabbed to the confirm.
+    focusAfterRefusal(root, false, { busy: false, error: 'Something went wrong. Please try again' })
+    // Still busy, or busy again for a retry: the buttons are off, so nothing moves.
+    focusAfterRefusal(root, true, { busy: true })
+    focusAfterRefusal(root, false, { busy: true })
+    // Busy ends with no error (the dialog is about to close): nothing moves.
+    focusAfterRefusal(root, true, { busy: false })
+    focusAfterRefusal(root, true, { busy: false, error: '' })
+    expect(cancel.focus).toHaveBeenCalledTimes(1)
+    // No element yet: nothing throws.
+    expect(() => focusAfterRefusal(null, true, { busy: false, error: 'Failed' })).not.toThrow()
   })
 
   it('confirm names Cancel, and only Cancel, as the first focus', () => {

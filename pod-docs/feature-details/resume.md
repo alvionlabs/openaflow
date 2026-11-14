@@ -2,7 +2,7 @@
 
 ## What it is
 
-The board can send `continue` or `go` to a pod run's own Claude session, so you don't paste the reply into the chat. It runs `claude -p --resume <session> <word>` with your own login. A send starts from a Continue or Go button, or, for `continue` only, from the automatic check when the run's `auto-continue` toggle is on. Every send goes in the action log. Server side: `packages/server/src` (resume routes, auto-continue, toggle store, session activity, claude runner). Which reply may be sent is the model's rule in [queue-and-replies.md](queue-and-replies.md); the buttons and the switch are in [runs-and-pipeline.md](runs-and-pipeline.md).
+The board can send `continue` or `go` to a pod run's own Claude session, so you don't paste the reply into the chat. It runs `claude -p --resume <session> <word>` with your own login. A send starts from a Continue or Go button, or, for `continue` only, from the automatic check when the run's `auto-continue` toggle is on. Every send goes in the action log. Server side: `packages/server/src` (resume routes, auto-continue, toggle store, session activity, claude runner). Which reply may be sent is the model's rule in [queue-and-replies.md](queue-and-replies.md); the buttons and the Auto-continue toggle button in the run header are in [runs-and-pipeline.md](runs-and-pipeline.md).
 
 ## How it works
 

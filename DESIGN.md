@@ -46,4 +46,5 @@ Decided on 2026-11-13 in the Add repo modal ([choices](pod-docs/design-drafts/ad
 - In a form, a field and its label or error sit 8 px apart. Groups sit 16 px apart. The actions row sits at least 24 px below the last group.
 - Show facts in a dialog as a labelled list (muted label, mono value in `--fg`) under an open Details disclosure, never as unlabelled lines.
 - A dialog that removes something opens with focus on Cancel.
+- After a failed delete, focus returns to Cancel.
 - Keep error text short and warm: a few plain words, no period at the end, and what you can do next ('Something went wrong. Please try again'). Put the exact cause in the console.
