@@ -423,3 +423,11 @@ Decision: the sidebar card shows a 16 px blue fast-forward icon in its top-right
 Consequences on phones: at 375 × 667 the button narrows the title and `Wave board` takes its own line in the progress row, so the Next step card's button sits about 80 px lower and needs a short scroll.
 Options not chosen: keep the mono chip (the human found it weak); "Auto" with an icon after the status (the status column holds the status only); after the title (long titles push it down); on the repo line (the recommended option, not picked); a switch inside the button (wider); the loop, struck loop, and bolt icons (loop says "repeat", bolt reads as "power"); the wave board link under the flow, or on the Wave node of the flow (parked as `flow-node-opens-wave-board` on another branch).
 Other consequences: the plan's Look ("rules out icon-only signs") no longer holds for this sign. The card's link name still says `auto-continue on`.
+
+## 2026-11-14 — Linux CI jobs beside Windows (agent default — override anytime)
+
+**Context:** plan `terminal-host` makes Linux a real target. The 2026-10-22 entry "public repo, Windows-only CI" runs `verify` on `windows-latest` only, and its Consequences line allows more systems later.
+
+**Decision:** sprint `host-core` adds jobs on `ubuntu-latest` (`pty proof`, a Linux `verify`, and Electron checks under `xvfb`) beside the Windows jobs. This replaces "Windows-only" in the 2026-10-22 entry. Value in use: the jobs run on every PR and on push to `pod-staging`.
+
+**Rejected:** Windows-only CI. Why: nothing would prove the Linux build, and no maintainer machine runs Windows tests for every PR.
