@@ -103,7 +103,8 @@ Same look as the app: [calm-dashboard Look](calm-dashboard.md#look), `packages/w
 - **Layout:** the Next step card keeps its place. Under its title, a short vertical list (a thin left rule, one dot per item) shows what happened on this stop: done items with a green ring and a time, the current item filled in the needs-you colour. At phone width it stacks as today.
 - **Signature detail:** the "what happened" list on the Next step card (choice 3 c).
 - **Picks:** 1 b (the merge panel closes, and the card moves on), 2 b (the result shows in place, with no toast), 3 c (the "what happened" list), 4 b (the `auto` tag after the state), 5 b (newest first), 6 c (a modal with the folder path), 7 b (Forget asks in the same modal; the human chose Forget only), 8 b (the native dialog, plus a path field in the browser build).
-- **Rules out:** new colours or fonts, toasts for your own clicks, inline confirms in the sidebar, icon-only signs.
+- **Changed after review round 2 (human, 2026-11-14):** pick 4 b gave way to a fast-forward icon on the card's title row and an `Auto-continue` toggle button in the run header (PR #114); Add repo opens its modal first, with `Browse…` beside the field and path errors under it (PR #113). See `decisions.md`, 2026-11-13 and 2026-11-14.
+- **Rules out:** new colours or fonts, toasts for your own clicks, inline confirms in the sidebar. (Icon-only signs were ruled out here until the Auto-continue icon, 2026-11-14.)
 - **Draft:** `pod-docs/design-drafts/ui-rework-choices.html` (picks above).
 
 ## Key decisions
@@ -134,7 +135,7 @@ Same look as the app: [calm-dashboard Look](calm-dashboard.md#look), `packages/w
 - After a merge on the mock or fixture repo, the merge panel closes. The Next step card shows "Merged PR #N · time" and Continue, and no text names the PR twice.
 - A Continue press shows "Sending…" at once, then a sent item, before the run reads `running`. No toast is sent.
 - A `--no-review` PR with an ended engineer and no reviewer shows Merge. The same PR while the engineer runs does not.
-- A run with Auto-continue on shows the `auto` tag in the sidebar.
+- A run with Auto-continue on shows the fast-forward icon on its sidebar card, and the run header's `Auto-continue` button reads pressed (replaced the `auto` tag, PR #114).
 - The runs list puts the run with the newest activity on top, and the order does not change when nothing changes.
 - Remove repo and Forget open the same centred modal. Escape and a click outside close it, and focus stays inside it. Remove repo shows the path.
 - Forget removes a leftover run from the sidebar, the tray dot, and the banner. It deletes only that claim file, and the action log has a `forget-run` line.

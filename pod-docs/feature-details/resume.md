@@ -8,7 +8,7 @@ The board can send `continue` or `go` to a pod run's own Claude session, so you 
 
 - **Resume route** (`POST /api/actions/resume`, behind the action guard). Checks in order, nothing runs before all pass: `reply` is `continue` or `go` (so `try` is never sent); the model's sendable rule allows it on this run (`404 not waiting on you`); a session with a safe id exists (`404 no session`); the session is idle (`409 session is busy`); no resume for it is in flight (`409 resume in progress`). Then the runner starts, one `auto: false` entry is logged, and the Board is rebuilt.
 - **Sendable signals:** `continue` on `wave-merged`, `sprint-done`, `final-merged`, `fix-merged`, and `answered` (you answered a stopped run's entries and no `BLOCKED` of it is unanswered); `go` on `not-started` ([queue-and-replies.md](queue-and-replies.md)). The idle check below applies to each.
-- **Where you press it:** Continue or Go on a reply (the Next step card or a Waiting row); the Auto-continue switch for the selected run in the bar's ⋯ menu.
+- **Where you press it:** Continue or Go on a reply (the Next step card or a Waiting row); the `Auto-continue` toggle button in the run header, just left of the ⋯ (pressed when on); the sidebar card shows a fast-forward icon while it is on.
 - **On the Next step card** (`NextStepCard.tsx`, rules in `stop-log.ts`): under the title, a "what happened" list (L1's `StopList`) shows what you did on this stop.
   - A `merged` merge adds `Merged PR #N · HH:MM`, and the merge panel closes (`createMergeFlow`'s `onMerged`). Every other merge outcome, and an error, keeps today's panel.
   - A `started` Continue or Go adds `Sent continue · HH:MM` (or `go`), with the started line as its note, plus `Not saved to the action log.` when it isn't logged (`ReplyPanel`'s `onSent`). It shows no result block. A failed start keeps its result block and adds nothing; a refused request keeps its error.
@@ -89,3 +89,4 @@ The board can send `continue` or `go` to a pod run's own Claude session, so you 
 - 2026-11-13 · ui-rework w2-fix · after a merge, the card's reply row no longer names the PR the list shows merged: it reads `Continue so pod goes on.`
 - 2026-11-13 · ui-rework w2-fix · after a started Continue or Go, the card hides that send button until the run state or the card changes, or for 60 s, so a second press no longer starts a second send.
 - 2026-11-13 · ui-rework · plan complete: Merge, then Continue reads as one flow on the Next step card; final PR #108 passed review at round 2 · [report](../reports/ui-rework.html)
+- 2026-11-14 · ui-rework K2 · the Auto-continue switch left the ⋯ menu for a toggle button in the run header (PR #114); the routes didn't change.
