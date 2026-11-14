@@ -1,6 +1,8 @@
 # Plan: Terminal host
 
 _Generated: 2026-11-13 · Status: active · Grilled-with: pod (fast)_
+Port base: 8400
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=0 -->
 
 ## Goal
 OpenAFlow hosts its own terminals. Each terminal runs the real, unmodified `claude` with your own login. You start, watch, type into, resume, and end sessions in the app, so you use OpenAFlow only and no separate terminal. This is plan A of three: `terminal-host`, then `openaflow-plugin`, then `automatic-input`.
