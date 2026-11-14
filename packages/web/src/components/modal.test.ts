@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { ConfirmModal, type ConfirmModalProps } from './ConfirmModal.tsx'
 import { ModalAlert } from './ModalAlert.tsx'
-import { backdropClose, createModalEvents, keepFocusInside, returnFocus } from './modal.ts'
+import { FIRST_FOCUS, backdropClose, createModalEvents, focusFirst, keepFocusInside, returnFocus } from './modal.ts'
 import { StopList, type StopItem } from './StopList.tsx'
 
 const confirm = (over: Partial<ConfirmModalProps> = {}) =>
@@ -234,6 +234,36 @@ describe('shared modal', () => {
     const dialog2 = { contains: (n: unknown) => n === goingOff, focus: vi.fn() }
     keepFocusInside(dialog2, { activeElement: goingOff })
     expect(dialog2.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('the named element takes the first focus; with none named, the browser picks', () => {
+    // Named: the marked element takes focus, and the dialog itself does not.
+    const cancel = { focus: vi.fn() }
+    const seen: string[] = []
+    const dialog = (found: { focus(): void } | null) => ({
+      querySelector: (sel: string) => {
+        seen.push(sel)
+        return sel === `[${FIRST_FOCUS}]` ? found : null
+      },
+      focus: vi.fn(),
+    })
+    const named = dialog(cancel)
+    focusFirst(named)
+    expect(seen).toEqual([`[${FIRST_FOCUS}]`])
+    expect(cancel.focus).toHaveBeenCalledTimes(1)
+    expect(named.focus).not.toHaveBeenCalled()
+    // None named (Add repo): nothing moves, so showModal()'s own pick stands and the form's field focus runs after.
+    const plain = dialog(null)
+    expect(() => focusFirst(plain)).not.toThrow()
+    expect(plain.focus).not.toHaveBeenCalled()
+    // No dialog yet: nothing happens.
+    expect(() => focusFirst(null)).not.toThrow()
+  })
+
+  it('confirm names Cancel, and only Cancel, as the first focus', () => {
+    const html = confirm({ notes: ['A note.'], error: 'Failed.' })
+    const marked = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${FIRST_FOCUS}=""[^>]*>([^<]*)`, 'g'))].map((m) => [m[1], m[2]])
+    expect(marked).toEqual([['button', 'Cancel']])
   })
 
   it('focus goes back to the opener', () => {

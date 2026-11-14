@@ -2,6 +2,7 @@
 // an open Details disclosure, DESIGN.md "Forms and errors"), muted notes, the status and the error (the shared alert box), then Cancel (quiet) and the confirm (danger). Busy turns both buttons off.
 import { Fragment, useId } from 'react'
 import { Modal } from './Modal.tsx'
+import { FIRST_FOCUS } from './modal.ts'
 import { ModalAlert } from './ModalAlert.tsx'
 
 /** One fact in the Details list: a muted label and its mono value, such as `Port base` and `3400`. */
@@ -54,7 +55,8 @@ export function ConfirmModal({ heading, detail, details, notes, confirmLabel, bu
       </p>
       {error && <ModalAlert message={error} />}
       <div className="modal-actions">
-        <button className="btn quiet" type="button" disabled={busy} onClick={onCancel}>
+        {/* The safe button takes the first focus, so Enter on open deletes nothing and keeps the Details list open. */}
+        <button className="btn quiet" type="button" disabled={busy} onClick={onCancel} {...{ [FIRST_FOCUS]: '' }}>
           Cancel
         </button>
         <button className="btn danger" type="button" disabled={busy} onClick={onConfirm}>

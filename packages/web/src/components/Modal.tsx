@@ -1,7 +1,7 @@
 // The shared modal: a native <dialog> opened with showModal(), so the page behind is inert and Escape
-// arrives as `cancel`. It is open while mounted. The rules are in modal.ts; this file only wires them.
+// arrives as `cancel`. It is open while mounted. A child marked with FIRST_FOCUS takes the first focus. The rules are in modal.ts; this file only wires them.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { createModalEvents, keepFocusInside, returnFocus } from './modal.ts'
+import { createModalEvents, focusFirst, keepFocusInside, returnFocus } from './modal.ts'
 import './modal.css'
 
 export type ModalProps = {
@@ -27,6 +27,7 @@ export function Modal({ labelledBy, busy, onClose, className, returnFocusTo, chi
     const el = ref.current
     events.mount()
     if (el && !el.open) el.showModal()
+    focusFirst(el)
     return () => {
       events.unmount()
       if (el?.open) el.close()
