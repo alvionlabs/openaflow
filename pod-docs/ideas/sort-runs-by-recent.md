@@ -1,6 +1,6 @@
 # Idea: Sort the runs list by most recent activity
 
-Status: parked
+Status: built — PR #108 (plan ui-rework)
 
 ## The idea
 

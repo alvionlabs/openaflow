@@ -1,6 +1,6 @@
 # Idea: Show that a run is on Auto-continue
 
-Status: parked
+Status: built — PR #108 (plan ui-rework)
 
 ## The idea
 

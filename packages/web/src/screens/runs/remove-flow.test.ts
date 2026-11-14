@@ -1,13 +1,13 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardRepo, RemoveRepoResult, RunSummary } from '@openaflow/model'
-import type { ActionReply } from '../../actions-client.ts'
-import { RemoveConfirmView, giveFocusBack } from './RemoveConfirm.tsx'
-import { HEADER_PLACE, REMOVE_ITEM, confirmView, createRemoveFlow, hashAfterRemove, moreName, navigateAfterRemove, removeTarget, repoOfRun, type Post, type RemoveState, type RemoveTarget } from './remove-flow.ts'
+import { NEED_RELOAD, RESTARTED, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { ConfirmModal } from '../../components/ConfirmModal.tsx'
+import { REMOVE_ERRORS, REMOVE_ITEM, confirmView, createRemoveFlow, hashAfterRemove, moreName, navigateAfterRemove, removeTarget, repoOfRun, type Post, type RemoveState, type RemoveTarget } from './remove-flow.ts'
 
-const A: RemoveTarget = { repoId: 'ra', name: 'alpha-repo', path: 'C:/code/alpha-repo', alsoClaimed: false, runs: 2, place: HEADER_PLACE, returnTo: 'run-menu-trigger' }
-const B: RemoveTarget = { repoId: 'rb', name: 'beta-repo', path: 'C:/code/beta-repo', alsoClaimed: false, runs: 1, place: HEADER_PLACE, returnTo: 'run-menu-trigger' }
+const A: RemoveTarget = { repoId: 'ra', name: 'alpha-repo', path: 'C:/code/alpha-repo', alsoClaimed: false, runs: 2, returnTo: 'run-menu-trigger' }
+const B: RemoveTarget = { repoId: 'rb', name: 'beta-repo', path: 'C:/code/beta-repo', alsoClaimed: false, runs: 1, returnTo: 'run-menu-trigger' }
 
 type Call = { path: string; body: object; resolve: (r: ActionReply<unknown>) => void }
 
@@ -39,16 +39,11 @@ const ok: ActionReply<RemoveRepoResult> = { ok: true, data: { outcome: 'removed'
 const refused = (message: string, status = 404): ActionReply<RemoveRepoResult> => ({ ok: false, status, message })
 
 describe('remove flow', () => {
-  it('opens a confirm, and Cancel or Escape closes it without a request', () => {
+  it('opens a confirm, and Cancel (or Escape, which the modal sends as cancel) closes it without a request', () => {
     const t = setup()
     t.flow.open(A)
     expect(t.flow.state()).toMatchObject({ kind: 'confirm', target: A })
     t.flow.cancel()
-    expect(t.flow.state().kind).toBe('idle')
-    t.flow.open(A)
-    t.flow.key('Enter')
-    expect(t.flow.state().kind).toBe('confirm')
-    t.flow.key('Escape')
     expect(t.flow.state().kind).toBe('idle')
     expect(t.calls).toEqual([])
     expect(t.removed).toEqual([])
@@ -92,7 +87,6 @@ describe('remove flow', () => {
     t.flow.open(A)
     t.flow.remove()
     t.flow.cancel()
-    t.flow.key('Escape')
     t.flow.open(B)
     expect(t.flow.state()).toMatchObject({ kind: 'removing', target: A })
     await t.answer(0, ok)
@@ -105,7 +99,7 @@ describe('remove flow', () => {
     t.flow.remove()
     await t.answer(0, refused('config unreadable', 500))
     expect(t.flow.state()).toMatchObject({ kind: 'error', target: A })
-    expect(confirmView(t.flow.state())?.error).toBe("The board's config file can't be read, so nothing changed. Fix or delete config.json, then try again.")
+    expect(confirmView(t.flow.state())?.error).toBe("Can't read config.json. Please fix it and try again")
     expect(t.removed).toEqual([])
     t.flow.remove()
     expect(t.calls).toHaveLength(2)
@@ -118,15 +112,15 @@ describe('remove flow', () => {
     t.flow.open(A)
     t.flow.remove()
     await t.answer(0, refused('not registered'))
-    expect(confirmView(t.flow.state())?.error).toBe("This repo is no longer in the board's list.")
+    expect(confirmView(t.flow.state())?.error).toBe('This repo is already gone')
     t.flow.open(A)
     t.flow.remove()
     await t.answer(1, refused('not on the board'))
-    expect(confirmView(t.flow.state())?.error).toBe("This repo is no longer in the board's list.")
+    expect(confirmView(t.flow.state())?.error).toBe('This repo is already gone')
     t.flow.open(A)
     t.flow.remove()
-    await t.answer(2, refused('The board restarted. Reload the page.', 403))
-    expect(confirmView(t.flow.state())?.error).toBe('The board restarted. Reload the page.')
+    await t.answer(2, refused(RESTARTED, 403))
+    expect(confirmView(t.flow.state())?.error).toBe('The app restarted. Please reload')
   })
 
   it('a reply for a confirm that was closed and opened again is dropped', async () => {
@@ -140,31 +134,83 @@ describe('remove flow', () => {
   })
 })
 
-describe('confirm words', () => {
+describe('error text', () => {
+  afterEach(() => vi.restoreAllMocks())
+  const failWith = async (message: string, status: number) => {
+    const t = setup()
+    t.flow.open(A)
+    t.flow.remove()
+    await t.answer(0, refused(message, status))
+    return t
+  }
+
+  it('each route word maps to its text', async () => {
+    const words: [string, number, string][] = [
+      ['not registered', 404, 'This repo is already gone'],
+      ['not on the board', 404, 'This repo is already gone'],
+      ['config unreadable', 500, "Can't read config.json. Please fix it and try again"],
+      ['config unwritable', 500, "Couldn't save that. Please try again"],
+      ['ambiguous repo', 409, 'Two repos share this id, so nothing changed'],
+    ]
+    for (const [word, status, text] of words) expect(confirmView((await failWith(word, status)).flow.state())!.error, word).toBe(text)
+  })
+
+  it('an unknown word, HTTP 500, or no answer shows the try-again text and sends the raw word and status to the console, once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const [word, status] of [['something new', 418], ['HTTP 500', 500], [UNREACHABLE, 0], ['forbidden origin', 403], ['constructor', 400]] as const) {
+      warn.mockClear()
+      const t = await failWith(word, status)
+      expect(confirmView(t.flow.state())!.error, word).toBe('Something went wrong. Please try again')
+      confirmView(t.flow.state())
+      expect(warn, word).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]![0]).toContain(`HTTP ${status}`)
+      expect(warn.mock.calls[0]![0]).toContain(word)
+    }
+  })
+
+  it('a dead or missing token asks for a reload; it and a known word write nothing to the console', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const word of [RESTARTED, NEED_RELOAD]) expect(confirmView((await failWith(word, 403)).flow.state())!.error).toBe('The app restarted. Please reload')
+    await failWith('not registered', 404)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('no message ends with a period', () => {
+    for (const text of [...REMOVE_ERRORS.values(), 'Something went wrong. Please try again', 'The app restarted. Please reload']) expect(text, text).not.toMatch(/\.$/)
+    expect(REMOVE_ERRORS.size).toBe(5)
+  })
+})
+
+describe('modal view', () => {
   it('the menu item reads Remove repo', () => {
     expect(REMOVE_ITEM).toBe('Remove repo')
   })
 
-  it('names the repo and says plainly that only the board list changes', () => {
-    const s: RemoveState = { kind: 'confirm', seq: 1, target: A }
-    const v = confirmView(s)!
-    expect(v.heading).toBe('Remove alpha-repo?')
-    expect(v.body).toBe("Only the board's list changes; its files aren't touched.")
-    expect(v.runsLine).toBe('Its 2 runs leave the sidebar.')
-    expect(v.path).toBe(A.path)
-    expect(v.claimNote).toBeUndefined()
-    expect(v.busy).toBe(false)
+  it('has the heading, the detail, and the path as the Folder detail', () => {
+    const v = confirmView({ kind: 'confirm', seq: 1, target: A })!
+    expect(v).toEqual({
+      heading: 'Remove alpha-repo?',
+      detail: 'The board stops watching this folder. No files change.',
+      details: [{ label: 'Folder', value: A.path }],
+      confirmLabel: 'Remove',
+      busy: false,
+      returnFocusTo: 'run-menu-trigger',
+    })
     expect(confirmView({ kind: 'idle', seq: 0 })).toBeUndefined()
   })
 
-  it('counts one run in the singular', () => {
-    expect(confirmView({ kind: 'confirm', seq: 1, target: B })!.runsLine).toBe('Its 1 run leaves the sidebar.')
+  it('a repo that is only registered has no runs line, whatever its run count', () => {
+    expect(confirmView({ kind: 'confirm', seq: 1, target: B })!.notes).toBeUndefined()
+    expect(confirmView({ kind: 'confirm', seq: 1, target: { ...A, runs: 0 } })!.notes).toBeUndefined()
   })
 
   it('a repo a port claim also lists keeps its runs: the claim note, no run count', () => {
     const v = confirmView({ kind: 'confirm', seq: 1, target: { ...A, alsoClaimed: true } })!
-    expect(v.claimNote).toBe('A running pod run also lists this repo through its port claim, so it stays in the sidebar until that run ends.')
-    expect(v.runsLine).toBeUndefined()
+    expect(v.notes).toEqual(['A running pod run also lists this repo through its port claim, so it stays in the sidebar until that run ends.'])
+  })
+
+  it('sends focus back to the ⋯ it was opened from', () => {
+    expect(confirmView({ kind: 'confirm', seq: 1, target: { ...A, returnTo: 'run-more-#/ra/x' } })!.returnFocusTo).toBe('run-more-#/ra/x')
   })
 
   it('removing disables both buttons and says so', () => {
@@ -173,24 +219,23 @@ describe('confirm words', () => {
     expect(v.status).toBe('Removing…')
   })
 
-  it('renders an in-place panel, not a dialog, with a danger Remove and a neutral Cancel', () => {
-    const html = renderToStaticMarkup(createElement(RemoveConfirmView, { view: confirmView({ kind: 'confirm', seq: 1, target: A })!, onRemove: () => {}, onCancel: () => {}, onKey: () => {} }))
-    expect(html).toMatch(/^<section[^>]*class="inplace remove-confirm"/)
-    expect(html).not.toContain('role="dialog"')
-    expect(html).toMatch(/tabindex="-1"/)
+  it('renders as the shared modal: a dialog named by its heading, the path as the Folder detail, Cancel then a danger Remove', () => {
+    const html = renderToStaticMarkup(createElement(ConfirmModal, { ...confirmView({ kind: 'confirm', seq: 1, target: A })!, onConfirm: () => {}, onCancel: () => {} }))
+    expect(html).toMatch(/^<dialog[^>]*class="modal confirm-modal"/)
+    expect([...html.matchAll(/<dt[^>]*>([^<]*)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map((m) => [m[1], m[2]])).toEqual([['Folder', A.path]])
+    expect(html).not.toMatch(/runs? leaves? the sidebar/)
     const buttons = [...html.matchAll(/<button class="([^"]*)"[^>]*>([^<]*)<\/button>/g)].map((m) => [m[2], m[1]])
     expect(buttons).toEqual([
-      ['Remove', 'btn danger'],
       ['Cancel', 'btn quiet'],
+      ['Remove', 'btn danger'],
     ])
-    expect(html).toContain('Its 2 runs leave the sidebar.')
   })
 })
 
 const repo = (over: Partial<BoardRepo>): BoardRepo =>
   ({ id: 'ra', name: 'alpha-repo', path: A.path, source: 'registered', claims: [], model: { plans: [], queue: [] }, agents: [], prs: [], ...over }) as BoardRepo
 const runOf = (repoId: string, name: string, plan?: string): RunSummary => ({ repoId, repo: name, ...(plan ? { plan } : {}), where: '', state: 'idle' }) as RunSummary
-const ctx = (repos: BoardRepo[], runs: RunSummary[] = [runOf('ra', 'alpha-repo', 'x'), runOf('ra', 'alpha-repo', 'y')]) => ({ repos, runs, place: HEADER_PLACE, returnTo: 'run-menu-trigger' })
+const ctx = (repos: BoardRepo[], runs: RunSummary[] = [runOf('ra', 'alpha-repo', 'x'), runOf('ra', 'alpha-repo', 'y')]) => ({ repos, runs, returnTo: 'run-menu-trigger' })
 
 describe('removeTarget', () => {
   it('offers Remove for a repo in the config, and not for one listed only through a claim', () => {
@@ -204,12 +249,11 @@ describe('removeTarget', () => {
     expect(removeTarget(repo({ error: 'repo folder not found' }), ctx([repo({})]))).toEqual(A)
   })
 
-  it('counts only that repo runs, and keeps where it was opened and where focus goes back', () => {
+  it('counts only that repo runs, and keeps where focus goes back', () => {
     const runs = [runOf('ra', 'alpha-repo', 'x'), runOf('rb', 'beta-repo', 'y'), runOf('ra', 'alpha-repo', 'z'), runOf('ra', 'alpha-repo')]
-    expect(removeTarget(repo({}), { repos: [repo({})], runs, place: '#/ra/x', returnTo: 'run-more-#/ra/x' })).toEqual({
+    expect(removeTarget(repo({}), { repos: [repo({})], runs, returnTo: 'run-more-#/ra/x' })).toEqual({
       ...A,
       runs: 3,
-      place: '#/ra/x',
       returnTo: 'run-more-#/ra/x',
     })
   })
@@ -276,7 +320,7 @@ describe('two repos with the same id (chess-web and chess_web)', () => {
     t.flow.open(A)
     t.flow.remove()
     await t.answer(0, refused('ambiguous repo', 409))
-    expect(confirmView(t.flow.state())?.error).toBe("Another repo on the board has the same id, so the board can't tell which one to remove. Nothing changed.")
+    expect(confirmView(t.flow.state())?.error).toBe('Two repos share this id, so nothing changed')
   })
 })
 
@@ -314,50 +358,5 @@ describe('moreName: the sidebar ⋯ label', () => {
 
   it('drops the brackets when the run is named after its repo', () => {
     expect(moreName('ytb-feed', 'ytb-feed')).toBe('ytb-feed')
-  })
-})
-
-describe('giveFocusBack: when the confirm has left the page', () => {
-  const setup = (active: 'body' | 'none' | 'elsewhere', present: string[] = ['run-more-x', 'run-menu-trigger']) => {
-    const focused: string[] = []
-    const el = (id: string) => ({ focus: () => focused.push(id) })
-    const body = el('body')
-    const doc = {
-      body,
-      activeElement: active === 'body' ? body : active === 'none' ? null : el('h1.run-name'),
-      getElementById: (id: string) => (present.includes(id) ? el(id) : null),
-    } as unknown as Pick<Document, 'getElementById' | 'activeElement' | 'body'>
-    return { doc, focused }
-  }
-  const gone = { isConnected: false }
-
-  it('a plain Cancel or Escape: focus fell to the body, so it goes back to the button', () => {
-    const t = setup('body')
-    giveFocusBack(gone, 'run-more-x', t.doc)
-    expect(t.focused).toEqual(['run-more-x'])
-  })
-
-  it('no active element at all: it goes back to the button', () => {
-    const t = setup('none')
-    giveFocusBack(gone, 'run-more-x', t.doc)
-    expect(t.focused).toEqual(['run-more-x'])
-  })
-
-  it('focus already moved elsewhere (Open run on the run title): it stays there', () => {
-    const t = setup('elsewhere')
-    giveFocusBack(gone, 'run-more-x', t.doc)
-    expect(t.focused).toEqual([])
-  })
-
-  it('the button left with its card: it goes to the header button', () => {
-    const t = setup('body', ['run-menu-trigger'])
-    giveFocusBack(gone, 'run-more-x', t.doc)
-    expect(t.focused).toEqual(['run-menu-trigger'])
-  })
-
-  it('a panel still on the page was not closed (StrictMode runs the cleanup once on mount): focus stays', () => {
-    const t = setup('body')
-    giveFocusBack({ isConnected: true }, 'run-more-x', t.doc)
-    expect(t.focused).toEqual([])
   })
 })
