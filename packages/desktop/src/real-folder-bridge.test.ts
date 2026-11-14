@@ -62,7 +62,7 @@ const removeWithRetry = async (path: string) => {
   }
 }
 
-describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && process.platform === 'win32')('the folder bridge in real Electron', () => {
+describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform === 'win32' || process.platform === 'linux'))('the folder bridge in real Electron', () => {
   let tmp: string
   let shell: ChildProcess | undefined
   let text = ''
