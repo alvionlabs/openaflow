@@ -371,7 +371,9 @@ describe('the bundle, run alone', () => {
   }, RUN_MS)
 
   test.skipIf(WIN)('the bundle exits 0 on SIGTERM', async () => {
-    const { c } = await runCopy()
+    const { c, base } = await runCopy()
+    // The listening line comes a moment before the signal handlers. An answer means the start has ended.
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
     c.kill('SIGTERM')
     expect(await exitOf(c)).toBe(0)
   }, RUN_MS)
