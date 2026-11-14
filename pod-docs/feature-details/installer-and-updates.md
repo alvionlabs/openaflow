@@ -41,6 +41,7 @@ flowchart TD
 - **A fresh start for a second launch during the last chance.** The old copy holds the single-instance lock and a dead page. Showing that page helps nobody. A relaunch retries the server, and the user asked for the app. Turned down: ignore the launch, because the user then sees nothing.
 - **One place for the release repo.** `RELEASE_REPO` in `update-flow.ts` names the owner and the repo. `build-config.ts` takes `publish` from it, and the error box's Releases link comes from it.
 - **The test feed is compiled out.** A build-time flag removes it from every shipped build, and `release:check` refuses a build that holds its text.
+- **The test hooks are compiled out.** `__OPENAFLOW_TEST_HOOKS__` keeps `globalThis.__openaflowTest` only in the Electron harness's bundles and in `pnpm package --test-hooks`. `release:check` refuses a `main.cjs` that holds `__openaflowTest`.
 
 ## Watch out
 
@@ -49,7 +50,7 @@ flowchart TD
 - **The workflow has never run on GitHub.** Its launch check on `windows-latest`, `gh release create`, and the GitHub provider are unproved.
 - **Open queue item (before hosting):** no Electron fuses are set, so `ELECTRON_RUN_AS_NODE` still works on the shipped exe.
 - A real install makes `refuseRealInstall` stop every proof. Uninstall first.
-- `pnpm package --test-feed` is for proofs only. Never upload its files.
+- `pnpm package --test-feed` and `pnpm package --test-hooks` are for proofs only. Never upload their files.
 - An uninstall leaves `%LOCALAPPDATA%\openaflow-updater`, about 122 MB. It keeps `%APPDATA%\openaflow-server`, and the old config folder that the first start copied from.
 - `quitAndInstall` often emits `error` and doesn't throw, so the flow treats that as a failed install: it logs and quits.
 - On a check, electron-updater emits `update-downloaded` again for a version that is in its cache. The last chance relies on this to ask again, and asks from its own record when the check fails. It skips that record when any check in this run started another version's download, until the next download finishes, because `getValidCachedUpdateFile` empties the pending cache on a sha512 mismatch before the new download starts.

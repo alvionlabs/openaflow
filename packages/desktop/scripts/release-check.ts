@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractFile } from '@electron/asar'
 import { finishProof, launch, machineState, proofLastLine, proofPlace, refuseRealInstall, silentInstall, waitForHealth, withInstallLock } from '../src/install-check.ts'
-import { checkNoTestFeed, checkSize, checkUpdateFile, pickInstaller, tagVersion } from '../src/release-rules.ts'
+import { checkNoTestFeed, checkNoTestHooks, checkSize, checkUpdateFile, pickInstaller, tagVersion } from '../src/release-rules.ts'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 /** Above the shared default: a runner's first start of an unsigned exe can be slow. */
@@ -47,7 +47,9 @@ async function installAndStart(installer: string): Promise<void> {
   let diff: string[] | undefined
   try {
     await step('install', () => silentInstall(installer, place))
-    await step('test feed', () => checkNoTestFeed(extractFile(join(place.installDir, 'resources', 'app.asar'), join('dist', 'main.cjs')).toString('utf8')))
+    const mainCjs = () => extractFile(join(place.installDir, 'resources', 'app.asar'), join('dist', 'main.cjs')).toString('utf8')
+    await step('test feed', () => checkNoTestFeed(mainCjs()))
+    await step('test hooks', () => checkNoTestHooks(mainCjs()))
     await step('launch', () => launch(place))
     await step('health', () => waitForHealth(place, HEALTH_MS))
   } catch (err) {
