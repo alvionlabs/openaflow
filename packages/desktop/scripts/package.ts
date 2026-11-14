@@ -1,5 +1,6 @@
-// `pnpm package [--version=<x.y.z>] [--output=<dir>] [--test-feed]`: builds, writes the licence notices, then makes the
-// installer, its blockmap, and latest.yml. It always passes `publish: never`, and it signs nothing.
+// `pnpm package [--version=<x.y.z>] [--output=<dir>] [--test-feed] [--test-hooks]`: builds, writes the licence notices,
+// then packages. On Windows: the installer, its blockmap, latest.yml, and win-unpacked. On Linux, for now: only
+// linux-unpacked. It always passes `publish: never`, and it signs nothing.
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -8,26 +9,13 @@ import { fileURLToPath } from 'node:url'
 import { Arch, build, Platform } from 'electron-builder'
 import { builderOptions, parsePackageArgs } from '../src/build-config.ts'
 import { bundleDesktop } from '../src/bundle-desktop.ts'
-import { packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
+import { bundleRoots, LICENCE_OVERRIDES, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 const root = join(pkg, '..', '..')
 const server = join(pkg, '..', 'server')
 const web = join(pkg, '..', 'web')
-
-/** For a package that ships no licence file. Each entry says where its text comes from. */
-const LICENCE_OVERRIDES: Record<string, string> = {
-  // Its package.json says `"license": "MIT"` and names the author. It ships no licence file, so this is the MIT text.
-  'lazy-val': `MIT License
-
-Copyright (c) Vladimir Krivosheev
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`,
-}
+const ptyHost = join(pkg, '..', 'pty-host')
 
 const readMeta = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as BundleMeta
 
@@ -36,6 +24,7 @@ function writeNotices(): string {
     roots: [
       ...packageRootsFromMetafile(readMeta(join(server, 'dist', 'app.meta.json'))),
       ...packageRootsFromMetafile(readMeta(join(pkg, 'dist', 'main.cjs.meta.json'))),
+      ...bundleRoots(readMeta(join(ptyHost, 'dist', 'pty-host.cjs.meta.json')), ptyHost),
       ...productionClosure(web),
     ],
     overrides: LICENCE_OVERRIDES,
@@ -50,8 +39,13 @@ function writeNotices(): string {
   return file
 }
 
-// A bad flag stops here, before anything builds.
-const { testFeed = false, ...args } = parsePackageArgs(process.argv.slice(2))
+// A bad flag, or a system with no target, stops here, before anything builds.
+const { testFeed = false, testHooks = false, ...args } = parsePackageArgs(process.argv.slice(2))
+if (process.platform !== 'win32' && process.platform !== 'linux') {
+  console.error(`openaflow: pnpm package builds on Windows and Linux only, not ${process.platform}`)
+  process.exit(1)
+}
+const targets = process.platform === 'win32' ? Platform.WINDOWS.createTarget('nsis', Arch.x64) : Platform.LINUX.createTarget('dir', Arch.x64)
 
 const built = spawnSync('pnpm -w run build', { cwd: root, shell: true, stdio: 'inherit', windowsHide: true })
 if (built.status !== 0) process.exit(built.status ?? 1)
@@ -61,14 +55,15 @@ process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD']) delete process.env[name]
 
 const mainBundle = { entry: join(pkg, 'src', 'main.ts'), outfile: join(pkg, 'dist', 'main.cjs') }
-if (testFeed) await bundleDesktop({ ...mainBundle, testFeed: true })
+const testBuild = testFeed || testHooks
+if (testBuild) await bundleDesktop({ ...mainBundle, testFeed, testHooks })
 try {
   const files = await build({
     ...builderOptions({ noticesFile: writeNotices(), ...args }),
-    targets: Platform.WINDOWS.createTarget('nsis', Arch.x64),
+    targets,
   })
   console.log(`openaflow: packaged, and published nothing:\n${files.join('\n')}`)
 } finally {
   // dist/main.cjs never stays a test build.
-  if (testFeed) await bundleDesktop(mainBundle)
+  if (testBuild) await bundleDesktop(mainBundle)
 }

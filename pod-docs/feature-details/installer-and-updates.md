@@ -6,7 +6,7 @@
 
 ## How it works
 
-- **Package.** One-click NSIS, no admin rights, a Start-menu entry and an Installed apps entry named `OpenAFlow`, no desktop shortcut. The installer is `openaflow-setup-<version>.exe`, the exe `OpenAFlow.exe`, the app ID `com.alvionlabs.openaflow`, and the install folder `%LOCALAPPDATA%\Programs\openaflow`. The update feed is the GitHub releases of `alvionlabs/openaflow`. `resources/app.asar` holds `dist/main.cjs`, `assets/`, and `package.json`. `resources/server` holds the bundle. `THIRD-PARTY-NOTICES.txt` comes from each bundle's esbuild metafile. A package with no licence file and no override stops the step.
+- **Package.** One-click NSIS, no admin rights, a Start-menu entry and an Installed apps entry named `OpenAFlow`, no desktop shortcut. The installer is `openaflow-setup-<version>.exe`, the exe `OpenAFlow.exe`, the app ID `com.alvionlabs.openaflow`, and the install folder `%LOCALAPPDATA%\Programs\openaflow`. The update feed is the GitHub releases of `alvionlabs/openaflow`. `resources/app.asar` holds `dist/main.cjs`, `assets/`, and `package.json`. `resources/server` holds the bundle. `resources/pty-host` holds the pty host's bundle and `node_modules/node-pty` (its `package.json`, `LICENSE`, `lib/`, and only the build platform's prebuilt binaries, no `.pdb`), outside the asar, because a native `.node` file can't load from inside one. On Linux, `pnpm package` makes only `release/linux-unpacked` for now, with the executable `openaflow`; on Windows it also leaves `release/win-unpacked`. `THIRD-PARTY-NOTICES.txt` comes from each bundle's esbuild metafile, plus the packages a bundle requires from outside it (node-pty). xterm's packages ship no licence file, so their text is an override with the xterm.js repo's `LICENSE`. A package with no licence file and no override stops the step.
 - **After the install.** A normal install opens the app (`runAfterFinish`). A silent install stays closed, so a proof never starts the app with no temp env. The update path is silent with `--force-run`, which starts its one new copy, as it always did. The template rule is `${ifNot} ${Silent} ${orIf} ${isForceRun}` in `installSection.nsh`, and `build-config.test.ts` fails if a new electron-builder changes it.
 - **Release.** `release.yml` runs only on a tag `v<major>.<minor>.<patch>` that equals `version` in `packages/desktop/package.json`. Job `build` has a read token: it runs `pnpm verify`, `pnpm package`, and `pnpm release:check`. Job `publish` needs `build`, has the write token, and runs no repo code.
 - **Check.** `pnpm release:check` checks the size, `latest.yml`, and the blockmap, then installs, starts, and uninstalls the app. `pnpm test:install` runs the longer proofs. Each ends with `state diff: []`.
@@ -41,6 +41,7 @@ flowchart TD
 - **A fresh start for a second launch during the last chance.** The old copy holds the single-instance lock and a dead page. Showing that page helps nobody. A relaunch retries the server, and the user asked for the app. Turned down: ignore the launch, because the user then sees nothing.
 - **One place for the release repo.** `RELEASE_REPO` in `update-flow.ts` names the owner and the repo. `build-config.ts` takes `publish` from it, and the error box's Releases link comes from it.
 - **The test feed is compiled out.** A build-time flag removes it from every shipped build, and `release:check` refuses a build that holds its text.
+- **The test hooks are compiled out.** `__OPENAFLOW_TEST_HOOKS__` keeps `globalThis.__openaflowTest` only in the Electron harness's bundles and in `pnpm package --test-hooks`. `release:check` refuses a `main.cjs` that holds `__openaflowTest`.
 
 ## Watch out
 
@@ -49,7 +50,7 @@ flowchart TD
 - **The workflow has never run on GitHub.** Its launch check on `windows-latest`, `gh release create`, and the GitHub provider are unproved.
 - **Open queue item (before hosting):** no Electron fuses are set, so `ELECTRON_RUN_AS_NODE` still works on the shipped exe.
 - A real install makes `refuseRealInstall` stop every proof. Uninstall first.
-- `pnpm package --test-feed` is for proofs only. Never upload its files.
+- `pnpm package --test-feed` and `pnpm package --test-hooks` are for proofs only. Never upload their files.
 - An uninstall leaves `%LOCALAPPDATA%\openaflow-updater`, about 122 MB. It keeps `%APPDATA%\openaflow-server`, and the old config folder that the first start copied from.
 - `quitAndInstall` often emits `error` and doesn't throw, so the flow treats that as a failed install: it logs and quits.
 - On a check, electron-updater emits `update-downloaded` again for a version that is in its cache. The last chance relies on this to ask again, and asks from its own record when the check fails. It skips that record when any check in this run started another version's download, until the next download finishes, because `getValidCachedUpdateFile` empties the pending cache on a sha512 mismatch before the new download starts.

@@ -13,6 +13,7 @@
   "devDependencies": {
     "@electron/asar": "4.3.1",
     "@openaflow/model": "workspace:*",
+    "@openaflow/pty-host": "workspace:*",
     "@openaflow/server": "workspace:*",
     "@openaflow/web": "workspace:*",
     "@types/pngjs": "6.0.5",
@@ -20,6 +21,7 @@
     "electron-builder": "26.18.1",
     "electron-updater": "6.8.12",
     "esbuild": "^0.28.2",
+    "playwright-core": "1.65.1",
     "pngjs": "7.0.0",
     "tsx": "^4.23.15",
     "yaml": "2.9.1"

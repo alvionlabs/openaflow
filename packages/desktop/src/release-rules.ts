@@ -1,5 +1,5 @@
-// The plain rules of a release: the tag, the installer's size, and the update file. `scripts/release-check.ts` runs
-// them. The rules are in pod-docs/sprints/installer-and-updates.md.
+// The plain rules of a release: the tag, the installer's size, the update file, and no test build.
+// `scripts/release-check.ts` runs them. The rules are in pod-docs/sprints/installer-and-updates.md.
 
 import { createHash } from 'node:crypto'
 import { parse } from 'yaml'
@@ -10,6 +10,7 @@ export const INSTALLER_FLOOR_BYTES = 97_354_085
 export const INSTALLER_CEILING_BYTES = 158_200_388
 
 const TEST_FEED_TEXT = 'OPENAFLOW_UPDATE_TEST'
+const TEST_HOOKS_TEXT = '__openaflowTest'
 const RELEASE_TAG = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
 const INSTALLER = /^openaflow-setup-.*\.exe$/
 
@@ -56,6 +57,11 @@ export function checkUpdateFile(yml: string, installerBytes: Uint8Array, name: s
 /** Only a `--test-feed` build may hold this text, and that build must never ship. */
 export function checkNoTestFeed(mainCjs: string): void {
   if (mainCjs.includes(TEST_FEED_TEXT)) throw new Error(`main.cjs holds ${TEST_FEED_TEXT}: this is a test-feed build`)
+}
+
+/** Only a `--test-hooks` build may hold this name, and that build must never ship. */
+export function checkNoTestHooks(mainCjs: string): void {
+  if (mainCjs.includes(TEST_HOOKS_TEXT)) throw new Error(`main.cjs holds ${TEST_HOOKS_TEXT}: this is a test-hooks build`)
 }
 
 /** The output folder must hold one installer: with two, the check could pass one and the upload could take both. */

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'vitest'
 import { stringify } from 'yaml'
-import { checkNoTestFeed, checkSize, checkUpdateFile, INSTALLER_CEILING_BYTES, INSTALLER_FLOOR_BYTES, pickInstaller, tagVersion } from './release-rules.ts'
+import { checkNoTestFeed, checkNoTestHooks, checkSize, checkUpdateFile, INSTALLER_CEILING_BYTES, INSTALLER_FLOOR_BYTES, pickInstaller, tagVersion } from './release-rules.ts'
 
 describe('tagVersion', () => {
   test('tag matches the package version', () => {
@@ -55,6 +55,14 @@ describe('checkNoTestFeed', () => {
   test('the test feed text in main.cjs fails', () => {
     expect(() => checkNoTestFeed('const a = 1')).not.toThrow()
     expect(() => checkNoTestFeed('const a = process.env.OPENAFLOW_UPDATE_TEST_FEED')).toThrow(/OPENAFLOW_UPDATE_TEST/)
+  })
+})
+
+describe('checkNoTestHooks', () => {
+  test('no test hooks in a release', () => {
+    expect(() => checkNoTestHooks('const a = 1')).not.toThrow()
+    expect(() => checkNoTestHooks('globalThis.__openaflowTest = { terminals }')).toThrow(/__openaflowTest.*test-hooks build/)
+    expect(() => checkNoTestHooks('g.__openaflowTest ??= {}')).toThrow(/__openaflowTest/)
   })
 })
 
