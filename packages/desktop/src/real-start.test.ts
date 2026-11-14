@@ -146,7 +146,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
     expect(log(), details()).not.toMatch(/Uncaught|TypeError/)
     expect(text, details()).not.toMatch(/Uncaught|TypeError/)
 
-    // A hard kill: no quit flow runs, so only the server's own parent watch can end it.
+    // A hard kill: no quit flow runs. The server must not outlive the main process, whatever ends it.
     killPid(main.pid!, 'SIGKILL')
     await new Promise<void>((resolve) => (main.exitCode !== null || main.signalCode !== null ? resolve() : main.once('exit', () => resolve())))
     const gone = Date.now()
