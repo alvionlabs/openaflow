@@ -601,7 +601,7 @@ describe('one remove modal', () => {
     expect(header.returnFocusTo).toBe(MENU_TRIGGER_ID)
     expect(side.returnFocusTo).toBe(moreButtonId(run))
     expect({ ...side, returnFocusTo: '' }).toEqual({ ...header, returnFocusTo: '' })
-    expect(header.mono).toEqual(['/c'])
+    expect(header.details).toEqual([{ label: 'Folder', value: '/c' }])
   })
 
   it('leaves no in-place remove panel: one ConfirmModal on the screen, no panel slot under a card', () => {

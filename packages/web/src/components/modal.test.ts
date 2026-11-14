@@ -2,7 +2,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { ConfirmModal, type ConfirmModalProps } from './ConfirmModal.tsx'
-import { backdropClose, createModalEvents, keepFocusInside, returnFocus } from './modal.ts'
+import { ModalAlert } from './ModalAlert.tsx'
+import { FIRST_FOCUS, backdropClose, createModalEvents, focusFirst, keepFocusInside, returnFocus } from './modal.ts'
 import { StopList, type StopItem } from './StopList.tsx'
 
 const confirm = (over: Partial<ConfirmModalProps> = {}) =>
@@ -10,7 +11,7 @@ const confirm = (over: Partial<ConfirmModalProps> = {}) =>
     createElement(ConfirmModal, {
       heading: 'Remove chess-web?',
       detail: 'The board stops watching this folder. No files change.',
-      mono: ['E:\\code\\chess-web'],
+      details: [{ label: 'Folder', value: 'E:\\code\\chess-web' }],
       confirmLabel: 'Remove',
       busy: false,
       onConfirm: () => {},
@@ -127,7 +128,13 @@ describe('shared modal', () => {
   })
 
   it('confirm markup and button order', () => {
-    const html = confirm({ mono: ['E:\\code\\chess-web', 'port base 3400'], notes: ['Its 1 run leaves the sidebar.'] })
+    const html = confirm({
+      details: [
+        { label: 'Folder', value: 'E:\\code\\chess-web' },
+        { label: 'Port base', value: '3400' },
+      ],
+      notes: ['Its 1 run leaves the sidebar.'],
+    })
     // A native dialog named by its heading.
     const dialog = /^<dialog[^>]*>/.exec(html)?.[0] ?? ''
     expect(dialog).toMatch(/class="modal[ "]/)
@@ -135,13 +142,22 @@ describe('shared modal', () => {
     expect(labelledBy).toBeTruthy()
     expect(html).toContain(`<h2 id="${labelledBy}"`)
     expect(html).toMatch(/<h2[^>]*>Remove chess-web\?<\/h2>/)
-    // Heading, detail, the mono lines, the muted note, then the buttons.
-    const order = ['Remove chess-web?', 'The board stops watching', 'E:\\code\\chess-web', 'port base 3400', 'Its 1 run leaves', '>Cancel<', '>Remove<']
+    // Heading, detail, the details (each label before its value), the muted note, then the buttons.
+    const order = ['Remove chess-web?', 'The board stops watching', '>Details<', '>Folder<', 'E:\\code\\chess-web', '>Port base<', '>3400<', 'Its 1 run leaves', '>Cancel<', '>Remove<']
     const at = order.map((s) => html.indexOf(s))
     expect(at.every((i) => i >= 0), JSON.stringify(at)).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
-    expect(html).toMatch(/<p class="[^"]*\bmono\b[^"]*">E:\\code\\chess-web<\/p>/)
-    expect(html).toMatch(/<p class="[^"]*\bmono\b[^"]*">port base 3400<\/p>/)
+    // The details: an open disclosure with a real summary, then a list of label and value pairs.
+    expect(html).toMatch(/<details[^>]*\bopen=""[^>]*><summary[^>]*>Details<\/summary><dl[^>]*>/)
+    expect(html.match(/<details\b/g)).toHaveLength(1)
+    const pairs = /<dl[^>]*>([\s\S]*?)<\/dl>/.exec(html)?.[1] ?? ''
+    expect([...pairs.matchAll(/<(dt|dd)[^>]*>([^<]*)<\/\1>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ['dt', 'Folder'],
+      ['dd', 'E:\\code\\chess-web'],
+      ['dt', 'Port base'],
+      ['dd', '3400'],
+    ])
+    expect(html).not.toContain('modal-mono')
     expect(html).toMatch(/<p class="[^"]*\bmuted\b[^"]*">Its 1 run leaves the sidebar\.<\/p>/)
     // Cancel is quiet and first; the confirm is the danger button.
     const buttons = [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => [m[2], m[1]])
@@ -152,8 +168,13 @@ describe('shared modal', () => {
   })
 
   it('confirm leaves out what it is not given', () => {
-    const html = confirm({ mono: undefined, notes: [] })
-    expect(html).not.toMatch(/class="[^"]*\bmono\b/)
+    const html = confirm({ details: undefined, notes: [] })
+    for (const none of [html, confirm({ details: [], notes: [] })]) {
+      // No details, no disclosure: no empty Details to open.
+      expect(none).not.toContain('<details')
+      expect(none).not.toContain('<dl')
+      expect(none).not.toContain('Details')
+    }
     expect(html).not.toMatch(/class="[^"]*\bmuted\b[^"]*">/)
     expect(html).not.toContain('role="alert"')
     // The live region is there before any status, so a screen reader hears the first one.
@@ -173,12 +194,30 @@ describe('shared modal', () => {
 
     // Both at once: the status, then the error, both before the buttons.
     const failed = confirm({ status: 'Checked.', error: 'Couldn’t save the board’s config.' })
-    expect(failed).toMatch(/<p[^>]*role="alert"[^>]*>Couldn’t save the board’s config\.<\/p>/)
+    // The error is the shared modal alert, the same markup as ModalAlert renders.
+    expect(failed).toContain(renderToStaticMarkup(createElement(ModalAlert, { message: 'Couldn’t save the board’s config.' })))
+    expect(failed).not.toContain('modal-error')
     const s = failed.indexOf('role="status"')
     const e = failed.indexOf('role="alert"')
     expect(s).toBeGreaterThanOrEqual(0)
     expect(e).toBeGreaterThan(s)
     expect(failed.indexOf('>Cancel<')).toBeGreaterThan(e)
+  })
+
+  it('modal alert: a box with role="alert", the alert icon, and the message', () => {
+    const html = renderToStaticMarkup(createElement(ModalAlert, { message: 'Already registered.', id: 'err-1' }))
+    const box = /^<div([^>]*)>/.exec(html)?.[1] ?? ''
+    expect(box).toMatch(/class="modal-alert"/)
+    expect(box).toMatch(/role="alert"/)
+    expect(box).toMatch(/id="err-1"/)
+    // The shared alert icon (a ring with !), hidden from assistive tech, before the message.
+    const icon = html.indexOf('<svg')
+    expect(icon).toBeGreaterThan(0)
+    expect(html).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>.*<circle cx="8" cy="8" r="6"><\/circle><path d="M8 4\.75v3\.75M8 11\.25v\.01"><\/path><\/svg>/)
+    expect(html).toMatch(/<p class="modal-alert-text">Already registered\.<\/p>/)
+    expect(html.indexOf('Already registered.')).toBeGreaterThan(icon)
+    // No id given, no id attribute.
+    expect(renderToStaticMarkup(createElement(ModalAlert, { message: 'x' }))).not.toContain('id=')
   })
 
   it('focus stays in the dialog when its focused button goes disabled', () => {
@@ -195,6 +234,36 @@ describe('shared modal', () => {
     const dialog2 = { contains: (n: unknown) => n === goingOff, focus: vi.fn() }
     keepFocusInside(dialog2, { activeElement: goingOff })
     expect(dialog2.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('the named element takes the first focus; with none named, the browser picks', () => {
+    // Named: the marked element takes focus, and the dialog itself does not.
+    const cancel = { focus: vi.fn() }
+    const seen: string[] = []
+    const dialog = (found: { focus(): void } | null) => ({
+      querySelector: (sel: string) => {
+        seen.push(sel)
+        return sel === `[${FIRST_FOCUS}]` ? found : null
+      },
+      focus: vi.fn(),
+    })
+    const named = dialog(cancel)
+    focusFirst(named)
+    expect(seen).toEqual([`[${FIRST_FOCUS}]`])
+    expect(cancel.focus).toHaveBeenCalledTimes(1)
+    expect(named.focus).not.toHaveBeenCalled()
+    // None named (Add repo): nothing moves, so showModal()'s own pick stands and the form's field focus runs after.
+    const plain = dialog(null)
+    expect(() => focusFirst(plain)).not.toThrow()
+    expect(plain.focus).not.toHaveBeenCalled()
+    // No dialog yet: nothing happens.
+    expect(() => focusFirst(null)).not.toThrow()
+  })
+
+  it('confirm names Cancel, and only Cancel, as the first focus', () => {
+    const html = confirm({ notes: ['A note.'], error: 'Failed.' })
+    const marked = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${FIRST_FOCUS}=""[^>]*>([^<]*)`, 'g'))].map((m) => [m[1], m[2]])
+    expect(marked).toEqual([['button', 'Cancel']])
   })
 
   it('focus goes back to the opener', () => {

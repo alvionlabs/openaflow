@@ -92,3 +92,17 @@ export function keepFocusInside(dialog: { contains(node: unknown): boolean; focu
   const active = doc.activeElement as { disabled?: unknown } | null
   if (!dialog.contains(active) || active?.disabled === true) dialog.focus()
 }
+
+/**
+ * The attribute that names the element to focus first when the modal opens, such as Cancel in a dialog that removes
+ * something (DESIGN.md "Forms and errors"). Put it on one element only.
+ */
+export const FIRST_FOCUS = 'data-first-focus'
+
+/**
+ * Runs right after showModal(). The element marked with FIRST_FOCUS takes focus. With none marked, nothing moves: the
+ * browser's own pick stands, and a form's own effect (Add repo's path field) runs after and takes focus.
+ */
+export function focusFirst(dialog: { querySelector(selector: string): { focus(): void } | null } | null): void {
+  dialog?.querySelector(`[${FIRST_FOCUS}]`)?.focus()
+}
