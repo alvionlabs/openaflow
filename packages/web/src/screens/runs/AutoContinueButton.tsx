@@ -6,7 +6,8 @@ const ERROR_ID = 'auto-continue-error'
 
 /**
  * The Auto-continue toggle button: pressed (a blue tint and a fast-forward icon) when on, plain with a muted pause
- * icon when off. Off while saving; a failed save's message shows under it.
+ * icon when off. While it saves it looks disabled and ignores presses, but it is `aria-disabled`, not `disabled`, so
+ * keyboard focus stays on it. A failed save's message shows under it.
  */
 export function AutoContinueButtonView({ view, onPress }: { view: ToggleView; onPress: () => void }) {
   return (
@@ -15,9 +16,11 @@ export function AutoContinueButtonView({ view, onPress }: { view: ToggleView; on
         className="btn sm lead auto-button"
         type="button"
         aria-pressed={view.on}
-        disabled={view.disabled}
+        aria-disabled={view.disabled || undefined}
         aria-describedby={view.error ? ERROR_ID : undefined}
-        onClick={onPress}
+        onClick={() => {
+          if (!view.disabled) onPress()
+        }}
       >
         <Icon name={view.on ? 'fast-forward' : 'pause'} />
         Auto-continue
