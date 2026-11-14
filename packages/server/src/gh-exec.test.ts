@@ -103,13 +103,15 @@ describe('gh exec', () => {
       writeFileSync(join(pathDir, 'gh'), '#!/bin/sh\nenv\n')
       chmodSync(join(pathDir, 'gh'), 0o755)
     }
-    const env = envWithPath('.', '', pathDir, 'rel-bin', SYS32)
+    // The system folder the stand-in needs: System32 on Windows, the folder that holds `env` elsewhere.
+    const sys = WIN ? SYS32 : '/usr/bin'
+    const env = envWithPath('.', '', pathDir, 'rel-bin', sys)
     for (const k of Object.keys(env)) if (k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH') delete env[k]
     const r = await createGhExec(env)(WIN ? ['/d', '/c', 'set'] : [], repo)
-    expect(r.status).toBe('ok')
+    expect(r.status, r.stderr).toBe('ok')
     const lines = r.stdout.split(/\r?\n/)
     const pathLine = lines.find((l) => /^PATH=/i.test(l))
-    expect(pathLine?.slice(5)).toBe(WIN ? [pathDir, SYS32].join(SEP) : pathDir + SEP + SYS32)
+    expect(pathLine?.slice(5)).toBe([pathDir, sys].join(SEP))
     if (WIN) expect(lines).toContain('NoDefaultCurrentDirectoryInExePath=1')
   })
 

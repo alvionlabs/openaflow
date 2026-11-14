@@ -2,7 +2,7 @@
 // pod-docs/feature-details/server.md, under "Config folder".
 
 import { randomUUID } from 'node:crypto'
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, utimes } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { processAlive } from './parent-link.ts'
 
@@ -10,6 +10,7 @@ import { processAlive } from './parent-link.ts'
 export type MoveResult = 'copied' | 'none' | 'kept' | 'failed' | 'in-use'
 
 export type CopyFile = (from: string, to: string) => Promise<void>
+export type SetTimes = (path: string, atime: Date, mtime: Date) => Promise<void>
 
 export type MoveOptions = {
   /** The old folder, or undefined when there is none to copy from (a set `OPENAFLOW_CONFIG_DIR`). */
@@ -21,6 +22,10 @@ export type MoveOptions = {
   copyFile?: CopyFile
   /** How often a busy needed file is tried. Default: 5 tries, 500 ms apart, about 2 s in all. */
   retry?: { tries: number; waitMs: number }
+  /** Default: `fs.utimes`. Tests pass one that fails. */
+  utimes?: SetTimes
+  /** Default: `process.platform`. Not on win32, each copy then gets its source's times. */
+  platform?: NodeJS.Platform
 }
 
 /** It names a live process of the old folder's server: a copy would make this server think another one owns auto-continue. */
@@ -59,6 +64,19 @@ async function liveHolder(from: string): Promise<number | undefined> {
   return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && processAlive(pid) ? pid : undefined
 }
 
+/**
+ * Gives `dest` the times of `src`. `fs.copyFile` keeps them on Windows only, and `pruneLogs` reads a resume log's
+ * modified time. A failure logs one line and never fails the copy.
+ */
+async function keepTimes(src: string, dest: string, setTimes: SetTimes, error: (line: string) => void): Promise<void> {
+  try {
+    const info = await stat(src)
+    await setTimes(dest, info.atime, info.mtime)
+  } catch (err) {
+    error(`openaflow: could not keep the modified time of ${src} in the old config folder copy (${code(err)})`)
+  }
+}
+
 /** Every file under `dir`, relative to it. Folders that can't be read count as having no files. */
 async function filesUnder(dir: string, rel = ''): Promise<string[]> {
   const entries = await readdir(join(dir, rel), { withFileTypes: true }).catch(() => [])
@@ -75,6 +93,7 @@ async function filesUnder(dir: string, rel = ''): Promise<string[]> {
  * If `to` doesn't exist and `from` is a folder, copies `from` into `to` and leaves `from` as a backup.
  * - Needed: every top-level file but the owner file. A busy one is tried again; one that still fails fails the copy.
  * - Best effort: files in folders (`resume-logs/`). One that can't be read is skipped and logged.
+ * - Not on Windows, each copy then gets its source's times. One that fails is logged, and the copy goes on.
  * Each call copies into its own `<to>.moving-<id>` and renames it into place, so `to` appears whole or not at all.
  * The call whose rename loses to another start's returns `kept`. Never throws. On `failed`, the caller runs on `from`
  * and doesn't create `to`, so the next start tries again (`liveConfigDir`).
@@ -85,6 +104,7 @@ export async function moveOldConfig(o: MoveOptions): Promise<MoveResult> {
   const error = o.error ?? ((line) => console.error(line))
   const copy = o.copyFile ?? copyFile
   const retry = o.retry ?? { tries: 5, waitMs: 500 }
+  const setTimes = (o.platform ?? process.platform) === 'win32' ? undefined : (o.utimes ?? utimes)
   await removeStaleParts(to)
   if (await exists(to)) return 'kept'
   if (from === undefined || !(await isFolder(from))) return 'none'
@@ -105,9 +125,11 @@ export async function moveOldConfig(o: MoveOptions): Promise<MoveResult> {
       const needed = dirname(rel) === '.'
       if (needed && NOT_COPIED.has(rel)) continue
       if (!needed) await mkdir(dirname(dest), { recursive: true })
+      let copied = false
       for (let tryNo = 1; ; tryNo++) {
         try {
           await copy(src, dest)
+          copied = true
           break
         } catch (err) {
           if (!needed) {
@@ -121,6 +143,8 @@ export async function moveOldConfig(o: MoveOptions): Promise<MoveResult> {
           await sleep(retry.waitMs)
         }
       }
+      // Outside the retry: a failed time is not a failed copy.
+      if (copied && setTimes) await keepTimes(src, dest, setTimes, error)
     }
     await rename(part, to)
   } catch (err) {

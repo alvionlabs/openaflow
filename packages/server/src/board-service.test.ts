@@ -715,7 +715,9 @@ describe('repo ids', () => {
     expect(idsByPath(await createBoardService(deps()).build())).toEqual(before)
   })
 
-  test('two spellings of one repo on a file system that ignores case are one repo, with no suffix', async () => {
+  // Linux skips it: the claim reader stats the other spelling, and a case-sensitive file system has no such folder.
+  // pod-docs/known-issues/caseless-repo-test-skips-on-linux.md
+  test.skipIf(platform === 'linux')('two spellings of one repo on a file system that ignores case are one repo, with no suffix', async () => {
     const repo = copyFixture('chess-web')
     await register(repo)
     await claim(3100, repo.toUpperCase(), 'sparring-ladder')

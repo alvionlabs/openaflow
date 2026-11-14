@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
-import { copyFile, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -182,6 +182,83 @@ describe('moveOldConfig', () => {
     expect(errors[0]).toContain(bad)
     expect(errors[0]).toContain('EPERM')
     expect(logs).toHaveLength(1)
+  })
+
+  // Whole seconds, long ago, so every file system keeps them exactly.
+  const OLD_TIMES: Record<string, number> = {
+    'config.json': Date.parse('2026-01-02T03:04:05Z') / 1000,
+    'resume-logs/one.log': Date.parse('2026-02-03T04:05:06Z') / 1000,
+    'resume-logs/deep/two.log': Date.parse('2026-03-04T05:06:07Z') / 1000,
+  }
+  const setOldTimes = async () => {
+    for (const [name, at] of Object.entries(OLD_TIMES)) await utimes(join(from, name), at, at)
+  }
+  const mtimeOf = async (path: string) => (await stat(path)).mtimeMs
+
+  test("a copy keeps each file's modified time", async () => {
+    await writeOld()
+    await setOldTimes()
+    expect(await moveOldConfig({ from, to, ...io() })).toBe('copied')
+    for (const [name, at] of Object.entries(OLD_TIMES)) expect(await mtimeOf(join(to, name)), name).toBe(at * 1000)
+    expect(errors).toEqual([])
+  })
+
+  /** A utimes that throws `code` for each copied file `failFor` names, and records every call. */
+  const failingUtimes = (failFor: (dest: string) => boolean, code: string) => {
+    const calls: string[] = []
+    const fn = async (path: string, atime: Date, mtime: Date) => {
+      calls.push(path)
+      if (failFor(path)) throw Object.assign(new Error(`${code}: no`), { code })
+      await utimes(path, atime, mtime)
+    }
+    return { fn, calls }
+  }
+  const partFile = (path: string, name: string) => path.endsWith(join('', name)) && path.includes('.moving-')
+
+  test('a failed utimes keeps the copy', async () => {
+    await writeOld()
+    await setOldTimes()
+    // EPERM is the busy code a copy tries again: a failed time must not count as a failed copy.
+    const { fn } = failingUtimes((p) => partFile(p, 'config.json'), 'EPERM')
+    expect(await moveOldConfig({ from, to, utimes: fn, platform: 'linux', retry: fast, ...io() })).toBe('copied')
+    expect(await readFile(join(to, 'config.json'), 'utf8')).toBe(OLD_FILES['config.json'])
+    expect(await mtimeOf(join(to, 'resume-logs/one.log'))).toBe(OLD_TIMES['resume-logs/one.log']! * 1000)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/^openaflow: /)
+    for (const part of [join(from, 'config.json'), 'EPERM']) expect(errors[0]).toContain(part)
+    expect(logs).toHaveLength(1)
+  })
+
+  test('each file whose time fails gets its own line, and the copy goes on', async () => {
+    await writeOld()
+    const { fn } = failingUtimes((p) => partFile(p, 'config.json') || partFile(p, 'two.log'), 'ENOTSUP')
+    expect(await moveOldConfig({ from, to, utimes: fn, platform: 'darwin', ...io() })).toBe('copied')
+    expect(await filesIn(to)).toEqual(Object.keys(OLD_FILES).filter((n) => n !== 'auto-continue-owner.json').sort())
+    expect(errors).toHaveLength(2)
+    expect(errors.some((e) => e.includes(join(from, 'config.json')))).toBe(true)
+    expect(errors.some((e) => e.includes(join(from, 'resume-logs', 'deep', 'two.log')))).toBe(true)
+  })
+
+  test('a source that is gone after its copy logs one line, and the copy goes on', async () => {
+    await writeOld()
+    const gone = join(from, 'resume-logs', 'one.log')
+    const copyThenRemove = async (src: string, dest: string) => {
+      await copyFile(src, dest)
+      if (src === gone) await unlink(src)
+    }
+    expect(await moveOldConfig({ from, to, copyFile: copyThenRemove, platform: 'linux', ...io() })).toBe('copied')
+    expect(await readFile(join(to, 'resume-logs', 'one.log'), 'utf8')).toBe(OLD_FILES['resume-logs/one.log'])
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain(gone)
+    expect(errors[0]).toContain('ENOENT')
+  })
+
+  test('Windows sets no times: its copy keeps them already', async () => {
+    await writeOld()
+    const { fn, calls } = failingUtimes(() => true, 'EPERM')
+    expect(await moveOldConfig({ from, to, utimes: fn, platform: 'win32', ...io() })).toBe('copied')
+    expect(calls).toEqual([])
+    expect(errors).toEqual([])
   })
 
   const hoursAgo = (h: number) => (Date.now() - h * 3600_000) / 1000
