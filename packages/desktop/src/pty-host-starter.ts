@@ -3,7 +3,10 @@
 // pod-docs/feature-details/desktop.md (Terminal host).
 
 import type { HostToMain, SessionInfo, StartSpec } from '@openaflow/pty-host/protocol'
+import { FLUSH_WAIT_MS } from '@openaflow/pty-host/protocol'
 import { hostLogLine } from './pty-host-launch.ts'
+
+export { FLUSH_WAIT_MS }
 
 export const READY_LIMIT_MS = 20_000
 /** A log line when no beat came for this long; the host beats every 5 s. */
@@ -54,6 +57,10 @@ export type PtyHostStarter = {
   connect(port: unknown): boolean
   /** The ids between `started` and `exit`, in start order. */
   live(): string[]
+  /** Asks a ready host to save every screen file. Resolves at `flushed`, after FLUSH_WAIT_MS, or when no host can answer. Never rejects. */
+  flush(): Promise<void>
+  /** The ids main holds: live, or with a start sent and no answer yet (waiting for their pid). */
+  held(): string[]
   pid(): number | undefined
 }
 
@@ -84,6 +91,13 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
   let restartsLeft = MAX_RESTARTS
   let everReady = false
   const live: string[] = []
+  /** Starts asked for and not answered yet, by id: the count of calls. */
+  const starting = new Map<string, number>()
+  /** Flushes that wait for `flushed`. Each ends at the answer, its own time limit, a crash, or the stop. */
+  const flushes = new Set<() => void>()
+  const endFlushes = () => {
+    for (const done of [...flushes]) done()
+  }
   /** Requests that wait for a ready host. Each posts and registers its answer on the run it gets. */
   let waiting: { send(r: Run): void; reject(err: Error): void }[] = []
   let stopping: Promise<StopResult> | undefined
@@ -149,6 +163,7 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
     clearTimers()
     run = undefined
     if (r) dropAnswers(r, EXITED)
+    endFlushes()
     const lost = live.splice(0)
     o.log(`${LOG} lost sessions: ${lost.length === 0 ? 'none' : lost.join(', ')}`)
     if (restartsLeft === 0) {
@@ -196,6 +211,8 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
     } else if (m.type === 'exit' && typeof m.id === 'string' && typeof m.exitCode === 'number') {
       // Only an id that leaves the live set reports, so each exit reaches the listeners once.
       if (leave(m.id)) emit({ type: 'exit', id: m.id, exitCode: m.exitCode })
+    } else if (m.type === 'flushed') {
+      endFlushes()
     } else if (m.type === 'snapshot' && typeof m.id === 'string' && (m.text === null || typeof m.text === 'string')) {
       take(r.snapshots, m.id)?.resolve(m.text)
     } else if (m.type === 'list' && Array.isArray(m.sessions) && m.sessions.every(isSession)) {
@@ -267,6 +284,7 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
       state = 'stopped'
       dropWaiting()
       if (r) dropAnswers(r, UNAVAILABLE)
+      endFlushes()
       live.splice(0)
       stopping = r ? runStop(r) : Promise.resolve('not running')
       return stopping
@@ -276,11 +294,21 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
       listeners.add(fn)
       return () => void listeners.delete(fn)
     },
-    startSession: (spec) =>
-      request((r, w) => {
-        queued(r.starts, spec.id, w)
+    startSession(spec) {
+      const { id } = spec
+      starting.set(id, (starting.get(id) ?? 0) + 1)
+      const answered = () => {
+        const n = (starting.get(id) ?? 1) - 1
+        if (n > 0) starting.set(id, n)
+        else starting.delete(id)
+      }
+      const p = request<{ pid: number }>((r, w) => {
+        queued(r.starts, id, w)
         post(r, { type: 'start', spec })
-      }),
+      })
+      p.then(answered, answered)
+      return p
+    },
     snapshot: (id) =>
       request((r, w) => {
         queued(r.snapshots, id, w)
@@ -307,6 +335,21 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
       post(run, { type: 'connect' }, [port])
       return true
     },
+    flush() {
+      const r = run
+      if (!r?.ready || stopping) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer)
+          flushes.delete(done)
+          resolve()
+        }
+        const timer = setTimeout(done, FLUSH_WAIT_MS)
+        flushes.add(done)
+        post(r, { type: 'flush' })
+      })
+    },
+    held: () => [...new Set([...live, ...starting.keys()])],
     live: () => [...live],
     pid: () => run?.proc.pid,
   }
