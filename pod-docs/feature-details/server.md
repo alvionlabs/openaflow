@@ -117,6 +117,7 @@ All optional, set as environment variables:
 - Tests never bind 47800: set `OPENAFLOW_API_PORT` or pass `preferredPort`.
 - `/sw.js` differs by mode: production answers 404 JSON, and dev's web port still answers it with HTML from Vite. Only production's rules live in `web-app.ts`.
 - On Windows, Node's `spawn` puts a child that isn't `detached` in a libuv job that ends it with its parent. A Node parent that dies then ends the server at once, with no drain and a stale owner file. The parent watch can't help there. To test the watch, start the server with `detached: true`.
+- Under Electron, a killed main process ends the server's `utilityProcess` at once, on Linux and Windows: no parent watch, no drain, and a stale owner file. The parent watch is the backup for a server that outlives its parent. To kill main in a Playwright test, use `app.evaluate(() => process.pid)`: on Windows, the process Playwright starts is a `cmd.exe` whose child is main.
 - The finder stats `Path` entries with sync calls, as `resolveBin` always has: a dead mapped drive on `Path` blocks the server for that check.
 - After a Recheck finds `gh`, the Board's `gh` status can read `missing` until the next 30 s tick. A `missing` status with a found `gh` skips the 60 s auth cache, but nothing starts a tick early.
 - `reg.exe` prints in the console's code page. A literal non-ASCII folder in the registry `Path` can read wrong and not match. The inherited `Path`, the known folders, and a typed path still find the tool.
@@ -174,3 +175,4 @@ All optional, set as environment variables:
 - 2026-11-13 · ui-rework · plan complete: the folder-listing route is gone and Forget run is a route; final PR #108 passed review at round 2 · [report](../reports/ui-rework.html)
 - 2026-11-14 · host-core C1 · changed: on Linux and macOS, the one-time config folder copy gives each copied file its source's modified time, so `pruneLogs` keeps the right resume logs. A failed time logs one line and the copy goes on.
 - 2026-11-15 · terminal-tab S1 · added: hosted sessions. `linkParent` gives the terminal channel, `startServer` takes it as `terminals`, the Board gets `hosted`, the watcher watches `sessions.json` and `hooks/`, and the action log reads `new-session` and `dismiss-session`.
+- 2026-11-15 · session-life W3-fix · no server change. The report of a server that outlived a killed main on Windows came from the test: it killed Playwright's `cmd.exe`, not main. With main's own pid, the server ends with main.

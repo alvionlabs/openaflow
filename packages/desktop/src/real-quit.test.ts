@@ -37,7 +37,7 @@ const PACKAGED = packagedApp() !== undefined
 const RUN_MS = 240_000
 /** §10: a confirmed quit leaves nothing within 10 s. */
 const GONE_MS = 10_000
-/** A forced end of main also ends the server: its next parent poll (2 s), then the drain, which has no work here. */
+/** A forced end of main also ends the server. Under Electron it ends with main; the parent watch (2 s polls) is the backup. */
 const SERVER_AFTER_MAIN_MS = 15_000
 
 /** Each pid gone and each child's port closed. */
@@ -192,11 +192,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const owner = join(w.cfg, 'auto-continue-owner.json')
         await lifeUntil('the owner file', () => existsSync(owner), 15_000, w)
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
-        // Main's own pid: on Windows the process Playwright started is not the main process that forks the server.
+        // Main's own pid. On Windows, h.pid is the cmd.exe that Playwright starts, the parent of main's electron.exe.
         const main = await h.app.evaluate(() => process.pid)
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
-        // The server sees its parent gone at its next poll (2 s), then drains and exits.
         const until = Date.now() + SERVER_AFTER_MAIN_MS
         while (alive(server) && Date.now() < until) await sleep(200)
         const serverOutlived = alive(server)
@@ -217,7 +216,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
       await withApp(w, async (h) => {
         await lifeUntil('stopped · app closed', async () => (await hostedOf(h, w, marker))?.state === 'stopped', 60_000, w)
         expect(await hostedOf(h, w, marker)).toMatchObject({ state: 'stopped', stopReason: 'app closed' })
-        await lifeUntil('the leftover child ended', () => allGone(children.map((c) => c.pid), children), 20_000, w)
+        const pids = children.map((c) => c.pid)
+        await lifeUntil('the leftover child ended', () => allGone(pids, children), 20_000, w).catch(async (err: Error) => {
+          throw new Error(`${err.message}\nleft: ${await leftovers(pids, children)}`)
+        })
         // Nothing started again: one start of the fake, and the new host holds no session.
         expect(lifeStarts(w)).toHaveLength(1)
         await lifeUntil('the test hook', () => testHooks(h).ready(), 60_000, w)
