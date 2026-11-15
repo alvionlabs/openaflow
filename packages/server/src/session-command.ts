@@ -36,8 +36,11 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/
 const MAX_TEXT = 2000
-/** Characters cmd.exe acts on even inside quotes, or that end the quoting; `call` expands `%` a second time. */
-const CMD_UNSAFE = /["%!^&|<>\r\n]/
+/**
+ * Characters cmd.exe acts on even inside quotes, or that end the quoting (`call` expands `%` a second time), plus
+ * `,;=`, where cmd.exe splits a path that node-pty left unquoted (it quotes only an arg with a space or a tab).
+ */
+const CMD_UNSAFE = /["%!^&|<>\r\n,;=]/
 
 /**
  * The program, args, folder, and env that start a hosted `claude` session, or the word for why not.

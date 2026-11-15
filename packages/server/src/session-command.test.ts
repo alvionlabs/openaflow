@@ -286,6 +286,11 @@ describe('windows shims', () => {
       expect(sessionCommand(win({ claude: bad }, fakeWindows({ read: 'unreadable' }))), bad).toBe('unsafe claude path')
     }
     expect(sessionCommand(win({ pluginDir: 'C:\\50%\\hooks-plugin' }, fakeWindows({ read: 'unreadable' })))).toBe('unsafe claude path')
+    // node-pty quotes only an arg with a space or a tab, and cmd.exe splits unquoted text at , ; =
+    for (const bad of ['C:\\a,b\\claude.cmd', 'C:\\a;b\\claude.cmd', 'C:\\a=b\\claude.cmd']) {
+      expect(sessionCommand(win({ claude: bad }, fakeWindows({ read: 'unreadable' }))), bad).toBe('unsafe claude path')
+      expect(sessionCommand(win({ pluginDir: bad }, fakeWindows({ read: 'unreadable' }))), bad).toBe('unsafe claude path')
+    }
     expect(sessionCommand(win({}, fakeWindows({ read: 'unreadable', cmd: undefined })))).toBe('cmd.exe not found')
   })
 
