@@ -61,6 +61,7 @@
 }
 
 .quit-overlay-line .status {
+  color: var(--fg);
   font-size: var(--size-body);
   white-space: normal;
 }
