@@ -416,6 +416,23 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     expect(log).toEqual([])
   }, 60_000)
 
+  test('a failed assign answers false and keeps the helper for the next session', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const done = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true })
+    const pid = done.pid!
+    await new Promise((r) => done.once('exit', r))
+    expect(await jobs.assign('gone', pid)).toBe(false)
+    expect(log).toHaveLength(1)
+    expect(log[0]).toMatch(/^openaflow desktop: session gone not in a job: error \d+$/)
+
+    const a = await startSession('a')
+    await assignTimed(jobs, 'a', a.self.pid)
+    expect(helpers).toHaveLength(1)
+    await jobs.close('a')
+    await gone(a.self, 'the assigned process')
+    jobs.dispose()
+  }, 60_000)
+
   test('helper exit ends the jobs', async () => {
     const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
     const a = await startSession('a')
