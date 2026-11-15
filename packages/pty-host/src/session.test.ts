@@ -1,5 +1,5 @@
 import { Terminal } from '@xterm/headless'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { HostToWindow } from './protocol.ts'
 import { createSession, linkPort, plainText, type SessionPty, type WindowPort } from './session.ts'
 
@@ -27,8 +27,12 @@ function fakePort() {
     start: () => {},
     postMessage: (m) => void got.push(m as HostToWindow),
   }
-  return { port, got, close: () => on.close.forEach((fn) => fn()) }
+  return { port, got, close: () => on.close.forEach((fn) => fn()), send: (data: unknown) => on.message.forEach((fn) => fn({ data })) }
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function setup(o: { scrollback?: number; cols?: number; rows?: number } = {}) {
   const pty = fakePty()
@@ -239,6 +243,58 @@ describe('session', () => {
       session.output('x'.repeat(200_000))
       await settled()
       expect(pty.calls).toEqual([])
+    })
+
+    test('stale port', async () => {
+      vi.useFakeTimers()
+      const { session, window, pty } = setup()
+      const settle = () => vi.advanceTimersByTimeAsync(0)
+      const [stale, healthy] = [window(), window()]
+      session.attach(stale.link)
+      session.attach(healthy.link)
+      await settle()
+      // Silent for a minute before it goes over: the silence counts from when it went over.
+      await vi.advanceTimersByTimeAsync(60_000)
+      session.output('x'.repeat(100_001))
+      await settle()
+      expect(pty.calls).toEqual(['pause'])
+      healthy.send({ type: 'ack' })
+      session.ack(healthy.link, 100_001)
+      expect(pty.calls).toEqual(['pause'])
+      // At 29.9 s it still holds the pty; at 30 s it no longer does.
+      await vi.advanceTimersByTimeAsync(29_900)
+      expect(pty.calls).toEqual(['pause'])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(pty.calls).toEqual(['pause', 'resume'])
+      // It still gets data, and its count no longer pauses the pty.
+      healthy.close()
+      session.output('y'.repeat(200_000))
+      await settle()
+      expect(dataOf(stale.got)).toBe('x'.repeat(100_001) + 'y'.repeat(200_000))
+      expect(pty.calls).toEqual(['pause', 'resume'])
+      // Its next message, of any kind, counts it again from 0: 100,000 more is not over, 1 more is.
+      stale.send({ type: 'input', id: 'run-1', data: '' })
+      session.output('z'.repeat(100_000))
+      await settle()
+      expect(pty.calls).toEqual(['pause', 'resume'])
+      session.output('z')
+      await settle()
+      expect(pty.calls).toEqual(['pause', 'resume', 'pause'])
+      // A message resets the 30 s, so a port that speaks now and then never goes stale while over.
+      await vi.advanceTimersByTimeAsync(20_000)
+      stale.send({ type: 'ack' })
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(pty.calls).toEqual(['pause', 'resume', 'pause'])
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(pty.calls).toEqual(['pause', 'resume', 'pause', 'resume'])
+      // After dispose no timer fires.
+      stale.send({ type: 'ack' })
+      session.output('w'.repeat(100_001))
+      await settle()
+      expect(pty.calls.at(-1)).toBe('pause')
+      session.dispose()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(pty.calls).toHaveLength(5)
     })
 
     test('a paused session that ends never resumes', async () => {

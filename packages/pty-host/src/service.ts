@@ -3,7 +3,8 @@
 // pod-docs/sprints/host-core.md (§4).
 
 import { isAbsolute } from 'node:path'
-import { BEAT_MS, MAIN_ONLY, PROTOCOL_VERSION, specError, type HostToMain, type SessionInfo, type StartSpec } from './protocol.ts'
+import { BEAT_MS, FLUSH_WAIT_MS, MAIN_ONLY, PROTOCOL_VERSION, specError, type HostToMain, type SessionInfo, type StartSpec } from './protocol.ts'
+import { createScreenSaver, nodeScreenFs, type ScreenFs, type ScreenSaver } from './screen-file.ts'
 import { createSession, linkPort, type Session as View, type SessionPty, type WindowLink, type WindowPort } from './session.ts'
 
 export { plainText } from './session.ts'
@@ -27,6 +28,10 @@ export type HostDeps = {
   scrollback: number
   /** How long shutdown waits for the ptys' exits. Default 3 s. */
   shutdownWaitMs?: number
+  /** Where screen files are written. Default: the real file system. */
+  screenFs?: ScreenFs
+  /** One log line. Default: stderr. */
+  log?(line: string): void
 }
 
 export type PtyHost = {
@@ -44,6 +49,8 @@ type Session = {
   announced: boolean
   /** While no pid: ends the wait and frees the id. */
   abandon?(error: string): void
+  /** Set once the session started, when its spec has a screen file. */
+  screen?: ScreenSaver
 }
 
 const SHUTDOWN_WAIT_MS = 3_000
@@ -67,6 +74,8 @@ export function startPtyHost(deps: HostDeps): PtyHost {
   }
   deps.send({ type: 'ready', version: PROTOCOL_VERSION })
 
+  const screenFs = deps.screenFs ?? nodeScreenFs
+  const log = deps.log ?? ((line: string) => console.error(line))
   const sessions = new Map<string, Session>()
   const exitWaiters = new Set<() => void>()
   let shuttingDown = false
@@ -99,6 +108,7 @@ export function startPtyHost(deps: HostDeps): PtyHost {
       if (session.announced || session.abandon === undefined || !(proc.pid > 0)) return session.announced
       stopWaiting()
       session.announced = true
+      if (s.screenFile !== undefined) session.screen = createScreenSaver({ id, file: s.screenFile, fs: screenFs, log, snapshot: view.snapshot })
       deps.send({ type: 'started', id, pid: proc.pid })
       return true
     }
@@ -113,13 +123,18 @@ export function startPtyHost(deps: HostDeps): PtyHost {
 
     proc.onData((data) => {
       announce()
-      if (!session.exited) view.output(data)
+      if (session.exited) return
+      view.output(data)
+      session.screen?.changed()
     })
     proc.onExit(({ exitCode, signal }) => {
       if (session.exited) return
       if (!announce()) return session.abandon?.(`the program ended before it started (exit code ${exitCode})`)
       session.exited = true
       view.ended(exitCode)
+      // Saved once after the exit. At shutdown the save came before the kill.
+      session.screen?.stop()
+      if (!shuttingDown) void session.screen?.save()
       deps.send(signal ? { type: 'exit', id, exitCode, signal } : { type: 'exit', id, exitCode })
       for (const wake of exitWaiters) wake()
     })
@@ -153,20 +168,46 @@ export function startPtyHost(deps: HostDeps): PtyHost {
     }
   }
 
-  /** The pty's own kill. A session waiting for its pid ends as `start-failed` through its exit or its 10 s limit. */
+  /**
+   * Kills a pty whose session was given up while it waited for its pid: now, or, when the pty can't take a kill yet,
+   * once its pid shows (10 s at most). On Windows node-pty holds the kill until the program's first output.
+   */
+  function killAbandoned(proc: PtyProcess): void {
+    const tryKill = () => {
+      try {
+        proc.kill()
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (tryKill()) return
+    const end = Date.now() + PID_WAIT_MS
+    const retry = () => {
+      if (proc.pid > 0) return void tryKill()
+      if (Date.now() < end) setTimeout(retry, PID_POLL_MS)
+    }
+    setTimeout(retry, PID_POLL_MS)
+  }
+
+  /** The pty's own kill. A session waiting for its pid ends now, as `start-failed`. */
   function killSession(id: string): void {
     const session = sessions.get(id)
-    if (session !== undefined && !session.exited) kill(session)
+    if (session === undefined || session.exited) return
+    if (session.abandon === undefined) return kill(session)
+    killAbandoned(session.pty)
+    session.abandon('killed before it started')
   }
 
   function dispose(id: string): void {
     const session = sessions.get(id)
     if (session === undefined) return
     if (session.abandon !== undefined) {
-      kill(session)
+      killAbandoned(session.pty)
       return session.abandon('disposed before it started')
     }
     sessions.delete(id)
+    session.screen?.dispose()
     // Its exit, when it comes, goes nowhere: the session is gone.
     const live = !session.exited
     session.exited = true
@@ -174,13 +215,49 @@ export function startPtyHost(deps: HostDeps): PtyHost {
     session.view.dispose()
   }
 
+  /** Saves every started session's screen file, then answers `flushed` once: within 2 s, even when a write hangs. */
+  function flush(): void {
+    let answered = false
+    const answer = () => {
+      if (answered) return
+      answered = true
+      clearTimeout(timer)
+      deps.send({ type: 'flushed' })
+    }
+    const timer = setTimeout(answer, FLUSH_WAIT_MS)
+    void Promise.all([...sessions.values()].map((s) => s.screen?.save())).then(answer)
+  }
+
   function shutdown(): void {
     if (shuttingDown) return
     shuttingDown = true
     const live = () => [...sessions.values()].filter((s) => !s.exited)
     for (const session of live()) {
-      kill(session)
-      session.abandon?.('the host is shutting down')
+      if (session.abandon === undefined) continue
+      killAbandoned(session.pty)
+      session.abandon('the host is shutting down')
+    }
+    // Each screen file is saved before its pty is killed, 2 s at most. The 3 s wait below counts from now.
+    for (const session of sessions.values()) session.screen?.stop()
+    const saves = [...sessions.values()].flatMap((s) => (s.screen === undefined ? [] : [s.screen.save()]))
+    /** Set once the saves ended and the ptys got their kill: only then may the host exit. */
+    let killedAll = false
+    const killAll = () => {
+      killedAll = true
+      for (const session of live()) kill(session)
+      queueMicrotask(check)
+    }
+    if (saves.length === 0) killAll()
+    else {
+      let killed = false
+      const killOnce = () => {
+        if (killed) return
+        killed = true
+        clearTimeout(saveLimit)
+        killAll()
+      }
+      const saveLimit = setTimeout(killOnce, FLUSH_WAIT_MS)
+      void Promise.all(saves).then(killOnce)
     }
     let done = false
     const finish = () => {
@@ -192,11 +269,10 @@ export function startPtyHost(deps: HostDeps): PtyHost {
       deps.exit(0)
     }
     const timer = setTimeout(finish, deps.shutdownWaitMs ?? SHUTDOWN_WAIT_MS)
-    const check = () => {
-      if (live().length === 0) finish()
+    function check() {
+      if (killedAll && live().length === 0) finish()
     }
     exitWaiters.add(check)
-    queueMicrotask(check)
   }
 
   /** A session a window may use: listed, with its pid known. */
@@ -249,8 +325,10 @@ export function startPtyHost(deps: HostDeps): PtyHost {
 
   return {
     handle(raw, ports = []) {
-      if (shuttingDown || typeof raw !== 'object' || raw === null) return
+      if (typeof raw !== 'object' || raw === null) return
       const m = raw as { type?: unknown; id?: unknown; spec?: unknown }
+      // A flush still answers during shutdown, so main never waits on it.
+      if (shuttingDown && m.type !== 'flush') return
       try {
         if (m.type === 'start') start(m.spec)
         else if (m.type === 'kill' && typeof m.id === 'string') killSession(m.id)
@@ -258,6 +336,7 @@ export function startPtyHost(deps: HostDeps): PtyHost {
         else if (m.type === 'list') list()
         else if (m.type === 'snapshot' && typeof m.id === 'string') snapshot(m.id)
         else if (m.type === 'connect') connect(ports[0])
+        else if (m.type === 'flush') flush()
         else if (m.type === 'shutdown') shutdown()
         else console.error(`openaflow pty host: a message it does not know: ${JSON.stringify(m.type)}`)
       } catch (err) {

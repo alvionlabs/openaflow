@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { HostToMain, HostToWindow, StartSpec } from './protocol.ts'
+import type { ScreenFs } from './screen-file.ts'
 import { startPtyHost, type PtyModule, type PtyProcess, type PtySpawnOptions } from './service.ts'
 import type { WindowPort } from './session.ts'
 
@@ -19,7 +20,8 @@ type FakePty = PtyProcess & {
 const DIR = isAbsolute('/work') ? '/work' : 'C:\\work'
 const PROGRAM = isAbsolute('/bin/sh') ? '/bin/sh' : 'C:\\Windows\\System32\\cmd.exe'
 
-function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?: boolean } = {}) {
+/** `killThrowsBeforePid`: the kill throws until the pid shows, as a pty that can't take a kill yet. */
+function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?: boolean; killThrowsBeforePid?: boolean } = {}) {
   const spawned: FakePty[] = []
   let nextPid = 100
   const mod: PtyModule = {
@@ -54,6 +56,7 @@ function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?:
           return { dispose() {} }
         },
         kill(signal) {
+          if (o.killThrowsBeforePid === true && !connected) throw new Error('the pty is not ready')
           pty.killed.push(signal ?? 'default')
           if (o.exitOnKill !== false) queueMicrotask(() => pty.end(0, 1))
         },
@@ -67,7 +70,22 @@ function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?:
   return { mod, spawned }
 }
 
-function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModule; dirs?: string[]; shutdownWaitMs?: number } = {}) {
+/** Screen files in memory. `hang`: paths whose write never ends. */
+function memoryFs(o: { hang?: string[] } = {}) {
+  const files = new Map<string, string>()
+  const fs: ScreenFs = {
+    mkdir: async () => {},
+    writeFile: (path, text) => (o.hang?.some((h) => path.includes(h)) ? new Promise(() => {}) : Promise.resolve(void files.set(path, text))),
+    rename: async (from, to) => {
+      files.set(to, files.get(from)!)
+      files.delete(from)
+    },
+    unlink: async (path) => void files.delete(path),
+  }
+  return { fs, files }
+}
+
+function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModule; dirs?: string[]; shutdownWaitMs?: number; fs?: ScreenFs } = {}) {
   const pty = o.pty ?? fakePtyModule()
   const sent: HostToMain[] = []
   const exits: number[] = []
@@ -79,6 +97,8 @@ function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModul
     isDir: (p) => dirs.has(p),
     scrollback: 100,
     ...(o.shutdownWaitMs === undefined ? {} : { shutdownWaitMs: o.shutdownWaitMs }),
+    screenFs: o.fs ?? memoryFs().fs,
+    log: () => {},
   })
   const of = <T extends HostToMain['type']>(type: T) => sent.filter((m): m is Extract<HostToMain, { type: T }> => m.type === type)
   /** What main got, without `ready` and the beats. */
@@ -170,6 +190,10 @@ describe('pty host service', () => {
       [spec({ cols: 80.5 }), 'run-1', 'bad size'],
       [spec({ args: [1] as unknown as string[] }), 'run-1', 'bad message'],
       [spec({ env: { A: 1 } as unknown as Record<string, string> }), 'run-1', 'bad message'],
+      [spec({ screenFile: 'screens/run-1.txt' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: './run-1.txt' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: '' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: 5 as unknown as string }), 'run-1', 'bad screen file'],
     ]
     for (const [bad, id, error] of cases) {
       h.service.handle({ type: 'start', spec: bad })
@@ -179,6 +203,63 @@ describe('pty host service', () => {
     // The bounds themselves are fine.
     for (const [cols, rows] of [[2, 1], [500, 200]] as const) h.service.handle({ type: 'start', spec: spec({ id: `edge-${cols}`, cols, rows }) })
     expect(h.spawned).toHaveLength(3)
+    // An absolute screen file is fine.
+    h.service.handle({ type: 'start', spec: spec({ id: 'with-screen', screenFile: `${DIR}${isAbsolute('/x') ? '/' : '\\'}run.txt` }) })
+    expect(h.spawned).toHaveLength(4)
+  })
+
+  describe('flush', () => {
+    const file = (id: string) => `${DIR}${isAbsolute('/x') ? '/' : '\\'}screens-${id}.txt`
+
+    test('writes every file, then answers flushed once', async () => {
+      vi.useFakeTimers()
+      const m = memoryFs()
+      const h = host({ fs: m.fs, pty: fakePtyModule({ latePid: true }) })
+      // An empty host answers at once.
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.of('flushed')).toHaveLength(1)
+
+      h.service.handle({ type: 'start', spec: spec({ id: 'a', screenFile: file('a') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'b', screenFile: file('b') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'plain' }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'waiting', screenFile: file('waiting') }) })
+      for (const pty of h.spawned.slice(0, 3)) pty.connect()
+      h.spawned[0]!.emit('alpha\r\n')
+      h.spawned[1]!.emit('beta\r\n')
+      h.spawned[1]!.end(0)
+      await vi.advanceTimersByTimeAsync(20)
+      h.spawned[0]!.emit('alpha two\r\n')
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(10)
+      // Every started session's file, with its text now; a session with no file, or still waiting, writes none.
+      expect(Object.fromEntries(m.files)).toEqual({ [file('a')]: 'alpha\nalpha two', [file('b')]: 'beta' })
+      expect(h.of('flushed')).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(h.of('flushed')).toHaveLength(2)
+    })
+
+    test('a hung write still answers within 2 s, once', async () => {
+      vi.useFakeTimers()
+      const m = memoryFs({ hang: ['stuck'] })
+      const h = host({ fs: m.fs })
+      h.service.handle({ type: 'start', spec: spec({ id: 'stuck', screenFile: file('stuck') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'fine', screenFile: file('fine') }) })
+      h.spawned[0]!.emit('x\r\n')
+      h.spawned[1]!.emit('y\r\n')
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(m.files.get(file('fine'))).toBe('y')
+      expect(h.of('flushed')).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(h.of('flushed')).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(h.of('flushed')).toHaveLength(1)
+      // A second ask answers too, within 2 s.
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(h.of('flushed')).toHaveLength(2)
+    })
   })
 
   test('a spawn that throws answers spawn failed', () => {
@@ -378,18 +459,6 @@ describe('pty host service', () => {
       expect(h.spawned).toHaveLength(1)
     })
 
-    test('dispose while waiting answers spawn failed and kills the pty', async () => {
-      vi.useFakeTimers()
-      const h = host({ pty: fakePtyModule({ latePid: true }) })
-      h.service.handle({ type: 'start', spec: spec() })
-      h.service.handle({ type: 'dispose', id: 'run-1' })
-      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: disposed before it started' }])
-      expect(h.spawned[0]!.killed).toHaveLength(1)
-      h.spawned[0]!.connect()
-      await vi.advanceTimersByTimeAsync(20_000)
-      expect(h.answers()).toHaveLength(1)
-    })
-
     test('shutdown while waiting answers spawn failed and the host still exits', async () => {
       vi.useFakeTimers()
       const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
@@ -507,14 +576,64 @@ describe('pty host service', () => {
     expect(w.got.map((m) => m.type)).toEqual(['replay'])
   })
 
-  test('kill while waiting for the pid ends the start with spawn failed', () => {
-    const h = host({ pty: fakePtyModule({ latePid: true }) })
-    h.service.handle({ type: 'start', spec: spec() })
-    h.service.handle({ type: 'kill', id: 'run-1' })
-    expect(h.spawned[0]!.killed).toHaveLength(1)
-    // The fake ends on kill, after a microtask.
-    return until(() => h.answers().length === 1).then(() => {
-      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the program ended before it started (exit code 0)' }])
+  describe('kill before the pid', () => {
+    for (const [type, word] of [
+      ['kill', 'killed before it started'],
+      ['dispose', 'disposed before it started'],
+    ] as const) {
+      test(`${type} answers start-failed at once and frees the id`, async () => {
+        vi.useFakeTimers()
+        const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
+        const w = h.connect()
+        h.service.handle({ type: 'start', spec: spec() })
+        h.service.handle({ type, id: 'run-1' })
+        expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: `spawn failed: ${word}` }])
+        // A pty that takes the kill now gets it now, once.
+        expect(h.spawned[0]!.killed).toHaveLength(1)
+        h.service.handle({ type: 'list' })
+        expect(h.of('list').at(-1)!.sessions).toEqual([])
+        // The pid, data, and exit that come later send nothing, to main or to a window.
+        h.spawned[0]!.connect()
+        h.spawned[0]!.emit('late\r\n')
+        h.spawned[0]!.end(0)
+        await vi.advanceTimersByTimeAsync(20_000)
+        expect(h.answers().filter((m) => m.type !== 'list')).toHaveLength(1)
+        expect(h.spawned[0]!.killed).toHaveLength(1)
+        w.send({ type: 'attach', id: 'run-1' })
+        expect(w.got).toEqual([{ type: 'error', id: 'run-1', error: 'no session' }])
+        // The id is free.
+        h.service.handle({ type: 'start', spec: spec() })
+        expect(h.spawned).toHaveLength(2)
+      })
+
+      test(`${type} kills at the pid when the pty can't take the kill before it`, async () => {
+        vi.useFakeTimers()
+        const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false, killThrowsBeforePid: true }) })
+        h.service.handle({ type: 'start', spec: spec() })
+        h.service.handle({ type, id: 'run-1' })
+        expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: `spawn failed: ${word}` }])
+        await vi.advanceTimersByTimeAsync(500)
+        expect(h.spawned[0]!.killed).toEqual([])
+        h.spawned[0]!.connect()
+        await vi.advanceTimersByTimeAsync(10)
+        expect(h.spawned[0]!.killed).toEqual(['default'])
+        h.spawned[0]!.end(0)
+        await vi.advanceTimersByTimeAsync(20_000)
+        expect(h.spawned[0]!.killed).toHaveLength(1)
+        expect(h.answers()).toHaveLength(1)
+      })
+    }
+
+    test('a pid that never shows stops the kill tries at 10 s', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false, killThrowsBeforePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.service.handle({ type: 'kill', id: 'run-1' })
+      await vi.advanceTimersByTimeAsync(10_100)
+      h.spawned[0]!.connect()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(h.spawned[0]!.killed).toEqual([])
+      expect(h.answers()).toHaveLength(1)
     })
   })
 
@@ -597,6 +716,7 @@ describe('pty host service', () => {
         { type: 'list' },
         { type: 'snapshot', id: 'run-1' },
         { type: 'connect' },
+        { type: 'flush' },
         { type: 'shutdown' },
       ]) {
         w.got.length = 0
