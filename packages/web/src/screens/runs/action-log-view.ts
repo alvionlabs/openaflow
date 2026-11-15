@@ -14,6 +14,7 @@ const OUTCOME_CLS: Record<ActionEntry['result'], ChipClass> = {
   kept: 's-ok',
   started: 's-ok',
   removed: 's-ok',
+  dismissed: 's-ok',
   queued: 's-run',
   'auto-merge': 's-run',
   stale: 's-you',
@@ -22,7 +23,7 @@ const OUTCOME_CLS: Record<ActionEntry['result'], ChipClass> = {
   failed: 's-bad',
 }
 
-/** merged, answered, closed, kept, started, and removed → ok; queued and auto-merge → run; stale, unconfirmed, and changed → you; failed → bad. */
+/** merged, answered, closed, kept, started, removed, and dismissed → ok; queued and auto-merge → run; stale, unconfirmed, and changed → you; failed → bad. */
 export const outcomeChip = (result: ActionEntry['result']): Chip => ({ cls: OUTCOME_CLS[result], label: result })
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

@@ -13,6 +13,7 @@ import { createServerHost, type ServerHost } from './server-host.ts'
 import { serverEntry, serverEnv } from './server-launch.ts'
 import { createShellBus, type ShellBus } from './shell-bus.ts'
 import { startTerminalLink } from './terminal-port-main.ts'
+import { startTerminalRelay } from './terminal-relay.ts'
 import { APP_ID, APP_NAME, dataDirOverride } from './shell-config.ts'
 import { createLogFile, LOG_FILE, nodeLogFs, teeConsole } from './shell-log.ts'
 import { installTestHooks } from './test-hooks-main.ts'
@@ -74,7 +75,7 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   const place = { packaged: app.isPackaged, appPath: o.appPath ?? app.getAppPath(), resourcesPath: process.resourcesPath }
   const entry = serverEntry(place)
   const host = createServerHost({
-    fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid), onSpawn: o.onServer }),
+    fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid, place), onSpawn: o.onServer }),
   })
   let updater: ReturnType<typeof startUpdater>
   const shellBus = createShellBus()
@@ -92,6 +93,8 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   // board running.
   const ptyHost = createPtyHost({ entry: ptyHostEntry(place), env: o.env })
   if (__OPENAFLOW_TEST_HOOKS__) installTestHooks(ptyHost)
+  // The server's sessions: its start, list, and dispose go to the host; answers, exits, and lost ids come back.
+  startTerminalRelay({ server: host, starter: ptyHost, log: (line) => console.log(line) })
   startTerminalLink({
     starter: ptyHost,
     origin: () => {

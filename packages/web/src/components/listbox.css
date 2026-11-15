@@ -1,0 +1,112 @@
+/*
+ * The listbox button (sprint terminal-tab §8, draft terminal-host-look.html section 2): a field (.input from
+ * base.css) that shows the pick's label and slash command. It opens a list drawn as the draft's open dropdown: --bg,
+ * a --border-strong frame, an 8 px radius, and the menu's shadow token. Each option: the label, its command in mono,
+ * and one muted line. The active option sits on --hover. A divider is a 1 px rule in --border. Text is --fg or
+ * --muted only; no status colour is text. The button is 320 px wide at most, as the draft; on a narrow screen, the
+ * width of its column. The open list is as wide as the button, under it or over it, fixed to the viewport so a
+ * modal panel never clips it.
+ */
+.listbox {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+}
+
+.listbox-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.listbox-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.listbox-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.listbox-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+
+.listbox-list {
+  /* Placed by Listbox.tsx from the button's box (listPlacement): fixed, so no overflow clips it. */
+  position: fixed;
+  z-index: 10;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--size-dense);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+
+.listbox-list[hidden] {
+  display: none;
+}
+
+.listbox-option {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.listbox-option[data-active] {
+  background: var(--hover);
+}
+
+.listbox-option-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.listbox-label {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.listbox-command {
+  font: 400 var(--size-small) / 1.4 var(--mono);
+  color: var(--fg);
+}
+
+.listbox-line {
+  font-size: var(--size-small);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.listbox-divider {
+  height: 0;
+  margin: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+/* In the field, the pick reads as a value, not a heading. */
+.listbox-button .listbox-label {
+  font-weight: 400;
+}

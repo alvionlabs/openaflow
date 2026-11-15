@@ -366,6 +366,55 @@ describe('the pty host starter', () => {
     expect(s.events.at(-1)).toEqual({ type: 'crashed', lost: ['b'], restartsLeft: MAX_RESTARTS - 1 })
   })
 
+  test('dispose and exit events', async () => {
+    const s = setup()
+    s.starter.start()
+    const h = s.last()
+    // Before ready no host holds a session, so a dispose sends nothing.
+    s.starter.dispose('a')
+    expect(h.sent).toEqual([])
+    h.message(READY)
+    h.message({ type: 'started', id: 'a', pid: 5 })
+    h.message({ type: 'started', id: 'b', pid: 6 })
+    h.message({ type: 'started', id: 'c', pid: 7 })
+    const exits = () => s.events.filter((e) => e.type === 'exit')
+
+    h.message({ type: 'exit', id: 'a', exitCode: 3, signal: 9 })
+    h.message({ type: 'exit', id: 'a', exitCode: 3 })
+    // Not live, or not a number: no event.
+    h.message({ type: 'exit', id: 'zz', exitCode: 0 })
+    h.message({ type: 'exit', id: 'b', exitCode: 'x' })
+    expect(exits()).toEqual([{ type: 'exit', id: 'a', exitCode: 3 }])
+    expect(s.starter.live()).toEqual(['b', 'c'])
+
+    // The host sends no exit for a disposed live session, so it leaves the live set here, with no event.
+    s.starter.dispose('b')
+    expect(h.sent.at(-1)).toEqual({ message: { type: 'dispose', id: 'b' }, transfer: undefined })
+    expect(s.starter.live()).toEqual(['c'])
+    h.message({ type: 'exit', id: 'b', exitCode: 0 })
+    expect(exits()).toHaveLength(1)
+    h.exit(1)
+    expect(s.events.at(-1)).toEqual({ type: 'crashed', lost: ['c'], restartsLeft: MAX_RESTARTS - 1 })
+    // The old host's late exit is not the new host's.
+    h.message({ type: 'exit', id: 'c', exitCode: 0 })
+    expect(exits()).toHaveLength(1)
+
+    const next = s.last()
+    next.message(READY)
+    next.message({ type: 'started', id: 'c', pid: 8 })
+    next.message({ type: 'exit', id: 'c', exitCode: 0 })
+    expect(exits()).toEqual([
+      { type: 'exit', id: 'a', exitCode: 3 },
+      { type: 'exit', id: 'c', exitCode: 0 },
+    ])
+
+    // A stopped starter has no host: a dispose sends nothing and never throws.
+    void s.starter.stop()
+    const sent = next.sent.length
+    s.starter.dispose('c')
+    expect(next.sent).toHaveLength(sent)
+  })
+
   test('list, kill, snapshot, and connect', async () => {
     const s = setup()
     s.starter.start()

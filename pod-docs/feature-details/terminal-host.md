@@ -33,16 +33,20 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 | The app starts and its server follows it (`real-start`) | yes | yes | yes | — |
 | Host protocol, flow control, replay order (unit tests with a fake pty and the real `@xterm/headless`; `real-pty` under Node) | yes | yes (`verify`) | yes (`verify`) | — |
 | The hooks plugin's script (`record.test.ts`) | yes | yes (`verify`) | yes, with Git's `sh` (`verify`) | — |
-| The start command with real `claude` (`real-claude-start`: the start argument after the folder-trust prompt, `--session-id` with cause `startup`, the exact prompt in `UserPromptSubmit`) | yes | never in CI | never in CI | the human's command below |
+| The start command with real `claude` (`real-claude-start`: the start argument after the folder-trust prompt, `--session-id` with cause `startup`, the exact prompt in `UserPromptSubmit`) | yes, in host-core A1, with the real `~/.claude`; not run again in a separate config folder | never in CI | never in CI | the human's command below |
+| No `SessionStart` line while the folder-trust prompt shows (`real-claude-start` › `no SessionStart before the trust answer`) | never ran: the test waits for a signed-in test config folder | never in CI | never in CI | the human's command below |
+| In a trusted folder, the first `SessionStart` within 10 s of the spawn, the time logged (`real-claude-start` › `SessionStart within the waiting time`) | never ran: the test waits for a signed-in test config folder | never in CI | never in CI | the human's command below |
 | The Windows npm-shim route | unit tests only | — | unit tests only | never ran with real `claude` |
 | The `cmd.exe` route (an unreadable shim) | — | — | unit tests only | never ran |
-| The `PreToolUse` and `PermissionRequest` hooks firing in real `claude` | never fired | — | — | never fired |
+| The `PreToolUse` and `PermissionRequest` hooks firing in real `claude`, in that order, for one Bash call under `permissions.defaultMode: "default"`, denied with Escape (`real-claude-start` › `tool hooks fire`) | never fired: the test waits for a signed-in test config folder | never in CI | never in CI | never fired |
 
 - `real-start` and the Linux gate of `real-folder-bridge` (host-core C1) have no History line in [desktop.md](desktop.md); this table is their record.
 - **A kill right after the start:** node-pty holds `kill()` on Windows until the program's first output, so a kill while a session waits for its pid may let the program run for a moment. `real-terminal` › `a kill right after the start ends the session` sends `start`, `list`, and `kill` in a row, and checks that the session ends and its program stops. Its log line, `a kill right after the start answered …`, shows the pid the start gave (or `spawn failed: …`) and the session as `list` saw it at the kill (`pid: 0` means it still waited for its pid). On Linux the pid comes at once, so the kill always lands on a started session.
+- **`real-claude-start` runs only in a separate config folder.** It needs `OPENAFLOW_REAL_CLAUDE=1` and `OPENAFLOW_REAL_CLAUDE_CONFIG_DIR`, an absolute folder signed in to once, which `claude` gets as `CLAUDE_CONFIG_DIR`. Otherwise it skips and prints why. Linux: sign in once with `CLAUDE_CONFIG_DIR=$HOME/.openaflow-test-claude claude`, `/login`, `/exit`; then `OPENAFLOW_REAL_CLAUDE=1 OPENAFLOW_REAL_CLAUDE_CONFIG_DIR=$HOME/.openaflow-test-claude pnpm vitest run packages/pty-host/test/real-claude-start.test.ts`. It runs two Haiku turns: `/proof:pong` in a new temp folder (the trust prompt first), then `/proof:deny` in the same folder, now trusted, whose one Bash call the test denies.
 - **The human's Windows commands**, on a real Windows machine from the repo root:
   - `pnpm build`, `pnpm package --test-hooks`, then `$env:OPENAFLOW_REAL_ELECTRON='1'; $env:OPENAFLOW_PACKAGED_APP='<repo>\packages\desktop\release\win-unpacked\OpenAFlow.exe'; pnpm test:electron real-terminal`.
-  - `$env:OPENAFLOW_REAL_CLAUDE='1'; pnpm vitest run packages/pty-host/test/real-claude-start.test.ts` (Haiku, at most 4 turns).
+  - Sign in once in a separate Claude Code config folder: `$env:CLAUDE_CONFIG_DIR="$HOME\.openaflow-test-claude"; claude`, then `/login`, then `/exit`, then `Remove-Item Env:CLAUDE_CONFIG_DIR`.
+  - `$env:OPENAFLOW_REAL_CLAUDE='1'; $env:OPENAFLOW_REAL_CLAUDE_CONFIG_DIR="$HOME\.openaflow-test-claude"; pnpm vitest run packages/pty-host/test/real-claude-start.test.ts` (Haiku, 2 turns).
 
 ## The Electron checks
 
@@ -67,6 +71,8 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 
 ## Watch out
 
+- `real-claude-start` never touches `~/.claude` or `~/.claude.json` now. Its runs leave a folder-trust entry for each temp folder in the test config folder's `.claude.json`; the test deletes its own transcript folders, never that file. Runs before terminal-tab X1 left transcripts and trust entries in the real config (5 runs, nothing deleted).
+
 - On Windows, ConPTY lets about 300,000 characters through after an ack resumes the pty, before the pause holds again. Flow control limits memory, not the exact count.
 - A kill on Windows while the session waits for its pid may let the program run for a moment (see Proved where).
 - After a host crash, the sessions' programs are no longer the host's. In the spike, real `claude` ended in about 1 s from the closed pty's SIGHUP ([terminal-host-spike.md](../research/terminal-host-spike.md)). The session ender that ends leftovers comes with the session-life work in the plan. The test fixture ends itself after 5 minutes for this reason.
@@ -83,3 +89,4 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 - 2026-11-14 · host-core P1: the Linux AppImage, the release workflow's Linux build, and `verify (ubuntu-latest)`.
 - 2026-11-14 · host-core A1: the start command and the skill list, proved with real `claude` on Linux.
 - 2026-11-14 · host-core E1: `real-terminal`, the `electron` CI jobs on both systems, and this page.
+- 2026-11-14 · terminal-tab X1: `real-claude-start` runs only with `OPENAFLOW_REAL_CLAUDE_CONFIG_DIR`, a separate signed-in Claude Code config folder it gives `claude` as `CLAUDE_CONFIG_DIR`. It refuses `~/.claude`, the home folder, and the caller's own `CLAUDE_CONFIG_DIR`, and says why it skips. Proofs added for `SessionStart` around the trust prompt and the tool hooks; not run yet.

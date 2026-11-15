@@ -2,9 +2,9 @@
 // `electron` import: pty-host-main.ts is the glue. The rules are in pod-docs/sprints/host-core.md (§2, §4).
 
 import { join } from 'node:path'
-import type { HostToMain, StartSpec } from '@openaflow/pty-host/protocol'
+import type { HostToMain } from '@openaflow/pty-host/protocol'
 
-type Place = { packaged: boolean; appPath: string; resourcesPath: string }
+export type Place = { packaged: boolean; appPath: string; resourcesPath: string }
 
 /** With this set, Electron's exe runs as plain Node, which a utilityProcess must not. */
 const RUN_AS_NODE = 'ELECTRON_RUN_AS_NODE'
@@ -34,72 +34,4 @@ export function hostLogLine(m: unknown): string | undefined {
   if (message?.type === 'ready') return 'openaflow desktop: terminal host ready'
   if (message?.type === 'load-failed') return `openaflow desktop: terminal host could not load node-pty: ${message.error}`
   return undefined
-}
-
-export type PtyHostClient = {
-  onMessage(m: unknown): void
-  /** The host is gone: what waits, and every later call, rejects. */
-  fail(reason: string): void
-  start(spec: StartSpec): Promise<{ pid: number }>
-  snapshot(id: string): Promise<string | null>
-}
-
-type Waiter<T> = { resolve(value: T): void; reject(err: Error): void }
-
-/** Sends after `ready`, and matches each answer to its request by id, in order. */
-export function createPtyHostClient(post: (m: unknown) => void): PtyHostClient {
-  let failed: string | undefined
-  let markReady!: () => void
-  let markFailed!: (err: Error) => void
-  const ready = new Promise<void>((resolve, reject) => {
-    markReady = resolve
-    markFailed = reject
-  })
-  // Each caller handles its own rejection.
-  ready.catch(() => {})
-  const starts = new Map<string, Waiter<{ pid: number }>[]>()
-  const snapshots = new Map<string, Waiter<string | null>[]>()
-
-  const unavailable = () => new Error(`terminals unavailable: ${failed}`)
-  const take = <T>(map: Map<string, Waiter<T>[]>, id: string) => {
-    const queue = map.get(id)
-    const first = queue?.shift()
-    if (queue?.length === 0) map.delete(id)
-    return first
-  }
-  const request = <T>(map: Map<string, Waiter<T>[]>, id: string, message: unknown) =>
-    new Promise<T>((resolve, reject) => {
-      if (failed !== undefined) return reject(unavailable())
-      void ready.then(
-        () => {
-          if (failed !== undefined) return reject(unavailable())
-          map.set(id, [...(map.get(id) ?? []), { resolve, reject }])
-          post(message)
-        },
-        () => reject(unavailable()),
-      )
-    })
-
-  const client: PtyHostClient = {
-    onMessage(raw) {
-      const m = raw as HostToMain | null
-      if (m?.type === 'ready') markReady()
-      else if (m?.type === 'load-failed') client.fail(m.error)
-      else if (m?.type === 'started') take(starts, m.id)?.resolve({ pid: m.pid })
-      else if (m?.type === 'start-failed') take(starts, m.id)?.reject(new Error(m.error))
-      else if (m?.type === 'snapshot') take(snapshots, m.id)?.resolve(m.text)
-    },
-    fail(reason) {
-      if (failed !== undefined) return
-      failed = reason
-      markFailed(unavailable())
-      for (const map of [starts, snapshots] as Map<string, Waiter<never>[]>[]) {
-        for (const queue of map.values()) for (const w of queue) w.reject(unavailable())
-        map.clear()
-      }
-    },
-    start: (spec) => request(starts, spec.id, { type: 'start', spec }),
-    snapshot: (id) => request(snapshots, id, { type: 'snapshot', id }),
-  }
-  return client
 }

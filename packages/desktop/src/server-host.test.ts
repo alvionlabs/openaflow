@@ -355,4 +355,52 @@ describe('the server host', () => {
     expect(off).not.toHaveBeenCalled()
     expect(s.failed).toHaveBeenCalledOnce()
   })
+
+  test('send and onMessage follow the current process', () => {
+    const s = setup()
+    const got: { m: unknown; reply(m: unknown): void }[] = []
+    const off = s.host.onMessage((m, reply) => got.push({ m, reply }))
+    // No process yet: dropped, not queued.
+    s.host.send({ n: 0 })
+    s.host.start()
+    const first = at(s.procs, 0)
+    first.ready(3110)
+    first.message({ n: 1 })
+    s.host.send({ n: 2 })
+    expect(first.sent).toEqual([{ n: 2 }])
+    // Every message reaches the listener, the ready one too.
+    expect(got.map((g) => g.m)).toEqual([{ type: 'openaflow:ready', port: 3110 }, { n: 1 }])
+
+    first.exit()
+    const second = at(s.procs, 1)
+    s.host.send({ n: 3 })
+    expect(second.sent).toEqual([{ n: 3 }])
+    expect(first.sent).toEqual([{ n: 2 }])
+    // A reply goes to the process that asked, and only while it is current.
+    got[1]!.reply({ n: 4 })
+    expect(first.sent).toEqual([{ n: 2 }])
+    expect(second.sent).toEqual([{ n: 3 }])
+    // The old process's late message reaches no one.
+    first.message({ n: 5 })
+    second.message({ n: 6 })
+    expect(got.map((g) => g.m)).toEqual([{ type: 'openaflow:ready', port: 3110 }, { n: 1 }, { n: 6 }])
+    got[2]!.reply({ n: 7 })
+    expect(second.sent).toEqual([{ n: 3 }, { n: 7 }])
+
+    // A closed channel throws nothing.
+    second.postMessage = () => {
+      throw new Error('closed')
+    }
+    expect(() => s.host.send({ n: 8 })).not.toThrow()
+
+    off()
+    second.message({ n: 9 })
+    expect(got).toHaveLength(3)
+
+    // After the last failure nothing is current.
+    second.exit()
+    const sent = second.sent.length
+    s.host.send({ n: 10 })
+    expect(second.sent).toHaveLength(sent)
+  })
 })
