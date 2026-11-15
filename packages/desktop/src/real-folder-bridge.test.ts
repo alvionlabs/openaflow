@@ -88,7 +88,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
     if (tmp) await removeWithRetry(tmp)
   })
 
-  test('the page sees only pickFolder', async () => {
+  test('the page sees only the bridge and terminal calls', async () => {
     const exe = createRequire(join(DESKTOP, 'package.json'))('electron') as string
     const env: NodeJS.ProcessEnv = {}
     for (const [k, v] of Object.entries(process.env)) {
@@ -124,10 +124,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       const page = s.page!
       expect(new URL(page.url).origin).toBe(`http://127.0.0.1:${s.readyPorts[0]}`)
 
-      // Exactly one function on the bridge, and no Node or Electron in the page.
+      // Exactly the bridge's three functions, and no Node or Electron in the page.
       expect(page.look).toEqual({
         openaflow: 'object',
-        keys: ['pickFolder'],
+        keys: ['pickFolder', 'connectTerminals', 'onTerminalHost'],
         pickFolder: 'function',
         require: 'undefined',
         process: 'undefined',
