@@ -1,17 +1,17 @@
 # Sprint: Terminal tab
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=4 -->
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=5 -->
 
 ## Status board
 
 | Wave | Slice | Title | Branch | PR | Status | Confidence | Depends on |
 |------|-------|-------|--------|----|--------|------------|------------|
-| 1 | M1 | Model: hosted sessions on the Board, the join, row states, skill labels | terminal-tab-M1 | https://github.com/alvionlabs/openaflow/pull/125 | pushed | medium | — |
-| 1 | D1 | Main ↔ server terminal link, per-session exit, starter clean-up | terminal-tab-D1 | https://github.com/alvionlabs/openaflow/pull/125 | pushed | medium | — |
-| 1 | X1 | Real `claude` proofs in a separate signed-in config folder | terminal-tab-X1 | https://github.com/alvionlabs/openaflow/pull/125 | pushed | medium | — |
-| 1 | L1 | Look: terminal theme from tokens, the Start with listbox, xterm deps | terminal-tab-L1 | https://github.com/alvionlabs/openaflow/pull/125 | pushed | medium | — |
-| 1 | F1 | Web terminal link: bridge, port client, open-tab request | terminal-tab-F1 | https://github.com/alvionlabs/openaflow/pull/125 | pushed | medium | — |
+| 1 | M1 | Model: hosted sessions on the Board, the join, row states, skill labels | terminal-tab-M1 | merged | done | medium | — |
+| 1 | D1 | Main ↔ server terminal link, per-session exit, starter clean-up | terminal-tab-D1 | merged | done | medium | — |
+| 1 | X1 | Real `claude` proofs in a separate signed-in config folder | terminal-tab-X1 | merged | done | medium | — |
+| 1 | L1 | Look: terminal theme from tokens, the Start with listbox, xterm deps | terminal-tab-L1 | merged | done | medium | — |
+| 1 | F1 | Web terminal link: bridge, port client, open-tab request | terminal-tab-F1 | merged | done | medium | — |
 | 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | — | pending | — | M1, D1 |
 | 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | — | pending | — | M1 |
 | 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | — | pending | — | M1, L1, F1 |
