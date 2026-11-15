@@ -1,7 +1,7 @@
 # Sprint: Host core
 
-_From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=3 -->
+_From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: archived · Generated: 2026-11-14_
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=3 -->
 
 ## Status board
 
@@ -221,3 +221,22 @@ Each message is `{ type, ...fields }`. Rules:
 - **Depends on:** H1, S1, P1
 - **One-way door:** none
 - **Model:** opus
+
+## Sprint summary
+
+- **Synced with merge-target:** up to date (the plan branch was cut from `pod-staging` after `main` was merged into it on 2026-11-14; no new `pod-staging` commits since).
+- **Slices shipped:** N1, C1, K1, H1, S1, P1, A1, E1, plus the wave 1 fix.
+- **Waves:** wave 1 PR #117 (human merge, one-way door C1), wave 2 PR #122 (human merge, one-way door P1), wave 3 PR #124 (auto-merged).
+- **Queue entries:** resolved 6 this sprint (the 2026-11-05 `utimes` entry, N1's and S1's BLOCKED, both gate 6 halts, both one-way doors), plus the 2026-11-05 `utimes` item; deferred 19 — the pending `plan: terminal-host` entries in [handoff-queue.md](../../handoff-queue.md): decisions (Ubuntu 24.04 sandbox, CI on every PR, ConPTY and xterm licence text, A1's error words, `onTerminalHost` state, `real-start` unpackaged only), human Windows checks, the release workflow dry run, the Linux icon, and notes for terminal-tab and session-life (hook file pruning, kill before pid on Windows, `cmd.exe` route, `PreToolUse` and `PermissionRequest` hooks, S1's local types, real-claude runs writing to `~/.claude`).
+- **Slice log:**
+  - N1: opus · medium · test-first yes · runtime Electron unpackaged and packaged on Linux, Windows by CI · 4 NOTEs · time lost: the Windows proof needed a PR (BLOCKED, cleared by the wave PR)
+  - C1: opus · medium · test-first partly — `real-start` was green at once, proved by a mutation · runtime the desktop app and a real config copy on Linux · 3 NOTEs · time lost none
+  - K1: sonnet · medium · test-first yes · runtime `record.sh` under `sh` on Linux · 6 NOTEs · time lost none (removed its worktree with `--force`)
+  - Wave 1 fix: opus · medium · test-first yes (8 late-pid tests) · runtime Windows and Linux CI, draft PR #118, 1 round · time lost none
+  - H1: opus · medium · test-first yes · runtime a scratch Electron main with a real `MessagePort`, Windows CI (draft PR #119, 3 rounds) · 7 NOTEs · time lost about 10 min (a tight Windows bound)
+  - S1: opus · medium · test-first yes · runtime real Electron, 6 host kills, quit · 4 NOTEs · time lost: a BLOCKED test key list, fixed under gate 1's exception
+  - P1: opus · medium · test-first partly — 3 helper tests written after their code · runtime the AppImage started on Linux, release check, draft PR #121 (3 rounds) · 4 NOTEs · time lost none
+  - A1: opus · medium · test-first yes · runtime real `claude` 2.1.325 on Haiku through node-pty · 3 NOTEs · time lost about 6 min (a 240 s wait on a red run)
+  - E1: opus · medium · test-first partly — 4 tests green at first run, proved by deliberate breaks · runtime Electron unpackaged, packaged, and the AppImage; draft PR #123 (3 rounds) · 1 NOTE · time lost none
+  - No stalls. Orchestrator: one wave check's process search matched its own shell; the check was finished by path.
+- **Agent context at hand-back:** 1,594,981 tokens over the 9 engineer runs — *each agent's final context size, not tokens billed*.
