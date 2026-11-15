@@ -44,6 +44,11 @@ export type ShellContext = {
    * ends every session first → true, and the quit after it asks nothing.
    */
   endSessions(): Promise<boolean>
+  /**
+   * The quit goes through (no live session, a confirm, the server failed, a Windows shutdown): once, before the ends
+   * and the stops. Never on Cancel. Use this, not `before-quit`, which also fires for a quit that Cancel stops.
+   */
+  onQuitThrough(fn: () => void): void
 }
 
 export type ShellOptions = {
@@ -152,6 +157,7 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
     env: o.env,
     activatorAtStart: o.activatorAtStart ?? app.isPackaged,
     endSessions: () => flow.endSessions(),
+    onQuitThrough: (fn) => flow.onThrough(fn),
   }
 
   app.on('before-quit', (e) => flow.beforeQuit(e))
