@@ -41,11 +41,11 @@ In dev, the browser loads the web app from the Vite dev server, which proxies `/
 
 `.github/workflows/pod-ci.yml` runs on every `pull_request` (any base branch) and on `push` to `pod-staging`:
 
-- **verify** — on `windows-latest` only (the board is built for Windows first) with Node 22 and pnpm (`pnpm/action-setup`): `pnpm install --frozen-lockfile`, then `pnpm verify`.
+- **verify** — `verify (windows-latest)` and `verify (ubuntu-latest)`, with Node 22 and pnpm (`pnpm/action-setup`): `pnpm install --frozen-lockfile` with no Electron binary, then `pnpm verify`. No display, no packaging.
 
 - **pty proof** — `pty proof (windows-latest)` and `pty proof (ubuntu-latest)`: install with Electron's binary (`node node_modules/electron/install.js` in `packages/desktop`), `pnpm build`, `pnpm test:electron real-pty-proof`, `pnpm package --test-hooks`, then the same test on the packaged app (`release/win-unpacked/OpenAFlow.exe`, `release/linux-unpacked/openaflow`). On Ubuntu it runs under `xvfb-run -a`, after `sysctl kernel.apparmor_restrict_unprivileged_userns=0` for Electron's sandbox. Nothing is uploaded. `packages/desktop/src/ci-workflow.test.ts` holds the file's shape.
 
-No macOS run, no Linux `verify`, and no secret scan; see `pod-docs/decisions.md` (2026-10-22, Windows-only CI).
+No macOS run and no secret scan; see `pod-docs/decisions.md` (2026-10-22, Windows-only CI, and 2026-11-14, Linux CI jobs beside Windows).
 
 `.github/workflows/release.yml`, named `release`, starts only on a pushed tag `v<major>.<minor>.<patch>`. No agent pushes a tag or runs this workflow.
 

@@ -27,6 +27,23 @@ describe('pod-ci.yml', () => {
     expect(scripts.verify).not.toMatch(/package|test:install|release:check/)
   })
 
+  test('verify on both systems', () => {
+    const flow = ci()
+    // Today's triggers: every pull request, and a push to pod-staging.
+    expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
+    expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
+    const job = flow.jobs?.verify
+    // The Windows check keeps its name, so a required check on the branch still finds it.
+    expect(job?.name).toBe('verify (${{ matrix.os }})')
+    expect(job?.['runs-on']).toBe('${{ matrix.os }}')
+    expect(job?.strategy?.['fail-fast']).toBe(false)
+    expect(job?.strategy?.matrix?.os).toEqual(['windows-latest', 'ubuntu-latest'])
+    const steps = job?.steps ?? []
+    // Only pnpm verify: no display, no Electron binary, no sysctl.
+    expect(steps.filter((s) => s.run !== undefined).map((s) => s.run)).toEqual(['pnpm install --frozen-lockfile', 'pnpm verify'])
+    expect(steps.filter((s) => s.if !== undefined)).toEqual([])
+  })
+
   test('pty proof jobs', () => {
     const flow = ci()
     // Today's triggers: every pull request, and a push to pod-staging.
