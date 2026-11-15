@@ -81,6 +81,9 @@ describe('bundleDesktop', () => {
     await bundleDesktop({ entry: join(here, 'main.ts'), outfile: plain })
     const text = readFileSync(plain, 'utf8')
     expect(text).not.toContain('__openaflowTest')
+    // The quit answer hook: only in a test-hooks bundle. Every other build shows the native box.
+    expect(text).not.toContain('quit answer must be end or cancel')
+    expect(text).toContain('Quit and end sessions')
     // The pty host's start is in every build.
     expect(text).toContain('terminal host ready')
 
@@ -89,6 +92,7 @@ describe('bundleDesktop', () => {
     const hookedText = readFileSync(hooked, 'utf8')
     expect(hookedText).toContain('__openaflowTest')
     expect(hookedText).toContain('hostPid')
+    expect(hookedText).toContain('quit answer must be end or cancel')
     // The test feed is its own flag.
     expect(hookedText).not.toContain('OPENAFLOW_UPDATE_TEST')
     expect(externalImports.filter((name) => name !== 'electron' && !isBuiltin(name))).toEqual([])

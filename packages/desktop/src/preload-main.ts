@@ -1,16 +1,20 @@
 // Glue: the window's preload, bundled to dist/preload.cjs. It runs sandboxed, so it may require only `electron`.
-// The page gets exactly `window.openaflow.pickFolder()`, `connectTerminals()`, and `onTerminalHost(fn)`. The rules
-// are in folder-bridge.ts and terminal-port.ts.
+// The page gets exactly `window.openaflow.pickFolder()`, `connectTerminals()`, `onTerminalHost(fn)`,
+// `onQuitting(fn)`, and `terminalHostState()`. The rules are in folder-bridge.ts, terminal-port.ts, and quit-flow.ts.
 
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { answerOf, PICK_FOLDER_CHANNEL } from './folder-bridge.ts'
+import { QUITTING_CHANNEL, quittingCount } from './quit-flow.ts'
 import {
   createDeliveries,
   createPortRequests,
+  readHostState,
   TERMINAL_CONNECT_CHANNEL,
+  TERMINAL_HOST_STATE_CHANNEL,
   TERMINAL_PORT_CHANNEL,
   TERMINAL_STATE_CHANNEL,
   WATCH_PAGE_PORT,
+  type HostStateWord,
   type TerminalHostState,
 } from './terminal-port.ts'
 
@@ -43,4 +47,18 @@ contextBridge.exposeInMainWorld('openaflow', {
     ipcRenderer.on(TERMINAL_STATE_CHANNEL, on)
     return () => void ipcRenderer.removeListener(TERMINAL_STATE_CHANNEL, on)
   },
+  /** A confirmed quit: the count of sessions it ends. Returns a function that stops the calls. */
+  onQuitting: (fn: (count: number) => void): (() => void) => {
+    const on = (_e: unknown, payload: unknown) => {
+      const count = quittingCount(payload)
+      if (count !== undefined) fn(count)
+    }
+    ipcRenderer.on(QUITTING_CHANNEL, on)
+    return () => void ipcRenderer.removeListener(QUITTING_CHANNEL, on)
+  },
+  /** The host's state now. Another sender, or a failed invoke, rejects with `forbidden`. */
+  terminalHostState: (): Promise<HostStateWord> =>
+    ipcRenderer.invoke(TERMINAL_HOST_STATE_CHANNEL).then(readHostState, () => {
+      throw new Error('forbidden')
+    }),
 })

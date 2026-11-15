@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   BEAT_LOG_MS,
   createPtyHostStarter,
+  FLUSH_WAIT_MS,
   MAX_RESTARTS,
   READY_LIMIT_MS,
   STOP_KILL_MS,
@@ -464,5 +465,80 @@ describe('the pty host starter', () => {
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('restarting (4 restarts left)'))
     for (let i = 0; i < 2; i++) s.last().exit(1)
     expect(s.log).toHaveBeenCalledWith('openaflow desktop: terminal host restarting (1 restart left)')
+  })
+
+  test('flush', async () => {
+    const s = setup()
+    // No host yet: nothing to save, so it resolves at once and sends nothing.
+    const early = track(s.starter.flush())
+    await settle()
+    expect(early).toEqual({ done: true, value: undefined })
+    s.starter.start()
+    const h = s.last()
+    const unready = track(s.starter.flush())
+    await settle()
+    expect(unready.done).toBe(true)
+    expect(h.types()).toEqual([])
+
+    // A ready host: one `flush` per call; `flushed` resolves every flush that waits.
+    h.message(READY)
+    const a = track(s.starter.flush())
+    const b = track(s.starter.flush())
+    await settle()
+    expect(h.types()).toEqual(['flush', 'flush'])
+    expect(a.done).toBe(false)
+    h.message({ type: 'flushed' })
+    await settle()
+    expect(a).toEqual({ done: true, value: undefined })
+    expect(b).toEqual({ done: true, value: undefined })
+
+    // No answer: it resolves at 2 s, not before.
+    const slow = track(s.starter.flush())
+    await vi.advanceTimersByTimeAsync(FLUSH_WAIT_MS - 1)
+    expect(slow.done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(slow).toEqual({ done: true, value: undefined })
+    // A late `flushed` finds no one waiting.
+    expect(() => h.message({ type: 'flushed' })).not.toThrow()
+
+    // A crash during the flush resolves it at once.
+    const crashed = track(s.starter.flush())
+    await settle()
+    h.exit(1)
+    await settle()
+    expect(crashed.done).toBe(true)
+
+    // A stop resolves a waiting flush, and a flush after the stop sends nothing.
+    const t = setup()
+    t.starter.start()
+    t.last().message(READY)
+    const waiting = track(t.starter.flush())
+    void t.starter.stop()
+    await settle()
+    expect(waiting.done).toBe(true)
+    const after = track(t.starter.flush())
+    await settle()
+    expect(after.done).toBe(true)
+    expect(t.last().types()).toEqual(['flush', 'shutdown'])
+    expect(FLUSH_WAIT_MS).toBe(2_000)
+  })
+
+  test('held ids: live, and starts that wait for their pid', async () => {
+    const s = setup()
+    s.starter.start()
+    const h = s.last()
+    void s.starter.startSession(spec('a')).catch(() => {})
+    // Before ready the start waits in main: no host holds it yet, but main does.
+    expect(s.starter.held()).toEqual(['a'])
+    h.message(READY)
+    void s.starter.startSession(spec('b')).catch(() => {})
+    await settle()
+    expect(s.starter.held().sort()).toEqual(['a', 'b'])
+    h.message({ type: 'started', id: 'a', pid: 7 })
+    h.message({ type: 'start-failed', id: 'b', error: 'no folder' })
+    await settle()
+    expect(s.starter.held()).toEqual(['a'])
+    h.message({ type: 'exit', id: 'a', exitCode: 0 })
+    expect(s.starter.held()).toEqual([])
   })
 })
