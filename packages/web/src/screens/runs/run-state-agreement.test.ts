@@ -670,4 +670,18 @@ describe('hosted sessions', () => {
     expect(row.where).toBe('session · waiting for you')
     expect(read(outside, row)).toEqual({ sidebar: 'needs-you', next: 'Needs you' })
   })
+
+  it('a blocked run whose session waits keeps Blocked on the card and in the sidebar', () => {
+    // A blocked slice and no answerable entry: the run is blocked; the waiting card is the card, but wears the run's state.
+    const blocked = repoOf([], { agents: [quiet(ENGINEER_QUIET_MS)] }, [
+      [1, 'P1', '—', 'blocked'],
+      [2, 'Q1', '—', 'pending'],
+    ])
+    expect(runOf(blocked).state).toBe('blocked')
+    const waiting = { ...blocked, hosted: [session()] }
+    const run = runOf(waiting)
+    expect(nextSteps(run, waiting, NOW)!.card.key).toBe('waiting:mark-1')
+    expect(read(waiting, run)).toEqual({ sidebar: 'blocked', next: 'Blocked' })
+  })
 })
+

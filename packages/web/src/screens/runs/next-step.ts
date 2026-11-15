@@ -164,11 +164,14 @@ function replyItem(panel: ReplyPanelView): NextItem | undefined {
 const runStatus = (run: RunSummary): NextStatus =>
   run.state === 'blocked' || run.state === 'needs-you' || run.state === 'running' ? run.state : 'idle'
 
-/** The waiting card: pending, but pod goes on without it, so it outranks nothing elsewhere and sends no toast. */
-const waitingItem = (s: HostedSession): NextItem => ({
+/**
+ * The waiting card: pending, but pod goes on without it, so it outranks nothing elsewhere and sends no toast. It needs
+ * you, unless the run is blocked: then it wears Blocked, as the sidebar does (a waiting session never lowers a run).
+ */
+const waitingItem = (s: HostedSession, run: RunSummary): NextItem => ({
   key: `waiting:${s.marker}`,
   tier: 'pending',
-  status: 'needs-you',
+  status: run.state === 'blocked' ? 'blocked' : 'needs-you',
   goesOn: true,
   title: WAITING_TITLE,
   detail: WAITING_DETAIL,
@@ -220,7 +223,7 @@ export function nextSteps(run: RunSummary | undefined, repo: BoardRepo | undefin
   const reply = panel && replyItem(panel)
   if (reply) items.push(reply)
   const shown = shownSession(rowSessions(repo, run.plan, now))
-  if (shown && sessionView(shown, now) === 'waiting') items.push(waitingItem(shown))
+  if (shown && sessionView(shown, now) === 'waiting') items.push(waitingItem(shown, run))
   // A stable sort: list order holds within a tier, and within a kind in the pending tier.
   const sorted = items.sort(byTier)
   const first = sorted.find((i) => !unjoined.has(i.key))
