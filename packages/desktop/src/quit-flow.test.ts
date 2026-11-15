@@ -8,7 +8,7 @@ function setup(stopImpl?: () => Promise<Result>) {
   const stop = vi.fn(stopImpl ?? (() => new Promise<Result>((resolve) => (finish = resolve))))
   const hide = vi.fn()
   const quit = vi.fn()
-  const flow = createQuitFlow({ stop, hide, quit })
+  const flow = createQuitFlow({ stops: [stop], hide, quit })
   const event = () => ({ preventDefault: vi.fn() })
   return { stop, hide, quit, flow, event, finish: (r: Result) => finish(r) }
 }
@@ -64,7 +64,7 @@ describe('quit', () => {
     const stop = vi.fn(async () => 'stopped' as const)
     const quit = vi.fn()
     const flow = createQuitFlow({
-      stop,
+      stops: [stop],
       quit,
       hide: () => {
         throw new Error('window gone')
@@ -74,6 +74,58 @@ describe('quit', () => {
     await settle()
     expect(stop).toHaveBeenCalledOnce()
     expect(quit).toHaveBeenCalledOnce()
+  })
+
+  test('a quit stops the server and the terminal host together', async () => {
+    let endServer!: () => void
+    let endHost!: () => void
+    const server = vi.fn(() => new Promise<Result>((resolve) => (endServer = () => resolve('stopped'))))
+    const host = vi.fn(() => new Promise<Result>((resolve) => (endHost = () => resolve('killed'))))
+    const quit = vi.fn()
+    const flow = createQuitFlow({ stops: [server, host], hide: vi.fn(), quit })
+    flow.beforeQuit({ preventDefault: vi.fn() })
+    // Both stops start at once: the host's does not wait for the server's 80 s.
+    expect(server).toHaveBeenCalledOnce()
+    expect(host).toHaveBeenCalledOnce()
+    endHost()
+    await settle()
+    expect(quit).not.toHaveBeenCalled()
+    endServer()
+    await settle()
+    expect(quit).toHaveBeenCalledOnce()
+
+    // The same the other way round.
+    const s = setup()
+    let endOther!: () => void
+    const other = vi.fn(() => new Promise<Result>((resolve) => (endOther = () => resolve('stopped'))))
+    const both = createQuitFlow({ stops: [s.stop, other], hide: vi.fn(), quit: s.quit })
+    both.beforeQuit(s.event())
+    s.finish('stopped')
+    await settle()
+    expect(s.quit).not.toHaveBeenCalled()
+    endOther()
+    await settle()
+    expect(s.quit).toHaveBeenCalledOnce()
+
+    // One stop that throws or rejects keeps neither the other stop nor the quit from going on.
+    for (const bad of [
+      () => {
+        throw new Error('sync')
+      },
+      () => Promise.reject(new Error('async')),
+    ]) {
+      let endGood!: () => void
+      const good = vi.fn(() => new Promise<Result>((resolve) => (endGood = () => resolve('stopped'))))
+      const q = vi.fn()
+      const f = createQuitFlow({ stops: [bad, good], hide: vi.fn(), quit: q })
+      f.beforeQuit({ preventDefault: vi.fn() })
+      expect(good).toHaveBeenCalledOnce()
+      await settle()
+      expect(q).not.toHaveBeenCalled()
+      endGood()
+      await settle()
+      expect(q).toHaveBeenCalledOnce()
+    }
   })
 
   test("a Windows shutdown doesn't wait", async () => {

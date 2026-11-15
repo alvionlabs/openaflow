@@ -88,7 +88,7 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   const ctx: ShellContext = { host, bus, env: o.env, activatorAtStart: o.activatorAtStart ?? app.isPackaged }
 
   const flow = createQuitFlow({
-    stop: () => host.stop(),
+    stops: [() => host.stop()],
     hide: () => hideWindows(BrowserWindow.getAllWindows()),
     quit: () => app.quit(),
   })
