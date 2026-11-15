@@ -74,7 +74,7 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   const place = { packaged: app.isPackaged, appPath: o.appPath ?? app.getAppPath(), resourcesPath: process.resourcesPath }
   const entry = serverEntry(place)
   const host = createServerHost({
-    fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid), onSpawn: o.onServer }),
+    fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid, place), onSpawn: o.onServer }),
   })
   let updater: ReturnType<typeof startUpdater>
   const shellBus = createShellBus()

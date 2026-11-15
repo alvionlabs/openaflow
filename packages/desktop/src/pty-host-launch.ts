@@ -4,7 +4,7 @@
 import { join } from 'node:path'
 import type { HostToMain } from '@openaflow/pty-host/protocol'
 
-type Place = { packaged: boolean; appPath: string; resourcesPath: string }
+export type Place = { packaged: boolean; appPath: string; resourcesPath: string }
 
 /** With this set, Electron's exe runs as plain Node, which a utilityProcess must not. */
 const RUN_AS_NODE = 'ELECTRON_RUN_AS_NODE'
