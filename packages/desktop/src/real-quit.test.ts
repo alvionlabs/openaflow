@@ -192,8 +192,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const owner = join(w.cfg, 'auto-continue-owner.json')
         await lifeUntil('the owner file', () => existsSync(owner), 15_000, w)
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
-        // Main's own pid. On Windows, h.pid is the cmd.exe that Playwright starts, the parent of main's electron.exe.
-        const main = await h.app.evaluate(() => process.pid)
+        // Main's own pid, not Playwright's cmd.exe wrapper on Windows.
+        const main = h.pid
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
         const until = Date.now() + SERVER_AFTER_MAIN_MS

@@ -23,7 +23,7 @@ export type Harness = {
   page: Page
   port: number
   dir: string
-  /** Main's process ID. */
+  /** Main's own process ID. On Windows, Playwright starts main through `cmd.exe`: `app.process()` is that wrapper. */
   pid: number
   /** Main has ended. Use it, not `app.process()`, which throws once Playwright has closed its connection. */
   exited(): boolean
@@ -119,19 +119,30 @@ export async function launchHarness(o: { env?: Record<string, string>; dir?: str
     extra = { OPENAFLOW_HARNESS_APP_PATH: DESKTOP }
   }
   const app = await _electron.launch({ executablePath, args, env: appEnv(dir, port, { ...extra, ...o.env }), timeout: LAUNCH_MS })
-  // Read once, now: once Playwright has closed its connection, `app.process()` throws (`reading '_object'`).
+  // Read once, now: once Playwright has closed its connection, `app.process()` throws (`reading '_object'`). On
+  // Windows it is the `cmd.exe` that runs main's electron.exe, so main's own pid comes from main itself.
   const proc = app.process()
-  const exited = () => proc.exitCode !== null || proc.signalCode !== null
+  let main: number | undefined
+  const wrapperExited = () => proc.exitCode !== null || proc.signalCode !== null
+  const exited = () => (main === undefined ? wrapperExited() : !alive(main))
   const close = async () => {
     await Promise.race([app.close().catch(() => {}), sleep(CLOSE_MS)])
-    // A main process that is still there after the quit: end that one process by its ID.
-    if (!exited()) proc.kill()
+    // A main process that is still there after the quit: end that one process by its ID, then the wrapper.
+    if (main !== undefined && alive(main)) {
+      try {
+        process.kill(main, 'SIGKILL')
+      } catch {
+        // Gone meanwhile.
+      }
+    }
+    if (!wrapperExited()) proc.kill()
     if (owned) await removeWithRetry(dir)
   }
   try {
+    main = await app.evaluate(() => process.pid)
     const page = await app.firstWindow({ timeout: LAUNCH_MS })
     await page.waitForURL(`http://127.0.0.1:${port}/**`, { timeout: LAUNCH_MS })
-    return { app, page, port, dir, pid: proc.pid!, exited, close }
+    return { app, page, port, dir, pid: main, exited, close }
   } catch (err) {
     // The launch's own error is the one to show, never a later one from the clean-up.
     await close().catch((cleanup: unknown) => console.error(`electron-harness: clean-up after a failed launch failed: ${String(cleanup)}`))
