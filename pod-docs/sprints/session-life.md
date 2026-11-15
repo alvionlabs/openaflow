@@ -7,11 +7,11 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: act
 
 | Wave | Slice | Title | Branch | PR | Status | Confidence | Depends on |
 |------|-------|-------|--------|----|--------|------------|------------|
-| 1 | H2 | Pty host: saved screens, flush, kill before the pid, stale ports | session-life-H2 | — | pending | — | — |
-| 1 | E1 | Session ender and roster (Linux tree, marker, scope, signals) | session-life-E1 | — | pending | — | — |
-| 1 | J1 | Windows Job Object helper | session-life-J1 | — | pending | — | — |
-| 1 | M2 | Model: resume check, resume action, session label | session-life-M2 | — | pending | — | — |
-| 1 | C2 | Resume command and the Linux run wrapper | session-life-C2 | — | pending | — | — |
+| 1 | H2 | Pty host: saved screens, flush, kill before the pid, stale ports | session-life-H2 | https://github.com/alvionlabs/openaflow/pull/135 | pushed | medium | — |
+| 1 | E1 | Session ender and roster (Linux tree, marker, scope, signals) | session-life-E1 | https://github.com/alvionlabs/openaflow/pull/135 | pushed | medium | — |
+| 1 | J1 | Windows Job Object helper | session-life-J1 | https://github.com/alvionlabs/openaflow/pull/135 | pushed | medium | — |
+| 1 | M2 | Model: resume check, resume action, session label | session-life-M2 | https://github.com/alvionlabs/openaflow/pull/135 | pushed | medium | — |
+| 1 | C2 | Resume command and the Linux run wrapper | session-life-C2 | https://github.com/alvionlabs/openaflow/pull/135 | pushed | medium | — |
 | 2 | S3 | Server: Resume route, saved screens, sweep and labels, 504 | session-life-S3 | — | pending | — | M2, C2, H2 |
 | 2 | D2 | Main: quit dialog, ending sessions, leftovers, window events | session-life-D2 | — | pending | — | H2, E1, J1 |
 | 2 | W2 | Terminal tab: Resume, can't resume, saved screen, untested paths | session-life-W2 | — | pending | — | M2 |
