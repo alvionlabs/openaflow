@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentRun, BoardRepo, HostedSession } from './board.ts'
-import { isHostedSession, joinedRun, rowSessions, sessionDot, sessionView, sessionWord, shownSession, WAITING_AFTER_MS } from './hosted.ts'
+import { isHostedSession, joinedRun, rowSessions, sessionDot, sessionLabel, sessionView, sessionWord, shownSession, WAITING_AFTER_MS } from './hosted.ts'
 import { buildRepoModel, type RepoFiles } from './run-model.ts'
 
 // Every snapshot is built inline: test/no-io.test.ts scans this folder, so no file reads here.
@@ -195,5 +195,58 @@ describe('hosted ids', () => {
     // No hosted field, or an empty one: nothing is hosted.
     expect(isHostedSession(repoOf([]), 'sess-start')).toBe(false)
     expect(isHostedSession(repoOf([], []), 'sess-start')).toBe(false)
+  })
+})
+
+describe('session label', () => {
+  it('session label', () => {
+    // Joined to a plan: the repo name, then the plan slug.
+    const s = hosted()
+    expect(sessionLabel(repoOf([agent({ plan: 'alpha', session: 'sess-start' })], [s], { name: 'shop' }), s, NOW)).toBe('shop · alpha')
+    // Joined to a one-off run: its claim name.
+    const task = hosted({ sessions: ['sess-start', 'sess-task'] })
+    const oneOff = repoOf([agent({ branch: 'task-fix-x', session: 'sess-task' })], [task], { name: 'shop', claims: [{ portBase: 3000, repoPath: '/r', plan: 'task-fix-x' }] })
+    expect(sessionLabel(oneOff, task, NOW)).toBe('shop · task-fix-x')
+    // On the repo row: no plan yet. A plan doc with no agent of the session doesn't count.
+    expect(sessionLabel(repoOf([], [s], { name: 'shop' }), s, NOW)).toBe('shop · no plan yet')
+    expect(sessionLabel(repoOf([agent({ plan: 'alpha', session: 'other' })], [s], { name: 'shop' }), s, NOW)).toBe('shop · no plan yet')
+    // A repo the board can't read lists no runs: no plan yet.
+    expect(sessionLabel(repoOf([agent({ plan: 'alpha', session: 'sess-start' })], [s], { name: 'shop', error: 'cannot read repo' }), s, NOW)).toBe('shop · no plan yet')
+    // The same join as the runs list: the newest agent's run wins.
+    const both = hosted({ sessions: ['sess-start', 'sess-new'] })
+    const older = agent({ plan: 'alpha', session: 'sess-start', lastAt: NOW - 9 * MIN })
+    const newer = agent({ plan: 'beta', session: 'sess-new', lastAt: NOW - 2 * MIN })
+    expect(sessionLabel(repoOf([older, newer], [both], { name: 'shop' }), both, NOW)).toBe('shop · beta')
+  })
+})
+
+describe('resume leaves rows alone', () => {
+  it('resume leaves rows alone', () => {
+    const values: (HostedSession['resume'] | undefined)[] = [undefined, 'ok', 'no folder', 'no conversation', 'in use']
+    const states: Partial<HostedSession>[] = [
+      { state: 'starting', hooked: false },
+      { state: 'live' },
+      { state: 'live', hooked: false, startedAt: NOW - 5 * MIN },
+      { state: 'ended', exitCode: 0 },
+      { state: 'ended', exitCode: 3 },
+      { state: 'stopped', stopReason: 'app closed' },
+      { state: 'stopped' },
+    ]
+    const read = (s: HostedSession) => {
+      const repo = repoOf([agent({ plan: 'alpha', session: 'sess-start' })], [s])
+      return {
+        view: sessionView(s, NOW),
+        word: sessionWord(s, NOW),
+        dot: sessionDot(sessionView(s, NOW)),
+        run: joinedRun(repo, s, NOW),
+        row: rowSessions(repo, 'alpha', NOW).map((x) => x.marker),
+        shown: shownSession([hosted({ marker: 'other', state: 'ended', startedAt: NOW - 3 * MIN }), s])?.marker,
+        label: sessionLabel(repo, s, NOW),
+      }
+    }
+    for (const over of states) {
+      const plain = read(hosted(over))
+      for (const resume of values) expect(read(hosted({ ...over, ...(resume ? { resume } : {}) })), `${over.state} ${resume}`).toEqual(plain)
+    }
   })
 })
