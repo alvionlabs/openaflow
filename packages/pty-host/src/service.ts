@@ -35,9 +35,16 @@ type Session = {
   serialize: SerializeAddon
   startedAt: number
   exited: boolean
+  /** Whether `started` went out. Until then the session has no pid. */
+  announced: boolean
+  /** While no pid: ends the wait and frees the id. */
+  abandon?(error: string): void
 }
 
 const SHUTDOWN_WAIT_MS = 3_000
+/** On Windows node-pty starts the process after `spawn` returns (its own limit is 5 s), so the pid is 0 for a moment. */
+const PID_POLL_MS = 10
+const PID_WAIT_MS = 10_000
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -87,16 +94,51 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
     const term = new Terminal({ cols: s.cols, rows: s.rows, scrollback: deps.scrollback, allowProposedApi: true })
     const serialize = new SerializeAddon()
     term.loadAddon(serialize)
-    const session: Session = { id, pty: proc, term, serialize, startedAt: Date.now(), exited: false }
+    const session: Session = { id, pty: proc, term, serialize, startedAt: Date.now(), exited: false, announced: false }
     sessions.set(id, session)
-    proc.onData((data) => term.write(data))
+
+    let poll: ReturnType<typeof setTimeout> | undefined
+    const stopWaiting = () => {
+      clearTimeout(poll)
+      session.abandon = undefined
+    }
+    /** Sends `started` once the pid is known. */
+    const announce = () => {
+      if (session.announced || session.abandon === undefined || !(proc.pid > 0)) return session.announced
+      stopWaiting()
+      session.announced = true
+      deps.send({ type: 'started', id, pid: proc.pid })
+      return true
+    }
+    session.abandon = (error) => {
+      stopWaiting()
+      session.exited = true
+      if (sessions.get(id) === session) sessions.delete(id)
+      term.dispose()
+      deps.send({ type: 'start-failed', id, error: `spawn failed: ${error}` })
+      for (const wake of exitWaiters) wake()
+    }
+
+    proc.onData((data) => {
+      announce()
+      if (!session.exited) term.write(data)
+    })
     proc.onExit(({ exitCode, signal }) => {
       if (session.exited) return
+      if (!announce()) return session.abandon?.(`the program ended before it started (exit code ${exitCode})`)
       session.exited = true
       deps.send(signal ? { type: 'exit', id, exitCode, signal } : { type: 'exit', id, exitCode })
       for (const wake of exitWaiters) wake()
     })
-    deps.send({ type: 'started', id, pid: proc.pid })
+    if (announce()) return
+    const waitEnd = Date.now() + PID_WAIT_MS
+    const check = () => {
+      if (announce()) return
+      if (Date.now() < waitEnd) return void (poll = setTimeout(check, PID_POLL_MS))
+      kill(session)
+      session.abandon?.(`no process ID after ${PID_WAIT_MS / 1_000} s`)
+    }
+    poll = setTimeout(check, PID_POLL_MS)
   }
 
   function snapshot(id: string): void {
@@ -117,6 +159,10 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
   function dispose(id: string): void {
     const session = sessions.get(id)
     if (session === undefined) return
+    if (session.abandon !== undefined) {
+      kill(session)
+      return session.abandon('disposed before it started')
+    }
     sessions.delete(id)
     if (!session.exited) kill(session)
     session.term.dispose()
@@ -126,7 +172,10 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
     if (shuttingDown) return
     shuttingDown = true
     const live = () => [...sessions.values()].filter((s) => !s.exited)
-    for (const session of live()) kill(session)
+    for (const session of live()) {
+      kill(session)
+      session.abandon?.('the host is shutting down')
+    }
     let done = false
     const finish = () => {
       if (done) return
