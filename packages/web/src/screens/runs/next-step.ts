@@ -76,6 +76,8 @@ export const WAITING_TITLE = 'Claude waits for you in the terminal'
 export const WAITING_DETAIL = 'It may ask you to trust this folder or to sign in. The app never answers for you.'
 export const RUNNING_TITLE = "A session runs in this repo's terminal"
 export const HOSTED_STOPPED = "This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before."
+/** The same, when Resume works: `word` is what to type once the session is back. */
+export const hostedResumable = (word: string): string => `This run's terminal has stopped. Resume it in the Terminal tab, then type \`${word}\`.`
 /** The browser build's words in place of the form, and of Open terminal (sprint terminal-tab §7's browser rule). */
 export const DESKTOP_START = 'Open the desktop app to start a session.'
 export const DESKTOP_TERMINAL = 'Open the desktop app to use the terminal.'
@@ -149,8 +151,8 @@ function replyItem(panel: ReplyPanelView): NextItem | undefined {
   const row = panel.rows.find((r) => r.send !== undefined) ?? panel.rows[0]
   if (!row) return undefined
   if (panel.hosted) {
-    const { word, stopped } = panel.hosted
-    const detail = stopped ? HOSTED_STOPPED : `Open the terminal and type \`${word}\`.`
+    const { word, stopped, resumable } = panel.hosted
+    const detail = stopped ? (resumable ? hostedResumable(word) : HOSTED_STOPPED) : `Open the terminal and type \`${word}\`.`
     return { key: `reply:${panel.target.run}`, tier: 'reply', status: 'needs-you', title: `Send ${word}`, detail, action: { kind: 'reply', panel } }
   }
   return {
@@ -264,6 +266,17 @@ export function cardTerminal(card: NextItem, terminals: boolean): CardTerminal {
   if (a.kind !== 'open-terminal' && !(a.kind === 'reply' && a.panel.hosted)) return { form: false, openTerminal: false }
   const detail = card.detail === undefined ? {} : { detail: card.detail }
   return terminals ? { ...detail, form: false, openTerminal: true } : { ...detail, form: false, openTerminal: false, note: DESKTOP_TERMINAL }
+}
+
+/**
+ * A hosted row in the Waiting tab's rest list (a hosted reply, or the waiting card): its words and Open terminal, or the
+ * desktop note in the browser. Defined means the row draws no reply panel, so no Copy and no Run it yourself. Any other
+ * row: undefined.
+ */
+export function hostedRow(item: NextItem, terminals: boolean): CardTerminal | undefined {
+  const a = item.action
+  if (a.kind !== 'open-terminal' && !(a.kind === 'reply' && a.panel.hosted)) return undefined
+  return cardTerminal(item, terminals)
 }
 
 /** `text` cut at its backticks: the parts between a pair show as code. An unpaired backtick stays text. */

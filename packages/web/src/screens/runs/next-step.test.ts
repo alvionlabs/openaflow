@@ -707,5 +707,23 @@ describe('hosted sessions', () => {
       expect(card.action.panel.rows.every((r) => r.send === undefined)).toBe(true)
       expect(cardTerminal(card, true)).toMatchObject({ openTerminal: true })
     }
+
+    // Resume works (`resume` is ok): the card says to resume it in the Terminal tab, then type the word.
+    const resumable = steps(merged([held({ state: 'ended', exitCode: 0, resume: 'ok' })])).card
+    expect(resumable.detail).toBe("This run's terminal has stopped. Resume it in the Terminal tab, then type `continue`.")
+    if (resumable.action.kind !== 'reply') throw new Error('not a reply')
+    expect(resumable.action.panel.hosted).toEqual({ word: 'continue', stopped: true, resumable: true })
+    expect(cardTerminal(resumable, true)).toMatchObject({ openTerminal: true, detail: resumable.detail })
+    const stopped = steps(merged([held({ state: 'stopped', stopReason: 'app closed', resume: 'ok' })])).card
+    expect(stopped.detail).toBe("This run's terminal has stopped. Resume it in the Terminal tab, then type `continue`.")
+    // Any other answer keeps today's line: Dismiss it first.
+    for (const resume of ['no folder', 'no conversation', 'in use'] as const) {
+      const card = steps(merged([held({ state: 'ended', exitCode: 0, resume })])).card
+      expect(card.detail, resume).toBe("This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before.")
+      expect(card.action.kind === 'reply' && card.action.panel.hosted).toEqual({ word: 'continue', stopped: true })
+    }
+    // A session still open never says to resume, whatever `resume` holds.
+    const open = steps(merged([held({ state: 'live', resume: 'ok' })])).card
+    expect(open.detail).toBe('Open the terminal and type `continue`.')
   })
 })

@@ -112,7 +112,7 @@ describe('action log view', () => {
   })
 
   it('session actions', () => {
-    const session = (action: 'new-session' | 'dismiss-session', target: string, result: 'started' | 'dismissed' | 'failed'): ActionEntry =>
+    const session = (action: 'new-session' | 'dismiss-session' | 'resume-session', target: string, result: 'started' | 'dismissed' | 'failed'): ActionEntry =>
       ({ at: NOW, action, repoId: 'r1', repo: 'notes-app', target, result }) as ActionEntry
     // In words: what happened, the skill's label, and the marker's first 8. Never the text (the target holds none).
     expect(actionLogRows([session('new-session', '/pod:plan · 0f3c9a12', 'started')], NOW)[0]).toMatchObject({
@@ -129,6 +129,15 @@ describe('action log view', () => {
     expect(actionLogRows([session('dismiss-session', '/pod:task · 0f3c9a12', 'dismissed')], NOW)[0]).toMatchObject({
       target: 'Dismissed session · One task · 0f3c9a12',
       chip: { cls: 's-ok', label: 'dismissed' },
+    })
+    // A resume: the skill, then the new session's marker.
+    expect(actionLogRows([session('resume-session', '/pod:plan · 7d41b0c9', 'started')], NOW)[0]).toMatchObject({
+      target: 'Resumed session · Plan · 7d41b0c9',
+      chip: { cls: 's-ok', label: 'started' },
+    })
+    expect(actionLogRows([session('resume-session', 'plain · 7d41b0c9', 'failed')], NOW)[0]).toMatchObject({
+      target: 'Resumed session · Plain session · 7d41b0c9',
+      chip: { cls: 's-bad', label: 'failed' },
     })
     // A skill the page doesn't know keeps its own word; a target of another shape stays as written after the words.
     expect(actionLogRows([session('new-session', '/pod:teach · 0f3c9a12', 'started')], NOW)[0]!.target).toBe('New session · /pod:teach · 0f3c9a12')

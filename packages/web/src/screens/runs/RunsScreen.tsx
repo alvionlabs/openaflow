@@ -46,7 +46,10 @@ import { RunsList } from './RunsList.tsx'
 import { SideHandle } from './SideHandle.tsx'
 import { UrgentBanner } from './UrgentBanner.tsx'
 import { readWidth, saveWidth } from './sidebar-width.ts'
-import { readTab, saveTab, shownTab, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
+import { readTab, saveTab, shownTab, tabRequest, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
+import { HostBanner } from './HostBanner.tsx'
+import { watchBanner, watchOverlay } from './host-banner.ts'
+import { QuitOverlay } from './QuitOverlay.tsx'
 import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
@@ -89,6 +92,11 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [sideWidth, setSideWidth] = useState(() => readWidth(store.current))
   // The desktop app's terminal bridge is there or not for the page's life; the browser build has none.
   const [bridge] = useState(() => terminalBridge())
+  // The terminal host's heartbeat banner and the quit overlay: the desktop app only, since the browser has no bridge.
+  const [hostDown, setHostDown] = useState(false)
+  useEffect(() => watchBanner(bridge, setHostDown), [bridge])
+  const [quitting, setQuitting] = useState<number | undefined>(undefined)
+  useEffect(() => watchOverlay(bridge, setQuitting), [bridge])
   const repoButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
   // The run (its `hashFor`) whose live terminal Open terminal or a started New session asked focus for. The Terminal
@@ -139,11 +147,12 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   useEffect(
     () =>
       onTabRequest((t) => {
-        saveTab(store.current, t)
-        setStored(t)
-        // An engineer's view always shows Log: go to its run, unless the page already moved on.
         const { view: v, selected: run, agent: id } = latest.current
-        if (v === 'agent' && run && window.location.hash === hashFor(run, 'agent', id)) window.location.hash = hashFor(run)
+        // An engineer's view always shows Log: go to its run, unless the page already moved on.
+        const asked = tabRequest(t, { view: v, run, agent: id, hash: window.location.hash })
+        saveTab(store.current, asked.save)
+        setStored(asked.save)
+        if (asked.go !== undefined) window.location.hash = asked.go
         setFocusAsk(focusRun(window.location.hash, shownKey.current))
       }),
     [],
@@ -295,6 +304,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
         </aside>
         <SideHandle width={sideWidth} onResize={setSideWidth} onCommit={commitWidth} />
         <main className={view === 'board' ? 'main wide' : 'main'}>
+          {hostDown && <HostBanner />}
           {urgentSlot && (
             <div className="urgent-slot" role="status">
               {urgent && <UrgentBanner at={urgent} onOpen={(href) => (focusFor.current = href)} />}
@@ -387,6 +397,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
         </main>
       </div>
       {modal && <ConfirmModal key={modal.key} {...modal.view} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />}
+      {quitting !== undefined && <QuitOverlay count={quitting} />}
       {picking && <AddRepoDialog repoPaths={board?.repos.map((r) => r.path) ?? []} onClose={closePicker} />}
     </div>
   )

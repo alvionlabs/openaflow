@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostedSession } from '@openaflow/model'
-import { readTab, saveTab, shownTab, TAB_KEY, tabsFor, toggleTab, type TabStorage } from './tab-memory.ts'
+import { hashFor } from '../../selection.ts'
+import { readTab, saveTab, shownTab, TAB_KEY, tabRequest, tabsFor, toggleTab, type TabStorage } from './tab-memory.ts'
 import { hasTerminalTab } from './terminal-tab.ts'
 
 /** A plain-object storage; `fail` makes each call throw, as a browser with blocked site data does. */
@@ -112,5 +113,19 @@ describe('tab memory', () => {
     // The other tabs don't care; an engineer's view still shows Log.
     expect(shownTab('log', { view: 'pipeline', terminal: false })).toBe('log')
     expect(shownTab('terminal', { view: 'agent', terminal: true })).toBe('log')
+
+    // A tab request (Open terminal, a started New session) stores the tab. On an engineer's view, which always
+    // shows Log, it also goes to that run's own page, where the Terminal tab can show.
+    const fix = { repoId: 'notes', plan: 'fix-a', fix: 'fix-a' }
+    const agentHash = hashFor(fix, 'agent', 'eng-1')
+    expect(agentHash).toBe('#/notes/fix-a/agent/eng-1')
+    expect(tabRequest('terminal', { view: 'agent', run: fix, agent: 'eng-1', hash: agentHash })).toEqual({ save: 'terminal', go: '#/notes/fix-a' })
+    // The page already moved on (another run, or a request that came late): no move.
+    expect(tabRequest('terminal', { view: 'agent', run: fix, agent: 'eng-1', hash: '#/notes/other' })).toEqual({ save: 'terminal' })
+    expect(tabRequest('terminal', { view: 'agent', run: undefined, agent: undefined, hash: agentHash })).toEqual({ save: 'terminal' })
+    // Any other view stays where it is.
+    for (const view of ['pipeline', 'board'] as const) {
+      expect(tabRequest('terminal', { view, run: fix, agent: undefined, hash: hashFor(fix, view) })).toEqual({ save: 'terminal' })
+    }
   })
 })
