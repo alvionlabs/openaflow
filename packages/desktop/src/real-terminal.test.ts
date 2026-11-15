@@ -46,6 +46,15 @@ const hooks = (h: Harness) => ({
   hostPid: () => h.app.evaluate(() => (globalThis as Hooked).__openaflowTest!.terminals!.hostPid()),
 })
 
+const health = async (port: number) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2_000) })
+    return res.status === 200 && JSON.stringify(await res.json()) === '{"ok":true}'
+  } catch {
+    return false
+  }
+}
+
 const desktopLog = (h: Harness) => {
   const file = join(h.dir, 'shell', 'desktop.log')
   return existsSync(file) ? readFileSync(file, 'utf8') : ''
@@ -244,6 +253,141 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
     } finally {
       await h.close()
       endPids(pids)
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)('hide, show, and a new window', async () => {
+    const pids: number[] = []
+    const h = await launchHarness()
+    try {
+      const id = 'hide-1'
+      await startSession(h, id, pids)
+      await connect(h.page, id)
+      await until('line 5 in the window', async () => (await lastNumber(h.page)) >= 5, 15_000, h, h.page)
+
+      const win = (fn: string) => h.app.evaluate(({ BrowserWindow }, fn) => (BrowserWindow.getAllWindows()[0] as unknown as Record<string, () => void>)[fn]!(), fn)
+      await win('hide')
+      const hiddenAt = Date.now()
+      await sleep(10_000)
+      const shownAt = Date.now()
+      await win('show')
+      const before = await lastNumber(h.page)
+      await until(`a line past ${before + 5} after the show`, async () => (await lastNumber(h.page)) > before + 5, 15_000, h, h.page)
+
+      // The hidden window kept getting the output live: no second replay, and no line missing or doubled.
+      const got = await pageGot(h.page)
+      expectOneReplayFirst(got)
+      expect(got.some((m) => m.type === 'data' && m.at > hiddenAt + 1_000 && m.at < shownAt), 'data while hidden').toBe(true)
+      const nums = numbers(await draw(got))
+      expectEveryLineOnce(nums)
+      // The program ran on while hidden: about 100 lines in 10 s.
+      expect(nums.at(-1)!).toBeGreaterThan(80)
+
+      // A new window: the old one is gone, and the app's own show opens the next (as the tray's Open does).
+      const next = h.app.waitForEvent('window', { timeout: 30_000 })
+      await h.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.destroy())
+      await h.app.evaluate(({ app }) => void app.emit('second-instance'))
+      const page = await next
+      await page.waitForURL(`http://127.0.0.1:${h.port}/**`, { timeout: 30_000 })
+      const old = nums.at(-1)!
+      await connect(page, id)
+      await until(`a line past ${old} in the new window`, async () => (await lastNumber(page)) > old, 15_000, h, page)
+      const fresh = await pageGot(page)
+      expectOneReplayFirst(fresh)
+      expectEveryLineOnce(numbers(await draw(fresh)))
+    } finally {
+      await h.close()
+      endPids(pids)
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)('a server crash leaves the terminal live', async () => {
+    const pids: number[] = []
+    const h = await launchHarness()
+    try {
+      const id = 'server-1'
+      const pid = await startSession(h, id, pids)
+      await connect(h.page, id)
+      await until('line 5 in the window', async () => (await lastNumber(h.page)) >= 5, 15_000, h, h.page)
+      const hostPid = await hooks(h).hostPid()
+
+      // The owner file names the server's process. A hard kill: the server host restarts it once.
+      const owner = join(h.dir, 'cfg', 'auto-continue-owner.json')
+      await until('the owner file', () => existsSync(owner), 15_000, h)
+      const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
+      expect(server).not.toBe(h.app.process().pid)
+      const crashedAt = await lastNumber(h.page)
+      process.kill(server, 'SIGKILL')
+      await until('/api/health to go', async () => !(await health(h.port)), 15_000, h)
+      await until('/api/health to come back', () => health(h.port), 60_000, h)
+
+      // The same host and the same program, still live, and its lines go on.
+      expect(await hooks(h).hostPid()).toBe(hostPid)
+      expect((await hooks(h).list()).find((s) => s.id === id)).toMatchObject({ pid, live: true })
+      const shown = async () => numbers((await hooks(h).snapshot(id))?.split('\n') ?? []).at(-1) ?? 0
+      const first = await shown()
+      await until(`the screen past line ${first + 5}`, async () => (await shown()) > first + 5, 15_000, h)
+
+      // The new server's page loads again; its window attaches and misses no line.
+      await connect(h.page, id)
+      await until(`a line past ${crashedAt + 20} in the window`, async () => (await lastNumber(h.page)) > crashedAt + 20, 15_000, h, h.page)
+      const got = await pageGot(h.page)
+      expectOneReplayFirst(got)
+      expectEveryLineOnce(numbers(await draw(got)))
+    } finally {
+      await h.close()
+      endPids(pids)
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)('a host crash restarts the host', async () => {
+    const pids: number[] = []
+    const h = await launchHarness()
+    try {
+      const id = 'host-1'
+      await startSession(h, id, pids)
+      // Connected first, so the page hears the host's states.
+      await connect(h.page, id)
+      await until('line 3 in the window', async () => (await lastNumber(h.page)) >= 3, 15_000, h, h.page)
+      const old = await hooks(h).hostPid()
+      expect(old).toBeGreaterThan(0)
+
+      process.kill(old!, 'SIGKILL')
+      await until('a new host process', async () => ((await hooks(h).hostPid()) ?? old) !== old, 30_000, h)
+      // list waits for the new host's ready. The new host has no sessions.
+      expect(await hooks(h).list()).toEqual([])
+      expect(await hooks(h).hostPid()).toBeGreaterThan(0)
+      expect(desktopLog(h)).toContain(`terminal host lost sessions: ${id}`)
+      await until('restarted in the window', async () => (await pageStates(h.page)).includes('restarted'), 15_000, h, h.page)
+
+      // The old port is dead; the page connects again, and the lost session is gone.
+      await connect(h.page)
+      await pagePost(h.page, { type: 'attach', id })
+      await until('no session in the window', async () => (await pageGot(h.page)).some((m) => m.type === 'error' && m.id === id && m.error === 'no session'), 15_000, h, h.page)
+    } finally {
+      await h.close()
+      endPids(pids)
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)("the page can't start a session", async () => {
+    const h = await launchHarness()
+    try {
+      await until('the test hook', () => h.app.evaluate(() => (globalThis as Hooked).__openaflowTest?.terminals !== undefined), 60_000, h)
+      const hostPid = await hooks(h).hostPid()
+      await connect(h.page)
+      // Each of main's messages from a page port: `not allowed`, and nothing starts, ends, or stops.
+      const sent = [{ type: 'start', spec: spec('page-1') }, { type: 'kill', id: 'page-1' }, { type: 'dispose', id: 'page-1' }, { type: 'list' }, { type: 'snapshot', id: 'page-1' }, { type: 'connect' }, { type: 'shutdown' }]
+      for (const m of sent) await pagePost(h.page, m)
+      const errors = async () => (await pageGot(h.page)).filter((m) => m.type === 'error')
+      await until(`${sent.length} errors in the window`, async () => (await errors()).length >= sent.length, 15_000, h, h.page)
+      expect((await errors()).map((m) => (m as { error: string }).error)).toEqual(sent.map(() => 'not allowed'))
+      await sleep(1_000)
+      expect(await hooks(h).list()).toEqual([])
+      expect(await hooks(h).hostPid()).toBe(hostPid)
+      expect(desktopLog(h)).not.toContain('terminal host exited')
+    } finally {
+      await h.close()
     }
   }, RUN_MS)
 
