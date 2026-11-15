@@ -29,6 +29,13 @@ export type ServerHost = {
   onReady(fn: (port: number) => void): () => void
   /** Fires once, when no restart is left; at once when already failed. */
   onFailed(fn: (error: string) => void): () => void
+  /** Posts to the current process. With none (between processes, or after the failure), the message is dropped. */
+  send(m: unknown): void
+  /**
+   * Every message of the current process, `openaflow:ready` too. `reply` posts to that process only while it is
+   * still current, so an answer never reaches a restarted server.
+   */
+  onMessage(fn: (m: unknown, reply: (m: unknown) => void) => void): () => void
 }
 
 /** The port of a `{ type: 'openaflow:ready', port }` message, or `undefined` for anything else. */
@@ -47,6 +54,7 @@ function add<T>(set: Set<T>, fn: T): () => void {
 export function createServerHost(o: { fork(): ServerProcess }): ServerHost {
   const readyListeners = new Set<(port: number) => void>()
   const failedListeners = new Set<(error: string) => void>()
+  const messageListeners = new Set<(m: unknown, reply: (m: unknown) => void) => void>()
   let current: ServerProcess | undefined
   let port: number | undefined
   let started = false
@@ -66,6 +74,14 @@ export function createServerHost(o: { fork(): ServerProcess }): ServerHost {
 
   const addOutput = (text: string) => {
     tail = (tail + text).slice(-TAIL_CHARS)
+  }
+
+  const post = (p: ServerProcess, m: unknown) => {
+    try {
+      p.postMessage(m)
+    } catch {
+      // A closed channel: the exit follows.
+    }
   }
 
   const killProcess = (p: ServerProcess) => {
@@ -104,7 +120,11 @@ export function createServerHost(o: { fork(): ServerProcess }): ServerHost {
     p.onOutput((text) => {
       if (current === p) addOutput(text)
     })
+    const reply = (m: unknown) => {
+      if (current === p) post(p, m)
+    }
     p.onMessage((m) => {
+      if (current === p) for (const fn of [...messageListeners]) fn(m, reply)
       const ready = readyPort(m)
       if (ready === undefined || sawReady || current !== p || stopping) return
       sawReady = true
@@ -159,6 +179,10 @@ export function createServerHost(o: { fork(): ServerProcess }): ServerHost {
       return stopping
     },
     port: () => port,
+    send(m) {
+      if (current) post(current, m)
+    },
+    onMessage: (fn) => add(messageListeners, fn),
     onReady(fn) {
       const off = add(readyListeners, fn)
       if (port !== undefined) fn(port)

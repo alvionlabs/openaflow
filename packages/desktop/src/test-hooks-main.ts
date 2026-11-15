@@ -2,8 +2,8 @@
 // it at bundle time, and the release check refuses a main.cjs that holds its name. The rules are in
 // pod-docs/sprints/host-core.md (§6).
 
-import type { StartSpec } from '@openaflow/pty-host/protocol'
-import type { PtyHostStarter, SessionInfo } from './pty-host-starter.ts'
+import type { SessionInfo, StartSpec } from '@openaflow/pty-host/protocol'
+import type { PtyHostStarter } from './pty-host-starter.ts'
 
 export type TestTerminals = {
   start(spec: StartSpec): Promise<{ pid: number }>
