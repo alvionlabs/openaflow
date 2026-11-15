@@ -212,7 +212,7 @@ describe('board service', () => {
     const board = await service.build()
     const byName = (n: string) => board.repos.find((r) => r.name === n)!
     expect(byName('a').hosted).toEqual([
-      { marker: M2, sessionId: S, liveSession: S, sessions: [S], skill: 'plan', startedAt: 2000, state: 'ended', exitCode: 1, endedAt: 2500, hooked: false, prompted: false },
+      { marker: M2, sessionId: S, liveSession: S, sessions: [S], skill: 'plan', startedAt: 2000, state: 'ended', exitCode: 1, endedAt: 2500, hooked: false, prompted: false, resume: 'no conversation' },
       { marker: M1, sessionId: S, liveSession: B2, sessions: [S, B2], skill: 'plan', startedAt: 3000, state: 'live', hooked: true, prompted: true },
     ])
     // A repo with none has no field; a repo whose folder is gone still lists its sessions, so they can be dismissed.
@@ -227,6 +227,125 @@ describe('board service', () => {
     expect((await service.build()).repos.find((r) => r.name === 'a')!.hosted![0]!.hooked).toBe(true)
     // With no store, no repo has the field.
     expect((await createBoardService(deps()).build()).repos.every((r) => !('hosted' in r))).toBe(true)
+  })
+
+  test('resume check', async () => {
+    const a = copyFixture('a')
+    const b = copyFixture('b')
+    const gone = join(root, 'repos', 'gone')
+    await register(a, b, gone)
+    const hooks = join(root, 'config', 'hooks')
+    await mkdir(hooks, { recursive: true })
+    const id = (n: number, c: string) => `${String(n).repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`
+    const [S1, L1, S2, L2, S3, S4, S5, S6, S7] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => id(n, 'a'))
+    const [R1, R2, R3, R4, R5, R6, R7, R8, R9] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => id(n, 'c'))
+    const conversation = async (repo: string, session: string) => {
+      const dir = join(claudeDir, 'projects', projectDirName(repo))
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, `${session}.jsonl`), '{}\n')
+    }
+    const rec = (marker: string, repoPath: string, sessionId: string, state: StoredSession['state'], over: Partial<StoredSession> = {}): StoredSession => ({
+      marker,
+      repoPath: normalizeRepoPath(repoPath, platform),
+      sessionId,
+      skill: 'plan',
+      startedAt: 1000,
+      state,
+      ...over,
+    })
+    const startLine = (session: string) => JSON.stringify({ v: 1, at: 1, payload: { hook_event_name: 'SessionStart', session_id: session, source: 'clear' } }) + '\n'
+    // R1: its live session is L1 (from the hook file), and L1's conversation is there: ok.
+    await writeFile(join(hooks, `${R1}.jsonl`), startLine(L1))
+    await conversation(a, L1)
+    // R2: its start id has a conversation, but its live session L2 has none: no conversation.
+    await writeFile(join(hooks, `${R2}.jsonl`), startLine(L2))
+    await conversation(a, S2)
+    // R3: the repo folder is gone, though its conversation is there and an open record holds it: no folder first.
+    await conversation(gone, S3)
+    // R4: an open record in another repo holds S4 through its hook file: in use.
+    await conversation(a, S4)
+    await writeFile(join(hooks, `${R5}.jsonl`), startLine(S4))
+    // R6: a starting record off the Board starts with S6 (a Resume of it): in use.
+    await conversation(a, S6)
+    // R8: an ended record holding S7 doesn't make R9 in use.
+    await conversation(b, S7)
+    const records = [
+      rec(R1, a, S1, 'ended', { exitCode: 0 }),
+      rec(R2, a, S2, 'stopped', { stopReason: 'app closed' }),
+      rec(R3, gone, S3, 'ended'),
+      rec(R4, a, S4, 'stopped', { stopReason: 'terminals restarted' }),
+      rec(R5, b, S5, 'live', { pid: 7 }),
+      rec(R6, a, S6, 'ended'),
+      rec(R7, '/not/on/the/board', S6, 'starting', { resumedFrom: R6 }),
+      rec(R8, b, S7, 'ended'),
+      rec(R9, b, S7, 'ended', { startedAt: 2000 }),
+      rec(id(1, 'd'), gone, S3, 'live', { pid: 8 }),
+    ]
+    const sessionsFile = join(root, 'config', 'sessions.json')
+    await writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: records }))
+    const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
+    const board = await createBoardService({ ...deps(), hosted: { list: store.list, hooks: createHookReader(hooks) } }).build()
+    const resumeOf = Object.fromEntries(board.repos.flatMap((r) => r.hosted ?? []).map((h) => [h.marker, h.resume]))
+    expect(resumeOf).toEqual({
+      [R1]: 'ok',
+      [R2]: 'no conversation',
+      [R3]: 'no folder',
+      [R4]: 'in use',
+      [R5]: undefined,
+      [R6]: 'in use',
+      [R8]: 'ok',
+      [R9]: 'ok',
+      [id(1, 'd')]: undefined,
+    })
+    // Only ended and stopped sessions carry the field.
+    for (const h of board.repos.flatMap((r) => r.hosted ?? [])) expect('resume' in h).toBe(h.state === 'ended' || h.state === 'stopped')
+  })
+
+  test('labels', async () => {
+    const a = copyFixture('a')
+    const b = copyFixture('b')
+    await register(a, b)
+    const hooks = join(root, 'config', 'hooks')
+    const M1 = '11111111-1111-4111-8111-111111111111'
+    const M2 = '22222222-2222-4222-8222-222222222222'
+    const M3 = '33333333-3333-4333-8333-333333333333'
+    const M4 = '44444444-4444-4444-8444-444444444444'
+    const S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const rec = (marker: string, repoPath: string, state: StoredSession['state'], startedAt: number): StoredSession => ({
+      marker,
+      repoPath: normalizeRepoPath(repoPath, platform),
+      sessionId: S,
+      skill: 'plan',
+      startedAt,
+      state,
+      ...(state === 'live' ? { pid: 3 } : {}),
+    })
+    const sessionsFile = join(root, 'config', 'sessions.json')
+    const seed = async (records: StoredSession[]) => writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: records }))
+    await seed([])
+    const sent: unknown[] = []
+    const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
+    const service = createBoardService({ ...deps(), hosted: { list: store.list, hooks: createHookReader(hooks), labels: (l) => void sent.push(l) } })
+    // At start: the list goes even when it is empty, so main drops a list from before.
+    await service.build()
+    expect(sent).toEqual([[]])
+    await service.build()
+    expect(sent).toHaveLength(1)
+    // Open sessions in Board order, oldest first; ended ones and ones off the Board have none.
+    await seed([rec(M1, b, 'starting', 2000), rec(M2, a, 'live', 3000), rec(M3, a, 'ended', 1000), rec(M4, '/not/on/the/board', 'live', 1000)])
+    await service.build()
+    expect(sent.at(-1)).toEqual([
+      { id: M2, label: 'a · no plan yet' },
+      { id: M1, label: 'b · no plan yet' },
+    ])
+    // The same list again: nothing goes.
+    await service.build()
+    expect(sent).toHaveLength(2)
+    // One ends: the shorter list goes.
+    await seed([rec(M1, b, 'starting', 2000), rec(M2, a, 'ended', 3000)])
+    await service.build()
+    expect(sent.at(-1)).toEqual([{ id: M1, label: 'b · no plan yet' }])
+    expect(sent).toHaveLength(3)
   })
 
   test('serves no agent description, so a secret in the meta file appears nowhere on the Board', async () => {

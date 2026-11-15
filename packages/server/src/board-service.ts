@@ -22,12 +22,14 @@ import {
   type PrStatus,
   type RepoModel,
   repoPathKey,
+  sessionLabel,
 } from '@openaflow/model'
 import { readClaims } from './claims.ts'
 import type { GhReader } from './gh.ts'
 import { ignoresCase as probeIgnoresCase, normalizeRepoPath, repoIds, sameRepoPath } from './guard.ts'
 import { readRepoFiles } from './repo-files.ts'
-import { hostedSession, type HookReader, type StoredSession } from './session-store.ts'
+import { hostedSession, resumeFacts, resumeOf, type HookReader, type StoredSession } from './session-store.ts'
+import type { SessionLabel } from './terminal-channel.ts'
 import { loadRepos } from './repos-config.ts'
 import { agentOfRepo, createAgentFileCache, createSessionCwdCache, listAgentFiles, sessionFileOf, type AgentFile } from './transcript-files.ts'
 
@@ -44,8 +46,11 @@ export type BoardServiceDeps = {
   actions?: () => ActionEntry[]
   /** The auto-continue toggles, read on every build. No dep, no `autoContinue` on the Board. */
   autoContinue?: () => AutoToggle[]
-  /** The session store's records and their hook files, read on every build. No dep, no `hosted` on any repo. */
-  hosted?: { list(): StoredSession[]; hooks: Pick<HookReader, 'read'> }
+  /**
+   * The session store's records and their hook files, read on every build. No dep, no `hosted` on any repo.
+   * `labels` gets every open session's label at the first build, then whenever the list differs from the last one.
+   */
+  hosted?: { list(): StoredSession[]; hooks: Pick<HookReader, 'read'>; labels?: (labels: SessionLabel[]) => void }
 }
 
 export type BoardService = {
@@ -66,6 +71,8 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
   const sessionCwds = createSessionCwdCache()
   // An unreadable config (a half-saved edit, say) keeps the last list it read.
   let lastRegistered: string[] = []
+  // The labels last sent; none yet, so the first build sends.
+  let lastLabels: string | undefined
 
   /** The registered paths, and whether the config file exists but couldn't be read this time. */
   async function registered(): Promise<{ paths: string[]; unreadable: boolean }> {
@@ -142,16 +149,50 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
     ]
   }
 
-  /** The repo's hosted sessions, oldest first, with their hook state; `{}` when it has none. */
-  async function hostedOf(entry: RepoEntry, records: readonly StoredSession[]): Promise<{ hosted?: HostedSession[] }> {
-    const mine = records.filter((r) => sameRepoPath(entry.path, normalizeRepoPath(r.repoPath, deps.platform), deps.platform, entry.caseless))
-    if (mine.length === 0 || !deps.hosted) return {}
-    const hooks = deps.hosted.hooks
-    const hosted = await Promise.all(mine.map(async (r) => hostedSession(r, await hooks.read(r.marker))))
+  /** Every record as a `HostedSession` with its hook state, in store order. */
+  async function hostedAll(records: readonly StoredSession[]): Promise<HostedSession[]> {
+    const hooks = deps.hosted?.hooks
+    if (!hooks) return []
+    return Promise.all(records.map(async (r) => hostedSession(r, await hooks.read(r.marker))))
+  }
+
+  /**
+   * The repo's hosted sessions, oldest first; `{}` when it has none. An ended or stopped one also says whether
+   * Resume can start it, against the open sessions of every repo (`all`), on the Board or not.
+   */
+  async function hostedOf(entry: RepoEntry, records: readonly StoredSession[], all: readonly HostedSession[]): Promise<{ hosted?: HostedSession[] }> {
+    const mine = all.filter((_, i) => sameRepoPath(entry.path, normalizeRepoPath(records[i]!.repoPath, deps.platform), deps.platform, entry.caseless))
+    if (mine.length === 0) return {}
+    const open = all.filter((h) => h.state === 'starting' || h.state === 'live').map((h) => h.sessions)
+    const hosted = await Promise.all(
+      mine.map(async (h) =>
+        h.state === 'ended' || h.state === 'stopped' ? { ...h, resume: resumeOf(await resumeFacts(entry.path, h.liveSession, deps.claudeDir), h.liveSession, open) } : h,
+      ),
+    )
     return { hosted: hosted.sort((a, b) => a.startedAt - b.startedAt) }
   }
 
-  async function buildRepo(entry: RepoEntry, id: string, listed: AgentFile[], sessionFiles: string[], records: readonly StoredSession[]): Promise<BoardRepo> {
+  /** Sends every open session's label when the list differs from the last one sent, or none was sent yet. */
+  function sendLabels(repos: readonly BoardRepo[]): void {
+    const send = deps.hosted?.labels
+    if (!send) return
+    const labels = repos.flatMap((repo) =>
+      (repo.hosted ?? []).filter((h) => h.state === 'starting' || h.state === 'live').map((h) => ({ id: h.marker, label: sessionLabel(repo, h, now()) })),
+    )
+    const key = JSON.stringify(labels)
+    if (key === lastLabels) return
+    lastLabels = key
+    send(labels)
+  }
+
+  async function buildRepo(
+    entry: RepoEntry,
+    id: string,
+    listed: AgentFile[],
+    sessionFiles: string[],
+    records: readonly StoredSession[],
+    all: readonly HostedSession[],
+  ): Promise<BoardRepo> {
     const base = {
       id,
       name: pathFor(deps.platform).basename(entry.path) || entry.path,
@@ -159,7 +200,7 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       ...(entry.caseless ? { caseless: true as const } : {}),
       source: entry.registered ? (entry.claims.length > 0 ? 'both' : 'registered') : 'claim',
       claims: entry.claims,
-      ...(await hostedOf(entry, records)),
+      ...(await hostedOf(entry, records, all)),
     } as const
     let model: RepoModel
     try {
@@ -197,11 +238,13 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       const sessionFiles: string[] = []
       const { ids } = repoIds(entries, deps.platform)
       const records = deps.hosted?.list() ?? []
-      const repos = await Promise.all(entries.map((e, i) => buildRepo(e, ids[i]!, listed, sessionFiles, records)))
+      const all = await hostedAll(records)
+      const repos = await Promise.all(entries.map((e, i) => buildRepo(e, ids[i]!, listed, sessionFiles, records, all)))
       // Forget transcripts no repo listed this time: out of the day window, deleted, or their repo gone.
       agentRuns.retain(listed)
       sessionCwds.retain(sessionFiles)
       repos.sort((a, b) => compare(a.name.toLowerCase(), b.name.toLowerCase()) || compare(a.path, b.path))
+      sendLabels(repos)
       const board: Board = { generatedAt: now(), gh: deps.gh.status(), repos, transcriptDays: deps.transcriptDays }
       const checkedAt = deps.gh.checkedAt()
       if (checkedAt !== undefined) board.ghCheckedAt = checkedAt

@@ -6,9 +6,10 @@
 import { readFileSync, statSync } from 'node:fs'
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isSkillId, type HostedSession, type SkillId, type StopReason, type StoredSessionState } from '@openaflow/model'
+import { isSkillId, type HostedSession, type SessionResume, type SkillId, type StopReason, type StoredSessionState } from '@openaflow/model'
 import { readHookState, type HookState } from './hook-state.ts'
 import type { SessionInfo, TerminalEvent } from './terminal-channel.ts'
+import { sessionFileOf } from './transcript-files.ts'
 
 export type StoredSession = {
   marker: string
@@ -315,4 +316,31 @@ export function hostedSession(r: StoredSession, hook: HookState | undefined): Ho
   if (r.exitCode !== undefined) out.exitCode = r.exitCode
   if (r.typeYourself) out.typeYourself = true
   return out
+}
+
+/** What Resume needs to know from disk: whether the repo folder and the live session's conversation file are there. */
+export type ResumeFacts = { folder: boolean; conversation: boolean }
+
+const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
+const isFile = (p: string) => stat(p).then((s) => s.isFile(), () => false)
+
+/**
+ * Reads `ResumeFacts` for a session in `repoPath` whose live session is `liveSession`. The conversation is
+ * `<claude dir>/projects/<projectDirName(repoPath)>/<liveSession>.jsonl`; a live session that isn't a UUID v4 (it
+ * comes from a hook line) names no file, so it has no conversation.
+ */
+export async function resumeFacts(repoPath: string, liveSession: string, claudeDir: string): Promise<ResumeFacts> {
+  const [folder, conversation] = await Promise.all([isDir(repoPath), UUID_V4.test(liveSession) ? isFile(sessionFileOf(claudeDir, repoPath, liveSession)) : false])
+  return { folder, conversation }
+}
+
+/**
+ * Whether Resume can start `liveSession` again. First match: no repo folder, no conversation file, a `starting` or
+ * `live` session in any repo that holds it (`open`: each open session's `sessions`), else `ok`.
+ */
+export function resumeOf(facts: ResumeFacts, liveSession: string, open: readonly (readonly string[])[]): SessionResume {
+  if (!facts.folder) return 'no folder'
+  if (!facts.conversation) return 'no conversation'
+  if (open.some((sessions) => sessions.includes(liveSession))) return 'in use'
+  return 'ok'
 }
