@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createTerminalLink, type TerminalLink } from '../../terminal-link.ts'
 import { readTerminalLook, watchTerminalLook } from '../../theme/terminal-theme.ts'
-import { UNAVAILABLE } from './terminal-tab.ts'
+import { focusMove, UNAVAILABLE } from './terminal-tab.ts'
 
 let pageLink: TerminalLink | undefined
 
@@ -35,14 +35,14 @@ type Props = {
   /** The session ended or stopped: the last screen, faded, with no input. Nothing at all once the host lacks it. */
   ended: boolean
   /**
-   * Open terminal (or the move after a start) asked for focus: put it in xterm once the view is attached, then call
-   * `onFocused`. Never on a faded screen or a terminal that is not available.
+   * Open terminal (or the move after a start) asked for focus: put it in xterm once the view is attached (`focusMove`).
+   * `onFocusDone` once the request is taken or dropped (a faded screen, or a terminal that is not available).
    */
   focus?: boolean
-  onFocused?: () => void
+  onFocusDone?: () => void
 }
 
-export function TerminalView({ id, bridge, attach, ended, focus = false, onFocused }: Props) {
+export function TerminalView({ id, bridge, attach, ended, focus = false, onFocusDone }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const term = useRef<import('@xterm/xterm').Terminal | undefined>(undefined)
   const [ready, setReady] = useState(false)
@@ -141,10 +141,12 @@ export function TerminalView({ id, bridge, attach, ended, focus = false, onFocus
   }, [id, bridge, ready, attach])
 
   useEffect(() => {
-    if (!focus || !attached || ended || lost !== undefined) return
-    term.current?.focus()
-    onFocused?.()
-  }, [focus, attached, ended, lost, onFocused])
+    if (!focus) return
+    const move = focusMove({ attached, ended, lost: lost !== undefined })
+    if (move === 'wait') return
+    if (move === 'take') term.current?.focus()
+    onFocusDone?.()
+  }, [focus, attached, ended, lost, onFocusDone])
 
   useEffect(() => {
     const t = term.current

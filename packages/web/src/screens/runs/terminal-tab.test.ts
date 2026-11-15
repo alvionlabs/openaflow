@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { DESKTOP_TERMINAL } from './next-step.ts'
 import { runChip } from './view.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
-import { browserView, clock, ENDED_NO_TIME, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
+import { browserView, clock, ENDED_NO_TIME, focusMove, focusRun, keepFocusAsk, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
 // Local times, so the HH:MM checks hold in any time zone.
 const START = new Date(2026, 10, 15, 13, 40).getTime()
@@ -92,6 +92,35 @@ describe('terminal tab', () => {
     }
     // With no link (it can't connect), a live session says the terminal is not available only once the link says so.
     expect(tab(LIVE)).not.toContain(UNAVAILABLE)
+  })
+
+  it('focus request', () => {
+    // Open terminal: the page names the shown run, or no hash at all (the first run, shown by default).
+    expect(focusRun('#/notes', '#/notes')).toBe('#/notes')
+    expect(focusRun('', '#/notes/plan-a')).toBe('#/notes/plan-a')
+    expect(focusRun('#/no%20such', '#/notes')).toBe('#/no%20such')
+    // The ⋯ New session moves the page to the repo row in the same tick, before the screen shows it: the request is for it.
+    expect(focusRun('#/notes', '#/other/plan-a')).toBe('#/notes')
+    // A board, agent or encoded hash names its run's pipeline, as the screen's run key does.
+    expect(focusRun('#/notes/plan-a/board/T1', '#/x')).toBe('#/notes/plan-a')
+    expect(focusRun('#/notes/task-x/agent/a1', '#/x')).toBe('#/notes/task-x')
+    expect(focusRun('#/my%20notes/plan-a', '#/x')).toBe('#/my%20notes/plan-a')
+    // Junk names no run: the shown one.
+    expect(focusRun('#junk', '#/notes')).toBe('#/notes')
+
+    // A request stays while its run shows, and while none is asked; another run showing drops it.
+    expect(keepFocusAsk('#/notes', '#/notes')).toBe(true)
+    expect(keepFocusAsk(undefined, '#/notes')).toBe(true)
+    expect(keepFocusAsk('#/notes', '#/other/plan-a')).toBe(false)
+
+    // The view takes focus once attached; waits while it attaches; drops the request on a screen that can't take keys.
+    expect(focusMove({ attached: true, ended: false, lost: false })).toBe('take')
+    expect(focusMove({ attached: false, ended: false, lost: false })).toBe('wait')
+    for (const attached of [true, false]) {
+      expect(focusMove({ attached, ended: true, lost: false })).toBe('drop')
+      expect(focusMove({ attached, ended: false, lost: true })).toBe('drop')
+      expect(focusMove({ attached, ended: true, lost: true })).toBe('drop')
+    }
   })
 
   it('browser rule', () => {

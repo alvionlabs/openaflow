@@ -47,7 +47,7 @@ import { SideHandle } from './SideHandle.tsx'
 import { UrgentBanner } from './UrgentBanner.tsx'
 import { readWidth, saveWidth } from './sidebar-width.ts'
 import { readTab, saveTab, shownTab, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
-import { hasTerminalTab, tabDot } from './terminal-tab.ts'
+import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
 import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
@@ -91,8 +91,9 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [bridge] = useState(() => terminalBridge())
   const repoButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
-  // Open terminal or a started New session asked for focus in the live terminal; the Terminal tab clears it once taken.
-  const [termFocus, setTermFocus] = useState(false)
+  // The run (its `hashFor`) whose live terminal Open terminal or a started New session asked focus for. The Terminal
+  // tab clears it once taken or dropped; a tab press or another run showing drops it.
+  const [focusAsk, setFocusAsk] = useState<string | undefined>(undefined)
   // The hash the urgent banner's Open run went to, so focus lands on that run's title.
   const focusFor = useRef<string | undefined>(undefined)
 
@@ -131,6 +132,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [removeState, setRemoveState] = useState<RemoveState>(REMOVE_IDLE)
   const latest = useRef({ planFallback, navigate, selected, view, agent })
   latest.current = { planFallback, navigate, selected, view, agent }
+  const shownKey = useRef(runKey)
+  shownKey.current = runKey
   // Open terminal and a started New session ask for the Terminal tab. It is stored, not applied to this row only: the
   // ⋯ New session moves the page in the same tick, and each row reads the stored tab as it can (`shownTab`).
   useEffect(
@@ -138,13 +141,14 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
       onTabRequest((t) => {
         saveTab(store.current, t)
         setStored(t)
-        setTermFocus(true)
         // An engineer's view always shows Log: go to its run, unless the page already moved on.
         const { view: v, selected: run, agent: id } = latest.current
         if (v === 'agent' && run && window.location.hash === hashFor(run, 'agent', id)) window.location.hash = hashFor(run)
+        setFocusAsk(focusRun(window.location.hash, shownKey.current))
       }),
     [],
   )
+  useEffect(() => setFocusAsk((ask) => (keepFocusAsk(ask, runKey) ? ask : undefined)), [runKey])
   const removeFlow = useMemo(
     () =>
       createRemoveFlow(setRemoveState, (target, after) => {
@@ -220,11 +224,11 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     if (shownRun.current === key) runTitle.current?.focus()
   }
 
-  const focusTaken = useMemo(() => () => setTermFocus(false), [])
+  const focusDone = useMemo(() => () => setFocusAsk(undefined), [])
   const press = (t: Tab) => {
     const next = tabPress(shown, t, view)
     // A tab press is the user's own move: a focus request not yet taken is dropped.
-    setTermFocus(false)
+    setFocusAsk(undefined)
     saveTab(store.current, next.save)
     setStored(next.save)
     if (next.leave && selected) window.location.hash = hashFor(selected)
@@ -372,8 +376,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                       now={now}
                       bridge={bridge}
                       onDismissed={dismissedOn(runKey)}
-                      focus={termFocus}
-                      onFocused={focusTaken}
+                      focus={focusAsk === runKey}
+                      onFocusDone={focusDone}
                     />
                   )}
                 </div>

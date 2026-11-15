@@ -3,6 +3,7 @@
 // place of the tab. Pure; TerminalTab.tsx and TerminalView.tsx are the glue.
 
 import { sessionDot, sessionView, sessionWord, type HostedSession, type SessionDot } from '@openaflow/model'
+import { hashFor, parseHash } from '../../selection.ts'
 import { DESKTOP_TERMINAL } from './next-step.ts'
 import type { ChipClass } from './view.ts'
 
@@ -52,4 +53,28 @@ export const terminalBody = (s: HostedSession, now: number): TerminalBody => (is
 export function browserView(s: HostedSession, now: number): BrowserView {
   const line = isOpen(s, now) ? `The terminal started at ${clock(s.startedAt)}.` : endLine(s)
   return { ...status(s, now), line, note: DESKTOP_TERMINAL }
+}
+
+/**
+ * Open terminal, and the move to the tab after a New session, ask for focus in the live terminal. `take` it once the
+ * view is attached, `wait` while it attaches, or `drop` the request on a screen that can't take keys (ended, stopped,
+ * not available), so it never fires later.
+ */
+export type FocusMove = 'take' | 'drop' | 'wait'
+
+/**
+ * The run a focus request is for, as the screen's run key (`hashFor` of the run): the run the page's hash names, since
+ * the ⋯ New session moves the page in the same tick, before the screen shows it; else (no hash, or junk) the shown run.
+ */
+export function focusRun(hash: string, shown: string): string {
+  const route = parseHash(hash)
+  return route === undefined ? shown : hashFor({ repoId: route.repoId, plan: route.plan, fix: undefined })
+}
+
+/** A request is dropped once another run shows: it never takes focus on a run it wasn't made for. */
+export const keepFocusAsk = (ask: string | undefined, shown: string): boolean => ask === undefined || ask === shown
+
+export function focusMove(v: { attached: boolean; ended: boolean; lost: boolean }): FocusMove {
+  if (v.ended || v.lost) return 'drop'
+  return v.attached ? 'take' : 'wait'
 }

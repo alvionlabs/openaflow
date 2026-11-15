@@ -22,12 +22,12 @@ type Props = {
    * Called with the callback given when Dismiss was pressed, so the screen can tell the run has changed since.
    */
   onDismissed?: () => void
-  /** Open terminal (or a started New session) asked for focus in the live terminal; `onFocused` once it has it. */
+  /** Open terminal (or a started New session) asked for focus in the live terminal; `onFocusDone` once taken or dropped. */
   focus?: boolean
-  onFocused?: () => void
+  onFocusDone?: () => void
 }
 
-export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismissed, focus = false, onFocused }: Props) {
+export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismissed, focus = false, onFocusDone }: Props) {
   const body = terminalBody(session, now)
   const ended = body.kind === 'stopped'
   const view = sessionView(session, now)
@@ -41,7 +41,7 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
         attach={view !== 'starting'}
         ended={ended}
         focus={focus}
-        {...(onFocused ? { onFocused } : {})}
+        {...(onFocusDone ? { onFocusDone } : {})}
       />
       {!ended && (
         <p className="term-foot">
