@@ -34,10 +34,11 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: pnpm verify
 
-  # node-pty in the real Electron app, unpackaged, then in a `pnpm package --test-hooks` build. That build never
-  # leaves the runner. On Ubuntu 24.04, Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
-  pty-proof:
-    name: pty proof (${{ matrix.os }})
+  # The real Electron app, unpackaged, then a `pnpm package --test-hooks` build of it, which never leaves the runner.
+  # One test file a step: vitest runs files side by side. real-start runs Electron's own binary on dist/main.cjs, so it
+  # has no packaged run. On Ubuntu 24.04, Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
+  electron:
+    name: electron (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,8 +65,13 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         if: runner.os == 'Linux'
       - run: pnpm build
+      - run: ${{ matrix.display }} pnpm test:electron real-start
       - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal
       - run: pnpm package --test-hooks
       - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal
         env:
           OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
