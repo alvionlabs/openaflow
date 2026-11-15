@@ -3,7 +3,7 @@
 // route, so the two never start a second run on one session. The rules and why are in
 // pod-docs/feature-details/resume.md.
 
-import { autoSends, repoPathKey, type Board, type BoardRepo, type NewActionEntry, type ResumeResult } from '@openaflow/model'
+import { autoSends, isHostedSession, repoPathKey, type Board, type BoardRepo, type NewActionEntry, type ResumeResult } from '@openaflow/model'
 import type { AutoContinueStore } from './auto-continue-store.ts'
 import type { ClaudeRunner, ResumeWord, StartResult } from './claude-runner.ts'
 
@@ -28,16 +28,23 @@ export type ResumeDeps = {
 /** A resume request or a running child already holds this session. */
 export const isResuming = (d: Pick<ResumeDeps, 'inFlight' | 'runner'>, session: string) => d.inFlight.has(session) || d.runner.isRunning(session)
 
-/** Starts the runner (a throw is a failed start) and logs one entry, whatever the result. */
+/**
+ * Starts the runner (a throw is a failed start) and logs one entry, whatever the result. A session in the app's
+ * terminal host, in any state, never gets a `-p` send: the runner doesn't start, and the entry is `failed`, `hosted session`.
+ */
 export async function runResume(
   d: Pick<ResumeDeps, 'runner' | 'log'>,
   r: { repo: BoardRepo; run: string; session: string; word: ResumeWord; auto: boolean },
 ): Promise<ResumeResult> {
   let start: StartResult
-  try {
-    start = await d.runner.start({ session: r.session, word: r.word, cwd: r.repo.path })
-  } catch (err) {
-    start = { outcome: 'failed', message: err instanceof Error ? err.message : String(err) }
+  if (isHostedSession(r.repo, r.session)) {
+    start = { outcome: 'failed', message: 'hosted session' }
+  } else {
+    try {
+      start = await d.runner.start({ session: r.session, word: r.word, cwd: r.repo.path })
+    } catch (err) {
+      start = { outcome: 'failed', message: err instanceof Error ? err.message : String(err) }
+    }
   }
   const entry: NewActionEntry = { action: 'resume', repoId: r.repo.id, repo: r.repo.name, target: `${r.run} · ${r.word}`, result: start.outcome, reply: r.word, auto: r.auto }
   if (start.message !== undefined) entry.message = start.message

@@ -6,7 +6,12 @@ The board can send `continue` or `go` to a pod run's own Claude session, so you 
 
 ## How it works
 
-- **Resume route** (`POST /api/actions/resume`, behind the action guard). Checks in order, nothing runs before all pass: `reply` is `continue` or `go` (so `try` is never sent); the model's sendable rule allows it on this run (`404 not waiting on you`); a session with a safe id exists (`404 no session`); the session is idle (`409 session is busy`); no resume for it is in flight (`409 resume in progress`). Then the runner starts, one `auto: false` entry is logged, and the Board is rebuilt.
+- **Resume route** (`POST /api/actions/resume`, behind the action guard). Checks in order, nothing runs before all pass: `reply` is `continue` or `go` (so `try` is never sent); the model's sendable rule allows it on this run (`404 not waiting on you`); a session with a safe id exists (`404 no session`); the app doesn't host it (`409 hosted session`, below); the session is idle (`409 session is busy`); no resume for it is in flight (`409 resume in progress`). Then the runner starts, one `auto: false` entry is logged, and the Board is rebuilt.
+- **No `-p` send to a hosted session** (sprint terminal-tab §6): a session the app started in its terminal host is listed in `repo.hosted`, and `isHostedSession` (model `hosted.ts`) is true for every id it held, its start id and each id after `/clear`, in any state (`starting`, `live`, `ended`, `stopped`). Three places refuse it, for `continue` and `go`:
+  - The resume route answers `409 {error:'hosted session'}`, after `no session` and before the idle check. Nothing runs, nothing is logged, and no stop key is saved.
+  - The automatic check (`autoSends`) skips it before the idle check, with no log entry, no saved key, and no `lastFailed`. The Auto-continue toggle button stays in the header; on a hosted run it sends nothing.
+  - `runResume` refuses before the runner starts and logs one `resume` entry, `failed`, message `hosted session`. The route and the check already refuse first, so this is the last guard.
+  - After Dismiss the record is gone, the session is no longer hosted, and today's rules apply: a toggled stop still due is sent by the next check.
 - **Sendable signals:** `continue` on `wave-merged`, `sprint-done`, `final-merged`, `fix-merged`, and `answered` (you answered a stopped run's entries and no `BLOCKED` of it is unanswered); `go` on `not-started` ([queue-and-replies.md](queue-and-replies.md)). The idle check below applies to each.
 - **Where you press it:** Continue or Go on a reply (the Next step card or a Waiting row); the `Auto-continue` toggle button in the run header, just left of the ⋯ (pressed when on); the sidebar card shows a fast-forward icon while it is on.
 - **On the Next step card** (`NextStepCard.tsx`, rules in `stop-log.ts`): under the title, a "what happened" list (L1's `StopList`) shows what you did on this stop.
@@ -47,12 +52,14 @@ The board can send `continue` or `go` to a pod run's own Claude session, so you 
 - **One owner, by file:** dev and production can share a config folder, and two checks would send one stop twice: each holds its sessions in memory only. A held file with a process ID needs no lock service, and a crash leaves a file that the next start can read as stale ([plan](../plans/windows-app.md#key-decisions)).
 - **A stop never ends a run:** the runner's `claude` is detached and outlives the server, whether the server stops by Ctrl+C, by the parent's message, or because the parent died. No tree kill and no Job Object.
 - **A manual `continue` saves the key too,** so the automatic check doesn't send the same stop after your press.
+- **No `-p` into a hosted session:** the terminal host holds an interactive `claude` on that session. A second process on it splits the conversation (spike check 3), and the idle rule can't see a terminal that waits for you. You type the word in the Terminal tab instead. A stopped hosted session is refused too, so the Board never resumes a session you can still see in its tab; Dismiss hands it back to today's rules.
 - **No Claude or Anthropic env from the board:** a board started inside a Claude Code session would hand the run that session's state (`CLAUDECODE`, `CLAUDE_CODE_*`) or an API key, base URL, or Bedrock/Vertex switch, so the run wouldn't be your own login. `CLAUDE_CONFIG_DIR` stays: it names where your login and sessions live, the same folder the board reads transcripts from, and without it `--resume` would look in `~/.claude` and not find the session. `CLAUDE_CODE_GIT_BASH_PATH` and `CLAUDE_CODE_MAX_OUTPUT_TOKENS` stay too: they are machine settings a shell may hold alone, and a run can fail to start without them.
 
 ## Watch out
 
 - **Setup: a permission mode.** A resumed `claude -p` run can use tools only if your settings give it a permission mode (for example `"defaultMode"` in `~/.claude/settings.json`). Without one it denies tool calls and the orchestrator stalls. The runner never passes a permission flag.
 - **A terminal still open on the session** doesn't show the board's turn; typing in it after a send splits the conversation. Reopen with `claude --resume <id>`.
+- **A hosted run's toggle saves no key while it is hosted.** After Dismiss, the next check sends the stop that was due, even one that came while the session was hosted.
 - **`--bare`:** the headless docs say it will become the default for `-p`. Bare mode never reads your login, so a resume would fail; the runner must never pass an API key instead.
 - **Your hooks run:** a `Stop` or `Notification` hook fires once per send.
 - **A quiet turn:** one long tool call can leave every file quiet for over 60 s; a send then happens only if pod also shows a sendable stop.
@@ -90,3 +97,4 @@ The board can send `continue` or `go` to a pod run's own Claude session, so you 
 - 2026-11-13 · ui-rework w2-fix · after a started Continue or Go, the card hides that send button until the run state or the card changes, or for 60 s, so a second press no longer starts a second send.
 - 2026-11-13 · ui-rework · plan complete: Merge, then Continue reads as one flow on the Next step card; final PR #108 passed review at round 2 · [report](../reports/ui-rework.html)
 - 2026-11-14 · ui-rework K2 · the Auto-continue switch left the ⋯ menu for a toggle button in the run header (PR #114); the routes didn't change.
+- 2026-11-14 · terminal-tab R1 · no `-p` send to a hosted session: the resume route answers `409 hosted session`, the automatic check skips it quietly, and `runResume` refuses before the runner starts, in any state, for every id the session held. After Dismiss, today's rules apply.
