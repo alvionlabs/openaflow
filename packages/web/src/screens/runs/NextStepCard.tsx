@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { BoardRepo, ResumeResult, RunSummary } from '@openaflow/model'
+import { rowSessions, shownSession, type BoardRepo, type ResumeResult, type RunSummary } from '@openaflow/model'
 import { StopList } from '../../components/StopList.tsx'
+import { terminalBridge } from '../../desktop-bridge.ts'
+import { requestTab } from '../../open-tab.ts'
 import { AnswerForm } from './AnswerForm.tsx'
 import { INITIAL, createAnswerFlow, formView, type AnswerState } from './answer-flow.ts'
 import { MergeConfirm, mergeButtonId, useMergeFlow } from './MergeConfirm.tsx'
-import type { NextItem } from './next-step.ts'
+import { cardTerminal, codeParts, type NextItem } from './next-step.ts'
+import { NewSessionForm, useNewSession } from './NewSessionForm.tsx'
+import { TYPED } from './new-session-flow.ts'
 import { answerNote } from './queue-view.ts'
 import { ReplyPanel } from './ReplyPanel.tsx'
 import { INITIAL_RESOLVE, createResolveFlow, triageTarget, type ResolveState } from './resolve-flow.ts'
@@ -34,6 +38,10 @@ export function NextStepCard({ repo, run, card }: Props) {
   const answerButton = useRef<HTMLButtonElement>(null)
   const cardRef = useRef<HTMLElement>(null)
   const titleId = useId()
+  // The desktop app's terminal bridge is there or not for the page's life.
+  const [terminals] = useState(() => terminalBridge() !== undefined)
+  // Held here, not in the form: the start card leaves once the Board lists the new session, and the flow then moves on.
+  const [session, sessionFlow] = useNewSession(repo)
 
   // The first Board out of running starts a new stop.
   useEffect(() => setLog((l) => logRunState(l, run.state)), [run.state])
@@ -75,6 +83,13 @@ export function NextStepCard({ repo, run, card }: Props) {
   const saving = answer.kind === 'saving' || resolve.kind === 'saving'
   const triage = a.kind === 'answer' ? triageTarget(card.entry, repo.id) : undefined
   const stops = stopView(log, card)
+  const term = cardTerminal(card, terminals)
+  const hostedReply = a.kind === 'reply' && a.panel.hosted !== undefined
+  // A reply's rows each say why, so its detail would only repeat the first one; a hosted reply's says where to type it.
+  const detail = term.detail ?? (a.kind !== 'reply' ? card.detail : undefined)
+  // The line to type yourself, while the row's shown session is open and not yet prompted (new-session-flow.ts).
+  const shown = shownSession(rowSessions(repo, run.plan, Date.now()))
+  const typeLine = shown && TYPED.line(shown)
   return (
     <>
       <section ref={cardRef} className={calm ? 'card calm next-step' : 'card next-step'} aria-labelledby={titleId}>
@@ -92,8 +107,16 @@ export function NextStepCard({ repo, run, card }: Props) {
         <h2 id={titleId} className="next-title" tabIndex={-1}>
           <CardTitle title={card.title} link={card.titleLink} />
         </h2>
-        {/* A reply's rows each say why, so its detail would only repeat the first one. */}
-        {card.detail && a.kind !== 'reply' && <p className="next-detail">{card.detail}</p>}
+        {detail && (
+          <p className="next-detail">
+            <CodeText text={detail} />
+          </p>
+        )}
+        {typeLine && (
+          <p className="next-detail next-type">
+            <CodeText text={typeLine} />
+          </p>
+        )}
         {a.kind === 'answer' && card.entry && <TriageLine row={card.entry} />}
         <StopList items={stops.items} />
         {a.kind === 'answer' && (
@@ -126,8 +149,18 @@ export function NextStepCard({ repo, run, card }: Props) {
             </button>
           </div>
         )}
+        {term.form && <NewSessionForm repoId={repo.id} state={session} flow={sessionFlow} />}
+        {term.openTerminal && (
+          <div className="inplace-actions next-acts">
+            <button className="btn primary" type="button" onClick={() => requestTab('terminal')}>
+              Open terminal
+            </button>
+          </div>
+        )}
+        {term.note && <p className="next-detail next-desktop">{term.note}</p>}
+        {/* A hosted reply draws no reply rows: you type the word in the terminal. The slot stays for a last result. */}
         {run.plan !== undefined && (
-          <ReplyPanel key="reply-panel" view={cardPanel(log, card)} target={{ repoId: repo.id, run: run.plan }} framed={false} onSent={onSent} />
+          <ReplyPanel key="reply-panel" view={hostedReply ? undefined : cardPanel(log, card)} target={{ repoId: repo.id, run: run.plan }} framed={false} onSent={onSent} />
         )}
       </section>
       {/* The form quotes the entry it opened for, never the card's current one: the Board can move the card on. */}
@@ -136,6 +169,23 @@ export function NextStepCard({ repo, run, card }: Props) {
       <TriageError state={resolve} flow={resolveFlow} />
       {merge.kind !== 'idle' && (
         <MergeConfirm state={merge} flow={mergeFlow} label={`PR #${merge.target.number}`} returnFocus={() => focusAfterMerge(cardRef.current, document)} />
+      )}
+    </>
+  )
+}
+
+/** Text with its backticked parts as code. */
+function CodeText({ text }: { text: string }) {
+  return (
+    <>
+      {codeParts(text).map((p, i) =>
+        p.code ? (
+          <code key={i} className="mono">
+            {p.text}
+          </code>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
       )}
     </>
   )

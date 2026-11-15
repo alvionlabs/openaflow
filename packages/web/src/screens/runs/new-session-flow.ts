@@ -5,6 +5,7 @@
 
 import { SKILLS, type BoardRepo, type HostedSession, type NewSessionResult, type SkillId } from '@openaflow/model'
 import { postAction, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import type { TerminalBridge } from '../../desktop-bridge.ts'
 import type { ListboxItem } from '../../components/listbox.ts'
 import { requestTab } from '../../open-tab.ts'
 import { hashFor } from '../../selection.ts'
@@ -188,3 +189,9 @@ export function skillItems(): ListboxItem[] {
 
 /** The text field's label: what to build, or an optional first message for a plain session. */
 export const textLabel = (skill: SkillId) => (skill === 'plain' ? 'Message (optional)' : 'What to build')
+
+/** The repo the ⋯ menu's New session starts in: only in the desktop app (its terminal bridge), and only a repo the app reads. */
+export function menuRepo(repo: BoardRepo | undefined, bridge: TerminalBridge | undefined): BoardRepo | undefined {
+  if (!bridge || !repo || repo.error !== undefined || !repo.model.docs.supported) return undefined
+  return repo
+}
