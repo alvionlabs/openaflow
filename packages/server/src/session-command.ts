@@ -26,6 +26,9 @@ export type SessionCommandInput = {
   windows?: { readShim(file: string, env: NodeJS.ProcessEnv): ShimRead; cmdPath(env: NodeJS.ProcessEnv): string | undefined } | undefined
 }
 
+/** What every command needs: all of the input but the skill and its text. */
+type CommandBase = Omit<SessionCommandInput, 'skill' | 'text'>
+
 /** A pty host `StartSpec` minus its id and size. `typeYourself` is set when the prompt could not go on the command line. */
 export type SessionCommand = { program: string; args: string[]; cwd: string; env: Record<string, string>; typeYourself?: string }
 
@@ -48,15 +51,22 @@ const CMD_UNSAFE = /["%!^&|<>\r\n,;=]/
  * a permission flag, or a model flag: the session is the user's own interactive `claude`.
  */
 export function sessionCommand(o: SessionCommandInput): SessionCommand | SessionCommandError {
-  const win = o.platform === 'win32'
   if (!isSkillId(o.skill)) return 'bad skill'
-  if (!UUID_V4.test(o.sessionId) || !UUID_V4.test(o.runMarker) || o.sessionId === o.runMarker) return 'bad id'
-  if (![o.claude, o.repo, o.pluginDir, o.configDir].every((p) => isAbsoluteFor(p, win))) return 'bad path'
+  const bad = badInput(o)
+  if (bad !== undefined) return bad
   const prompt = startPrompt(o.skill, o.text)
   if (prompt === 'bad text') return prompt
 
+  return build(o, ['--session-id', o.sessionId, '--plugin-dir', o.pluginDir], prompt)
+}
+
+/**
+ * The command for `flags` and an optional prompt, last. A Windows shim only cmd.exe can read gets no prompt:
+ * `typeYourself` holds it instead.
+ */
+function build(o: CommandBase, flags: string[], prompt: string | undefined): SessionCommand | SessionCommandError {
+  const win = o.platform === 'win32'
   const env = sessionEnv(o)
-  const flags = ['--session-id', o.sessionId, '--plugin-dir', o.pluginDir]
   const withPrompt = prompt === undefined ? flags : [...flags, prompt]
   const base = { cwd: o.repo, env }
   if (!win || !/\.(cmd|bat)$/i.test(o.claude)) return { ...base, program: o.claude, args: withPrompt }
@@ -76,6 +86,14 @@ export function sessionCommand(o: SessionCommandInput): SessionCommand | Session
   return prompt === undefined ? { ...base, program: cmd, args } : { ...base, program: cmd, args, typeYourself: prompt }
 }
 
+/** The ids are two different lowercase UUID v4s; every path is absolute. */
+function badInput(o: CommandBase): 'bad id' | 'bad path' | undefined {
+  if (!UUID_V4.test(o.sessionId) || !UUID_V4.test(o.runMarker) || o.sessionId === o.runMarker) return 'bad id'
+  const win = o.platform === 'win32'
+  if (![o.claude, o.repo, o.pluginDir, o.configDir].every((p) => isAbsoluteFor(p, win))) return 'bad path'
+  return undefined
+}
+
 /** `/pod:<skill> <text>`, the command alone, plain text alone, or nothing. */
 function startPrompt(skill: SkillId, raw: string): string | undefined | 'bad text' {
   const text = raw.trim()
@@ -90,15 +108,21 @@ function startPrompt(skill: SkillId, raw: string): string | undefined | 'bad tex
 
 /**
  * The runner's `childEnv` (no credentials or Claude session state, absolute PATH entries only), minus every
- * inherited `OPENAFLOW_*` and `TERM` in any case, plus contract §3's two names and `TERM`.
+ * inherited `OPENAFLOW_*` and `TERM` in any case. The env every session starts from, before its own names.
  */
-function sessionEnv(o: SessionCommandInput): Record<string, string> {
+export function sessionBaseEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(childEnv(o.env, o.platform))) {
+  for (const [k, v] of Object.entries(childEnv(env, platform))) {
     const u = k.toUpperCase()
     if (v === undefined || u.startsWith('OPENAFLOW_') || u === 'TERM') continue
     out[k] = v
   }
+  return out
+}
+
+/** `sessionBaseEnv`, plus contract §3's two names and `TERM`. */
+function sessionEnv(o: CommandBase): Record<string, string> {
+  const out = sessionBaseEnv(o.env, o.platform)
   const p = o.platform === 'win32' ? path.win32 : path.posix
   out.OPENAFLOW_RUN = o.runMarker
   out.OPENAFLOW_HOOKS_DIR = p.join(o.configDir, 'hooks')
