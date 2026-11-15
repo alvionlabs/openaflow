@@ -152,7 +152,7 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
       return
     }
     restartsLeft--
-    o.log(`${LOG} restarting (${restartsLeft} restarts left)`)
+    o.log(`${LOG} restarting (${restartsLeft} ${restartsLeft === 1 ? 'restart' : 'restarts'} left)`)
     emit({ type: 'crashed', lost, restartsLeft })
     launch()
   }

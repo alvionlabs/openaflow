@@ -388,5 +388,7 @@ describe('the pty host starter', () => {
     s.last().exit(3)
     expect(s.log).toHaveBeenCalledWith('openaflow desktop: terminal host exited with code 3')
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('restarting (4 restarts left)'))
+    for (let i = 0; i < 3; i++) s.last().exit(1)
+    expect(s.log).toHaveBeenCalledWith('openaflow desktop: terminal host restarting (1 restart left)')
   })
 })
