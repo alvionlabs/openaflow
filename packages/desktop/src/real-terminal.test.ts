@@ -400,20 +400,22 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
     }
   }, RUN_MS)
 
-  test.runIf(!PACKAGED)('a kill before the pid ends the session', async () => {
+  test.runIf(!PACKAGED)('a kill right after the start ends the session', async () => {
     const pids: number[] = []
     const h = await launchHarness()
     try {
       const id = 'early-1'
       await until('the test hook', () => h.app.evaluate(() => (globalThis as Hooked).__openaflowTest?.terminals !== undefined), 60_000, h)
       await hooks(h).list()
-      // The kill goes out right behind the start. On Windows the session still waits for its pid then, and node-pty
-      // holds the kill until the program's first output; on Linux the pid comes at once.
+      // The kill goes out right behind the start, and a list between them shows whether the session still waited for
+      // its pid (pid 0). On Windows node-pty holds a kill until the program's first output; on Linux the pid comes at
+      // once. The host takes the three messages in order.
       const answer = await h.app.evaluate(async (_e, s) => {
         const t = (globalThis as Hooked).__openaflowTest!.terminals!
         const started = t.start(s).then((r) => ({ pid: r.pid }), (err: unknown) => ({ error: String(err) }))
+        const listed = t.list()
         await t.kill(s.id)
-        return started
+        return { ...(await started), atKill: (await listed).find((x) => x.id === s.id) }
       }, spec(id))
       console.info(`openaflow proof: a kill right after the start answered ${JSON.stringify(answer)}`)
       if ('pid' in answer) pids.push(answer.pid)

@@ -28,7 +28,8 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 | The window's echo and reload (`real-terminal`) | yes | yes | yes | — |
 | The packaged app's echo and reload (`real-terminal` › `packaged`) | yes: `release/linux-unpacked/openaflow` and the AppImage | yes: `release/linux-unpacked/openaflow` | yes: `release/win-unpacked/OpenAFlow.exe` | the human's command below |
 | A `kill` from the main side reaches the program, and the window hears its `exit` | yes | yes | yes | — |
-| Hide and a new window, a server crash, a host crash, the page's refusals, and a kill right after the start (`real-terminal`) | yes | in the `electron` job | in the `electron` job | — |
+| Hide and a new window, a server crash, a host crash, the page's refusals, and a kill right after the start (`real-terminal`) | yes | yes | yes | — |
+| The folder bridge in real Electron (`real-folder-bridge`) | yes | not in CI | not in CI | — |
 | The app starts and its server follows it (`real-start`) | yes | yes | yes | — |
 | Host protocol, flow control, replay order (unit tests with a fake pty and the real `@xterm/headless`; `real-pty` under Node) | yes | yes (`verify`) | yes (`verify`) | — |
 | The hooks plugin's script (`record.test.ts`) | yes | yes (`verify`) | yes, with Git's `sh` (`verify`) | — |
@@ -38,7 +39,7 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 | The `PreToolUse` and `PermissionRequest` hooks firing in real `claude` | never fired | — | — | never fired |
 
 - `real-start` and the Linux gate of `real-folder-bridge` (host-core C1) have no History line in [desktop.md](desktop.md); this table is their record.
-- **A kill right after the start:** on Windows the session still waits for its pid when the kill comes, and node-pty holds `kill()` until the program's first output, so the program may run for a moment. `real-terminal` › `a kill before the pid ends the session` sends the kill right behind the start and checks only that the session ends and its program stops. Its log line, `a kill right after the start answered …`, shows which way the start went: a pid, or `spawn failed: …`. On Linux the pid comes at once, so the kill always lands on a started session.
+- **A kill right after the start:** node-pty holds `kill()` on Windows until the program's first output, so a kill while a session waits for its pid may let the program run for a moment. `real-terminal` › `a kill right after the start ends the session` sends `start`, `list`, and `kill` in a row, and checks that the session ends and its program stops. Its log line, `a kill right after the start answered …`, shows the pid the start gave (or `spawn failed: …`) and the session as `list` saw it at the kill (`pid: 0` means it still waited for its pid). On Linux the pid comes at once, so the kill always lands on a started session.
 - **The human's Windows commands**, on a real Windows machine from the repo root:
   - `pnpm build`, `pnpm package --test-hooks`, then `$env:OPENAFLOW_REAL_ELECTRON='1'; $env:OPENAFLOW_PACKAGED_APP='<repo>\packages\desktop\release\win-unpacked\OpenAFlow.exe'; pnpm test:electron real-terminal`.
   - `$env:OPENAFLOW_REAL_CLAUDE='1'; pnpm vitest run packages/pty-host/test/real-claude-start.test.ts` (Haiku, at most 4 turns).
@@ -53,7 +54,7 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 - **Server crash:** a SIGKILL on the server (its pid from `auto-continue-owner.json`). `/api/health` goes and comes back; the host pid, the session's pid, and `live: true` stay; the screen goes on; the reloaded page misses no line.
 - **Host crash:** a SIGKILL on `hostPid()`. A new host pid, an empty `list()`, `terminal host lost sessions: <id>` in `desktop.log`, `restarted` in the page, and `no session` for the old id on a new port.
 - **Page refusals:** a page port's `start`, `kill`, `dispose`, `list`, `snapshot`, `connect`, and `shutdown` each get `not allowed`, and nothing starts or stops.
-- **A kill right after the start:** the session ends, live or not, and a started program stops.
+- **A kill right after the start:** the session ends, and a started program stops.
 - **Packaged** (with `OPENAFLOW_PACKAGED_APP`): only the echo and reload checks, after `app.isPackaged` is true.
 
 CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see [codebase-structure.md](../codebase-structure.md#ci)).
@@ -61,14 +62,14 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 ## Why it's this way
 
 - The host is its own process, so a server crash or a window reload never ends a session, and a node-pty crash never takes the board down. The window gets a direct port, so terminal bytes never pass through the main process.
-- `started` waits for the pid because on Windows ConPTY gives it about 1 s after the spawn; a `started` with pid 0 would break the session ender (sprint `session-life`).
+- `started` carries the pid, and on Windows ConPTY gives it about 1 s after the spawn, so `started` waits for it instead of reporting pid 0 (wave 1 fix, `c176a5d`).
 - The replay is serialized at the session's current size, so a window that attaches at another size must resize first; otherwise the replay draws at the wrong width.
 
 ## Watch out
 
 - On Windows, ConPTY lets about 300,000 characters through after an ack resumes the pty, before the pause holds again. Flow control limits memory, not the exact count.
 - A kill on Windows while the session waits for its pid may let the program run for a moment (see Proved where).
-- After a host crash, the sessions' programs are no longer the host's. On Linux they get SIGHUP when the pty closes. The session ender that ends leftovers comes in sprint `session-life`. The test fixture ends itself after 5 minutes for this reason.
+- After a host crash, the sessions' programs are no longer the host's. In the spike, real `claude` ended in about 1 s from the closed pty's SIGHUP ([terminal-host-spike.md](../research/terminal-host-spike.md)). The session ender that ends leftovers comes with the session-life work in the plan. The test fixture ends itself after 5 minutes for this reason.
 - Three `real-*` files in one `pnpm test:electron` call run side by side. CI runs one file a step.
 - `real-start` runs Electron's own binary on `dist/main.cjs`, not the harness, so it has no packaged run.
 
