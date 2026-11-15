@@ -135,13 +135,18 @@ describe('action log', () => {
     const started: NewActionEntry = { action: 'new-session', repoId: 'id-r', repo: 'r', target: '/pod:plan · 1a2b3c4d', result: 'started' }
     const failed: NewActionEntry = { action: 'new-session', repoId: 'id-r', repo: 'r', target: 'plain · 5e6f7a8b', result: 'failed', message: 'terminals unavailable' }
     const dismissed: NewActionEntry = { action: 'dismiss-session', repoId: 'id-r', repo: 'r', target: '/pod:plan · 1a2b3c4d', result: 'dismissed' }
-    for (const e of [started, failed, dismissed]) expect(await log.append(e)).toBe(true)
+    const resumed: NewActionEntry = { action: 'resume-session', repoId: 'id-r', repo: 'r', target: '/pod:plan · 9c8d7e6f', result: 'started' }
+    const resumeFailed: NewActionEntry = { action: 'resume-session', repoId: 'id-r', repo: 'r', target: 'plain · 0a1b2c3d', result: 'failed', message: 'no answer' }
+    for (const e of [started, failed, dismissed, resumed, resumeFailed]) expect(await log.append(e)).toBe(true)
     const bad = [
       { at: 8, action: 'new-session', repoId: 'id-r', repo: 'r', target: 'x', result: 'dismissed' },
       { at: 9, action: 'dismiss-session', repoId: 'id-r', repo: 'r', target: 'x', result: 'started' },
+      { at: 9, action: 'resume-session', repoId: 'id-r', repo: 'r', target: 'x', result: 'dismissed' },
     ]
     await writeFile(file, (await readFile(file, 'utf8')) + bad.map((e) => JSON.stringify(e)).join('\n') + '\n')
     expect(createActionLog({ file, now: () => 10 }).recent()).toEqual([
+      { at: 7, ...resumeFailed },
+      { at: 7, ...resumed },
       { at: 7, ...dismissed },
       { at: 7, ...failed },
       { at: 7, ...started },

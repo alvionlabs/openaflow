@@ -25,9 +25,11 @@ import { createRemoveRepoRoutes } from './remove-repo-routes.ts'
 import { createForgetRunRoutes } from './forget-run-routes.ts'
 import { addRepo, removeRepo } from './repos-config.ts'
 import { createResumeRoutes } from './resume-routes.ts'
+import { scopeProbe, wrapStart, type ScopeProbe } from './run-wrapper.ts'
 import { createIdleCheck } from './session-activity.ts'
 import { createOwnerFile } from './owner-file.ts'
 import { createStopPath, guardOutput, linkParent, type ParentChannel } from './parent-link.ts'
+import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createHookReader, createSessionStore, followChannel, reconcileSessions } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
@@ -116,7 +118,12 @@ export async function startServer(
   const terminals = o.terminals ? createTerminalChannel({ link: o.terminals, log: (line) => console.log(line) }) : undefined
   const sessions = createSessionStore({ file: join(configDir, 'sessions.json'), writable: terminals !== undefined, now: Date.now, log: (line) => console.log(line) })
   if (terminals) followChannel(sessions, terminals)
-  const hosted = { list: sessions.list, hooks: createHookReader(join(configDir, 'hooks')) }
+  // Main keeps the newest labels for its quit dialog: sent at the first build, then when they change.
+  const hosted = { list: sessions.list, hooks: createHookReader(join(configDir, 'hooks')), ...(terminals ? { labels: terminals.labels } : {}) }
+  // The env a session starts from: the tool finder's in production, read at each start.
+  const sessionEnv = () => (tools ? tools.env() : env)
+  // The scope probe runs once per start, and only with a terminal channel; set once the tools are checked.
+  let probe: (() => Promise<ScopeProbe>) | undefined
   const service = createBoardService({ ...settings, platform, gh, actions: log.recent, autoContinue: store.list, hosted })
   const watcher = createBoardWatcher({ service, ...settings, poll: env.OPENAFLOW_POLL === '1' })
 
@@ -144,6 +151,7 @@ export async function startServer(
       source: watcher,
       web,
       tools,
+      screens: createScreenRoutes({ store: sessions, configDir }),
       addRepo: (p) => addRepo(configFile, p, platform),
       timeline: createTimelineSource({ board: () => watcher.board(), ...settings, now: Date.now }).timeline,
       actions: new Hono()
@@ -182,7 +190,10 @@ export async function startServer(
             claude: () => tools?.path('claude'),
             pluginDir: envValue(env, 'OPENAFLOW_HOOKS_PLUGIN'),
             configDir,
-            env: () => (tools ? tools.env() : env),
+            hooks: hosted.hooks,
+            claudeDir: settings.claudeDir,
+            ...(probe ? { probe } : {}),
+            env: sessionEnv,
             platform,
             now: Date.now,
           }),
@@ -221,6 +232,11 @@ export async function startServer(
   let bound: Awaited<ReturnType<typeof open>>
   // Before the watcher: its first Board already asks gh.
   await tools?.check()
+  if (terminals) {
+    // Started now: it can take seconds, and the first New session or Resume waits for its answer.
+    probe = scopeProbe({ env: sessionEnv(), platform, log: (line) => console.log(line) })
+    void probe()
+  }
 
   try {
     await watcher.start()
@@ -238,11 +254,24 @@ export async function startServer(
   // A second server on this folder stays off until it restarts, also after the first exits.
   if (owner.take()) auto.start()
   // After the bind, never awaited: main forks the terminal host only after this server's first ready.
-  if (terminals) void reconcileSessions(sessions, { list: () => terminals.list() })
+  // Then main ends whatever the sessions it set to `stopped · app closed` left, with each one's scope stop.
+  if (terminals) void reconcileSessions(sessions, { list: () => terminals.list() }).then((closed) => sweep(terminals, closed, probe))
 
   // The terminal channel stays open through the drain: a start in flight still gets its answer, or its 30 s limit.
   const stop = createShutdown({ auto, server: bound.server, work, watcher, release: owner.release, exit: o.exit ?? ((code) => process.exit(code)) })
   return { port: bound.port, stop }
+}
+
+/** One `sweep` naming each closed session with the stop its scope has (this start's probe); none for no session. */
+async function sweep(terminals: { sweep(s: { id: string; stop?: string[] }[]): void }, closed: string[], probe?: () => Promise<ScopeProbe>): Promise<void> {
+  if (closed.length === 0) return
+  const scope: ScopeProbe = probe ? await probe() : { on: false, reason: 'no probe' }
+  terminals.sweep(
+    closed.map((id) => {
+      const { stop } = wrapStart({ program: '', args: [] }, id, scope)
+      return stop ? { id, stop } : { id }
+    }),
+  )
 }
 
 /**

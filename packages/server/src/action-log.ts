@@ -1,4 +1,4 @@
-// The action log: one JSON line per merge, answer, resolve, resume, remove-repo, forget-run, new-session, or dismiss-session request in `<config dir>/actions.jsonl`, and the newest
+// The action log: one JSON line per merge, answer, resolve, resume, remove-repo, forget-run, new-session, dismiss-session, or resume-session request in `<config dir>/actions.jsonl`, and the newest
 // 50 in memory for the Board. Read once at start; bad lines are skipped. The rules and why are in
 // pod-docs/feature-details/actions.md.
 
@@ -15,6 +15,7 @@ import type {
   RemoveRepoOutcome,
   ResolveOutcome,
   ResumeOutcome,
+  ResumeSessionOutcome,
 } from '@openaflow/model'
 
 export const ACTION_LOG_MAX = 50
@@ -26,6 +27,7 @@ const REMOVE_RESULTS = new Set<string>(['removed', 'failed'] satisfies RemoveRep
 const FORGET_RESULTS = new Set<string>(['removed', 'failed'] satisfies ForgetRunOutcome[])
 const NEW_SESSION_RESULTS = new Set<string>(['started', 'failed'] satisfies NewSessionOutcome[])
 const DISMISS_RESULTS = new Set<string>(['dismissed', 'failed'] satisfies DismissSessionOutcome[])
+const RESUME_SESSION_RESULTS = new Set<string>(['started', 'failed'] satisfies ResumeSessionOutcome[])
 const RESUME_REPLIES = new Set<unknown>(['continue', 'go'])
 
 export type ActionLog = {
@@ -95,6 +97,8 @@ function parseEntry(line: string): ActionEntry | undefined {
   else if (e.action === 'new-session' && NEW_SESSION_RESULTS.has(e.result as string)) entry = { ...base, action: 'new-session', result: e.result as NewSessionOutcome }
   else if (e.action === 'dismiss-session' && DISMISS_RESULTS.has(e.result as string))
     entry = { ...base, action: 'dismiss-session', result: e.result as DismissSessionOutcome }
+  else if (e.action === 'resume-session' && RESUME_SESSION_RESULTS.has(e.result as string))
+    entry = { ...base, action: 'resume-session', result: e.result as ResumeSessionOutcome }
   else if (e.action === 'resume' && RESUME_RESULTS.has(e.result as string) && RESUME_REPLIES.has(e.reply) && typeof e.auto === 'boolean')
     entry = { ...base, action: 'resume', result: e.result as ResumeOutcome, reply: e.reply as 'continue' | 'go', auto: e.auto }
   else return undefined

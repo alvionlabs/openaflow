@@ -1,16 +1,26 @@
-// The New session and Dismiss routes, mounted at /api/actions behind the action guard (app.ts). New session starts
-// the user's own interactive `claude` in the desktop's terminal host; Dismiss forgets a session that has ended or
-// stopped. The rules are sprint terminal-tab's shared contract §5; the why is in
-// pod-docs/feature-details/hosted-sessions.md.
+// The New session, Resume, and Dismiss routes, mounted at /api/actions behind the action guard (app.ts). New session
+// starts the user's own interactive `claude` in the desktop's terminal host; Resume starts an ended or stopped one's
+// conversation again in a new session; Dismiss forgets a session that has ended or stopped. The rules are sprint
+// terminal-tab's shared contract §5 and session-life's §5; the why is in pod-docs/feature-details/hosted-sessions.md.
 
 import { randomUUID } from 'node:crypto'
 import { unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { skillCommand, type Board, type BoardRepo, type DismissSessionResult, type NewActionEntry, type NewSessionResult, type SkillId } from '@openaflow/model'
+import {
+  skillCommand,
+  type Board,
+  type BoardRepo,
+  type DismissSessionResult,
+  type NewActionEntry,
+  type NewSessionResult,
+  type ResumeSessionResult,
+  type SkillId,
+} from '@openaflow/model'
 import { Hono, type Context } from 'hono'
 import { normalizeRepoPath, sameRepoPath } from './guard.ts'
-import { sessionCommand, type SessionCommandInput } from './session-command.ts'
-import type { SessionStore, StoredSession } from './session-store.ts'
+import { wrapStart, type ScopeProbe } from './run-wrapper.ts'
+import { resumeCommand, sessionCommand, type SessionCommand, type SessionCommandInput } from './session-command.ts'
+import { hostedSession, resumeFacts, resumeOf, type HookReader, type SessionStore, type StoredSession } from './session-store.ts'
 import { NoAnswer, type TerminalChannel } from './terminal-channel.ts'
 
 export type SessionRouteDeps = {
@@ -26,8 +36,14 @@ export type SessionRouteDeps = {
   claude(): string | undefined
   /** `OPENAFLOW_HOOKS_PLUGIN`: the hooks plugin folder main names. None: `409 no terminal host`. */
   pluginDir: string | undefined
-  /** The live config folder: the hook files go to its `hooks` folder. */
+  /** The live config folder: the hook files go to its `hooks` folder, the saved screens to its `screens` folder. */
   configDir: string
+  /** The hook files' reader: Resume reads each session's live session and the sessions it holds. */
+  hooks: Pick<HookReader, 'read'>
+  /** The transcript folder: Resume looks there for the live session's conversation. */
+  claudeDir: string
+  /** The server start's scope probe (`scopeProbe`). Left out: off, so no wrapper and no stop. */
+  probe?: () => Promise<ScopeProbe>
   /** The env a session starts from (the tool finder's, in production). */
   env(): NodeJS.ProcessEnv
   platform: NodeJS.Platform
@@ -40,6 +56,24 @@ export type SessionRouteDeps = {
 /** At most this many sessions `starting` or `live`, in all repos. */
 export const MAX_OPEN_SESSIONS = 10
 const SIZE = { cols: { min: 2, max: 500, default: 120 }, rows: { min: 1, max: 200, default: 30 } }
+
+const PROBE_OFF: ScopeProbe = { on: false, reason: 'no probe' }
+
+/** Where the host saves a session's screen text. Only ever built from a marker the store holds or just made. */
+export const screenFileOf = (configDir: string, marker: string) => path.join(configDir, 'screens', `${marker}.txt`)
+const hookFileOf = (configDir: string, marker: string) => path.join(configDir, 'hooks', `${marker}.jsonl`)
+/** Deletes a file; a missing one counts as deleted. */
+const removeFile = (file: string) =>
+  unlink(file).then(
+    () => true,
+    (err: NodeJS.ErrnoException) => err.code === 'ENOENT',
+  )
+/** Deletes a session's hook and screen files: the log message for the ones that stayed, or none. */
+async function removeFiles(configDir: string, marker: string): Promise<{ message?: string }> {
+  const [hook, screen] = await Promise.all([removeFile(hookFileOf(configDir, marker)), removeFile(screenFileOf(configDir, marker))])
+  const kept = [...(hook ? [] : ['hook file']), ...(screen ? [] : ['screen file'])]
+  return kept.length === 0 ? {} : { message: `Couldn't delete its ${kept.join(' or ')}.` }
+}
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isOpen = (r: StoredSession) => r.state === 'starting' || r.state === 'live'
@@ -62,6 +96,37 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
   const app = new Hono()
   const newId = deps.newId ?? randomUUID
   const inRepo = (repo: BoardRepo, r: StoredSession) => sameRepoPath(repo.path, normalizeRepoPath(r.repoPath, deps.platform), deps.platform, repo.caseless === true)
+  const probe = () => deps.probe?.() ?? Promise.resolve(PROBE_OFF)
+
+  /**
+   * Starts `cmd` as session `marker`, in its scope when the probe is on, with its screen file. `failure` is the
+   * answer and log message for a refused start (the record goes) or no answer (the record stays `starting`).
+   */
+  const startSession = async (
+    terminals: NonNullable<SessionRouteDeps['terminals']>,
+    marker: string,
+    cmd: Omit<SessionCommand, 'typeYourself'>,
+    size: { cols: number; rows: number },
+    scope: ScopeProbe,
+  ): Promise<{ status: 502 | 504; error: string; message: string } | undefined> => {
+    const w = wrapStart(cmd, marker, scope)
+    try {
+      const { pid } = await terminals.start(
+        { id: marker, program: w.program, args: w.args, cwd: cmd.cwd, env: cmd.env, ...size, screenFile: screenFileOf(deps.configDir, marker) },
+        w.stop,
+      )
+      // The channel's event has done this already; a start without one (a test's fake) still lands here.
+      await deps.store.started(marker, pid)
+      return undefined
+    } catch (err) {
+      const word = err instanceof Error ? err.message : String(err)
+      // No answer: the record stays `starting` until a late answer or the next start's reconcile.
+      if (err instanceof NoAnswer) return { status: 504, error: 'terminals unavailable', message: 'no answer' }
+      await deps.store.failed(marker)
+      return { status: 502, error: `start failed: ${word}`, message: word }
+    }
+  }
+
   /** Runs `fn`; a throw is `undefined`, so the response still goes out. */
   const settle = async <T>(fn: () => Promise<T>): Promise<T | undefined> => {
     try {
@@ -83,6 +148,8 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     if (!repo) return c.json({ error: 'not a repo' }, 404)
     const claude = deps.claude()
     if (claude === undefined) return c.json({ error: 'claude not found' }, 409)
+    // Before the checks below: the server start began it, so this waits only for its first answer.
+    const scope = await probe()
 
     // From here to the store's add, nothing waits: a second request sees this one's record.
     const records = deps.store.list()
@@ -110,20 +177,7 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     await deps.store.add(record)
     const base = { action: 'new-session', repoId: repo.id, repo: repo.name, target: targetOf(skill, marker) } as const
     const { typeYourself, ...run } = cmd
-    let failure: { status: 502 | 504; error: string; message: string } | undefined
-    try {
-      const { pid } = await terminals.start({ id: marker, ...run, cols, rows })
-      // The channel's event has done this already; a start without one (a test's fake) still lands here.
-      await deps.store.started(marker, pid)
-    } catch (err) {
-      const word = err instanceof Error ? err.message : String(err)
-      // No answer: the record stays `starting` until a late answer or the next start's reconcile.
-      if (err instanceof NoAnswer) failure = { status: 504, error: 'terminals unavailable', message: 'no answer' }
-      else {
-        failure = { status: 502, error: `start failed: ${word}`, message: word }
-        await deps.store.failed(marker)
-      }
-    }
+    const failure = await startSession(terminals, marker, run, { cols, rows }, scope)
     const logged = await settle(() => deps.log.append(failure ? { ...base, result: 'failed', message: failure.message } : { ...base, result: 'started' }))
     await settle(deps.rebuild)
     if (failure) return c.json({ error: failure.error }, failure.status)
@@ -142,17 +196,76 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     if (isOpen(record)) return c.json({ error: 'session is live' }, 409)
 
     await deps.store.remove(record.marker)
-    const hookFile = path.join(deps.configDir, 'hooks', `${record.marker}.jsonl`)
-    const deleted = await unlink(hookFile).then(
-      () => true,
-      (err: NodeJS.ErrnoException) => err.code === 'ENOENT',
-    )
+    const kept = await removeFiles(deps.configDir, record.marker)
     // The host may still hold its screen; nothing else will ask for it.
     terminals.dispose(record.marker)
     const base = { action: 'dismiss-session', repoId: repo.id, repo: repo.name, target: targetOf(record.skill, record.marker) } as const
-    const logged = await settle(() => deps.log.append({ ...base, result: 'dismissed', ...(deleted ? {} : { message: "Couldn't delete its hook file." }) }))
+    const logged = await settle(() => deps.log.append({ ...base, result: 'dismissed', ...kept }))
     await settle(deps.rebuild)
     return c.json({ outcome: 'dismissed', logged: logged === true } satisfies DismissSessionResult)
+  })
+
+  app.post('/resume-session', async (c) => {
+    const b = await body(c)
+    const cols = size(b?.cols, SIZE.cols)
+    const rows = size(b?.rows, SIZE.rows)
+    if (!b || typeof b.repoId !== 'string' || typeof b.marker !== 'string' || cols === undefined || rows === undefined) return c.json({ error: 'bad request' }, 400)
+    const terminals = deps.terminals
+    if (!terminals || deps.pluginDir === undefined) return c.json({ error: 'no terminal host' }, 409)
+    const repo = deps.board().repos.find((r) => r.id === b.repoId)
+    // Only a marker the store holds goes on: it names the files deleted below.
+    const find = (records: readonly StoredSession[]) => (repo ? records.find((r) => r.marker === b.marker && inRepo(repo, r)) : undefined)
+    const first = find(deps.store.list())
+    if (!repo || !first) return c.json({ error: 'no session' }, 404)
+
+    // What the check needs from disk, read now. Every record's sessions, for `in use`; the old one's live session.
+    const scope = await probe()
+    const held = new Map(await Promise.all(deps.store.list().map(async (r) => [r.marker, hostedSession(r, await deps.hooks.read(r.marker)).sessions] as const)))
+    const liveSession = hostedSession(first, await deps.hooks.read(first.marker)).liveSession
+    const facts = await resumeFacts(repo.path, liveSession, deps.claudeDir)
+
+    // From here to the store's add, nothing waits: a second press sees this one's record.
+    const records = deps.store.list()
+    const old = find(records)
+    if (!old) return c.json({ error: 'no session' }, 404)
+    if (isOpen(old)) return c.json({ error: 'session is live' }, 409)
+    if (records.some((r) => r.state === 'starting' && inRepo(repo, r))) return c.json({ error: 'session starting' }, 409)
+    const claude = deps.claude()
+    if (claude === undefined) return c.json({ error: 'claude not found' }, 409)
+    // A record added since the reads above holds at least its own start id.
+    const open = records.filter(isOpen).map((r) => held.get(r.marker) ?? [r.sessionId])
+    const resume = resumeOf(facts, liveSession, open)
+    if (resume !== 'ok') return c.json({ error: `can't resume: ${resume}` }, 409)
+    if (open.length >= MAX_OPEN_SESSIONS) return c.json({ error: 'too many sessions' }, 409)
+    const marker = newId()
+    const cmd = resumeCommand({
+      claude,
+      repo: repo.path,
+      sessionId: liveSession,
+      runMarker: marker,
+      pluginDir: deps.pluginDir,
+      configDir: deps.configDir,
+      env: deps.env(),
+      platform: deps.platform,
+      windows: deps.windows,
+    })
+    if (typeof cmd === 'string') return c.json({ error: cmd }, 400)
+
+    await deps.store.add({ marker, repoPath: repo.path, sessionId: liveSession, skill: old.skill, startedAt: deps.now(), state: 'starting', resumedFrom: old.marker })
+    const base = { action: 'resume-session', repoId: repo.id, repo: repo.name, target: targetOf(old.skill, marker) } as const
+    const { typeYourself: _none, ...run } = cmd
+    const failure = await startSession(terminals, marker, run, { cols, rows }, scope)
+    let kept: { message?: string } = {}
+    if (!failure) {
+      // The new session holds the conversation now: the old record, its files, and the host's copy go.
+      await deps.store.remove(old.marker)
+      kept = await removeFiles(deps.configDir, old.marker)
+      terminals.dispose(old.marker)
+    }
+    const logged = await settle(() => deps.log.append(failure ? { ...base, result: 'failed', message: failure.message } : { ...base, result: 'started', ...kept }))
+    await settle(deps.rebuild)
+    if (failure) return c.json({ error: failure.error }, failure.status)
+    return c.json({ outcome: 'started', marker, logged: logged === true } satisfies ResumeSessionResult)
   })
 
   return app

@@ -1,5 +1,5 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -508,6 +508,67 @@ describe('hosted sessions', () => {
     main.answer({ op: 'list', req: list.req, sessions: [] })
     await until(async () => (await hosted())?.[0]?.state === 'stopped')
     expect((await hosted())![0]!.stopReason).toBe('app closed')
+  })
+
+  test('sweep after reconcile', async () => {
+    const M2 = '22222222-2222-4222-8222-222222222222'
+    const M3 = '33333333-3333-4333-8333-333333333333'
+    const repo = join(tmp, 'repo')
+    await mkdir(repo)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    const rec = (marker: string, state: string, over: Record<string, unknown> = {}) => ({ marker, repoPath: repo, sessionId: S, skill: 'plan', startedAt: 1, state, ...over })
+    const seed = () =>
+      writeFile(join(cfg, 'sessions.json'), JSON.stringify({ v: 1, sessions: [rec(M, 'live', { pid: 5 }), rec(M2, 'starting'), rec(M3, 'ended', { exitCode: 0 })] }))
+    // A fake systemd on PATH, so the scope probe answers on (Linux only); it notes each run.
+    const bin = join(tmp, 'bin')
+    const calls = join(tmp, 'probe-calls')
+    await mkdir(bin)
+    await writeFile(join(bin, 'systemd-run'), `#!/bin/sh\necho "$@" >> '${calls}'\nexit 0\n`)
+    await writeFile(join(bin, 'systemctl'), '#!/bin/sh\nexit 0\n')
+    await writeFile(join(bin, 'true'), '#!/bin/sh\nexit 0\n')
+    for (const f of ['systemd-run', 'systemctl', 'true']) await chmod(join(bin, f), 0o755)
+    const env = async () => envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: join(tmp, 'plugin'), PATH: bin })
+    const states = () => (JSON.parse(readFileSync(join(cfg, 'sessions.json'), 'utf8')) as { sessions: { state: string }[] }).sessions.map((r) => r.state)
+
+    // No channel: no probe runs, and nothing is swept.
+    await seed()
+    await startProduction({ PATH: bin })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(existsSync(calls)).toBe(false)
+    for (const { started, exited } of running.splice(0)) {
+      started.stop()
+      await exited
+    }
+
+    // One unlisted record: one sweep, with the stop its scope has.
+    await seed()
+    const main = fakeMain()
+    await start(await env(), { webDir }, main.link)
+    await until(() => main.sent.some((m) => m.op === 'list'))
+    main.answer({ op: 'list', req: main.sent.find((m) => m.op === 'list')!.req, sessions: [{ id: M2, pid: 6, live: true, startedAt: 1 }] })
+    await until(() => states()[0] === 'stopped')
+    // The sweep follows once the probe has answered.
+    await until(() => main.sent.some((m) => m.op === 'sweep')).catch(() => {})
+    const stop = process.platform === 'linux' ? { stop: [join(bin, 'systemctl'), '--user', 'stop', `openaflow-run-${M}.scope`] } : {}
+    expect(main.sent.filter((m) => m.op === 'sweep')).toEqual([{ type: 'openaflow:terminal', op: 'sweep', sessions: [{ id: M, ...stop }] }])
+    expect(states()).toEqual(['stopped', 'live', 'ended'])
+    // The labels went at the start, before the reconcile changed anything.
+    expect(main.sent.find((m) => m.op === 'labels')).toEqual({ type: 'openaflow:terminal', op: 'labels', labels: [{ id: M, label: 'repo · no plan yet' }, { id: M2, label: 'repo · no plan yet' }] })
+    for (const { started, exited } of running.splice(0)) {
+      started.stop()
+      await exited
+    }
+
+    // Every record listed: no sweep.
+    await seed()
+    const all = fakeMain()
+    await start(await env(), { webDir }, all.link)
+    await until(() => all.sent.some((m) => m.op === 'list'))
+    all.answer({ op: 'list', req: all.sent.find((m) => m.op === 'list')!.req, sessions: [{ id: M, pid: 5, live: true, startedAt: 1 }, { id: M2, pid: 6, live: true, startedAt: 1 }] })
+    await until(() => states()[1] === 'live')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(all.sent.filter((m) => m.op === 'sweep')).toEqual([])
   })
 
   test('a server with no channel answers no terminal host and writes no store', async () => {

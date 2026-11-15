@@ -186,6 +186,42 @@ describe('session store', () => {
     expect(store.list()).toEqual([record(M1, { state: 'ended', pid: 1, exitCode: 0, endedAt: 5000 }), record(M2, { startedAt: 6000 })])
   })
 
+  test('resumed records', async () => {
+    const store = writable()
+    await store.add(record(M2, { resumedFrom: M1 }))
+    expect((await saved()).sessions).toEqual([record(M2, { resumedFrom: M1 })])
+    // A reload keeps it while the record is starting.
+    expect(writable().list()).toEqual([record(M2, { resumedFrom: M1 })])
+    // Dropped at started, in memory and on disk.
+    await store.started(M2, 77)
+    expect(store.list()).toEqual([record(M2, { state: 'live', pid: 77 })])
+    expect((await saved()).sessions).toEqual([record(M2, { state: 'live', pid: 77 })])
+
+    // Every other way out of starting drops it too: exit, lost, and the reconcile.
+    await store.add(record(M3, { resumedFrom: M1 }))
+    await store.exited(M3, 0)
+    expect(store.list().find((r) => r.marker === M3)).not.toHaveProperty('resumedFrom')
+    await store.add(record(M4, { resumedFrom: M1 }))
+    await store.lost([M4])
+    expect(store.list().find((r) => r.marker === M4)).not.toHaveProperty('resumedFrom')
+    await writeFile(file, JSON.stringify({ v: 1, sessions: [record(M3, { resumedFrom: M1 }), record(M4, { resumedFrom: M1 })] }))
+    const fresh = writable()
+    await reconcileSessions(fresh, { list: async () => [{ id: M3, pid: 5, live: true, startedAt: 1 }] })
+    expect(fresh.list()).toEqual([record(M3, { state: 'live', pid: 5 }), record(M4, { state: 'stopped', stopReason: 'app closed' })])
+
+    // On read: a resumedFrom that isn't a UUID v4, or on a record that isn't starting, is dropped; the record stays.
+    const bad = [record(M1, { resumedFrom: '../x' }), { ...record(M2, { state: 'live', pid: 3 }), resumedFrom: M1 }]
+    await writeFile(file, JSON.stringify({ v: 1, sessions: bad }))
+    expect(writable().list()).toEqual([record(M1), record(M2, { state: 'live', pid: 3 })])
+  })
+
+  test('reconcile answers the records it set to app closed', async () => {
+    await writeFile(file, JSON.stringify({ v: 1, sessions: [record(M1, { state: 'live', pid: 1 }), record(M2, { state: 'live', pid: 2 }), record(M3, { state: 'ended' })] }))
+    expect(await reconcileSessions(writable(), { list: async () => [{ id: M2, pid: 2, live: true, startedAt: 1 }] })).toEqual([M1])
+    expect(await reconcileSessions(writable(), { list: async () => [{ id: M1, pid: 1, live: true, startedAt: 1 }, { id: M2, pid: 2, live: true, startedAt: 1 }] })).toEqual([])
+    expect(await reconcileSessions(writable(), { list: () => Promise.reject(new Error('terminals unavailable')) })).toEqual([])
+  })
+
   test('unreadable file', async () => {
     await writeFile(file, '{"v":1,"sessions":[')
     const store = writable()

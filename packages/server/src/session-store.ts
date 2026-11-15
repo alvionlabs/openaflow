@@ -6,9 +6,10 @@
 import { readFileSync, statSync } from 'node:fs'
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isSkillId, type HostedSession, type SkillId, type StopReason, type StoredSessionState } from '@openaflow/model'
+import { isSkillId, type HostedSession, type SessionResume, type SkillId, type StopReason, type StoredSessionState } from '@openaflow/model'
 import { readHookState, type HookState } from './hook-state.ts'
 import type { SessionInfo, TerminalEvent } from './terminal-channel.ts'
+import { sessionFileOf } from './transcript-files.ts'
 
 export type StoredSession = {
   marker: string
@@ -24,6 +25,8 @@ export type StoredSession = {
   stopReason?: StopReason
   /** The start line went to the user to type; the text is never stored. */
   typeYourself?: true
+  /** The marker of the session this one resumes. Only while `starting`: every change out of it drops it. */
+  resumedFrom?: string
 }
 
 export type SessionsFile = { v: 1; sessions: StoredSession[] }
@@ -66,7 +69,7 @@ const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 /** One stored record, or `undefined` for one that breaks a rule. Unknown keys are dropped. */
 function readRecord(v: unknown): StoredSession | undefined {
   if (!isRecord(v)) return undefined
-  const { marker, repoPath, sessionId, skill, startedAt, state, pid, endedAt, exitCode, stopReason, typeYourself } = v
+  const { marker, repoPath, sessionId, skill, startedAt, state, pid, endedAt, exitCode, stopReason, typeYourself, resumedFrom } = v
   if (typeof marker !== 'string' || !UUID_V4.test(marker) || typeof sessionId !== 'string' || !UUID_V4.test(sessionId)) return undefined
   if (typeof repoPath !== 'string' || repoPath === '' || !isSkillId(skill) || !isTime(startedAt) || !STATES.has(state)) return undefined
   if (pid !== undefined && !(Number.isSafeInteger(pid) && (pid as number) > 0)) return undefined
@@ -79,8 +82,13 @@ function readRecord(v: unknown): StoredSession | undefined {
   if (exitCode !== undefined) out.exitCode = exitCode as number
   if (stopReason !== undefined) out.stopReason = stopReason as StopReason
   if (typeYourself) out.typeYourself = true
+  // A bad one, or one on a record past `starting`, is dropped; the record itself is still good.
+  if (state === 'starting' && typeof resumedFrom === 'string' && UUID_V4.test(resumedFrom)) out.resumedFrom = resumedFrom
   return out
 }
+
+/** `r` with no `resumedFrom`: it leaves `starting`. */
+const leftStarting = ({ resumedFrom: _, ...r }: StoredSession): StoredSession => r
 
 /** The file's records. A missing file is empty; a file that doesn't parse is empty with one log line. */
 function readStore(file: string, log: (line: string) => void): StoredSession[] {
@@ -171,14 +179,14 @@ export function createSessionStore(o: { file: string; writable: boolean; now: ()
       return records
     },
     add: (record) => commit([...records.filter((r) => r.marker !== record.marker), record]),
-    started: (marker, pid) => change(marker, (r) => r.state === 'starting', (r) => ({ ...r, state: 'live', pid })),
+    started: (marker, pid) => change(marker, (r) => r.state === 'starting', (r) => ({ ...leftStarting(r), state: 'live', pid })),
     failed: (marker) => change(marker, (r) => r.state === 'starting', () => undefined),
-    exited: (marker, exitCode) => change(marker, isOpen, (r) => ({ ...r, state: 'ended', exitCode, endedAt: o.now() })),
+    exited: (marker, exitCode) => change(marker, isOpen, (r) => ({ ...leftStarting(r), state: 'ended', exitCode, endedAt: o.now() })),
     lost(ids) {
       const named = new Set(ids)
       if (!records.some((r) => named.has(r.marker) && isOpen(r))) return Promise.resolve()
       const at = o.now()
-      return commit(records.map((r) => (named.has(r.marker) && isOpen(r) ? { ...r, state: 'stopped', stopReason: 'terminals restarted', endedAt: at } : r)))
+      return commit(records.map((r) => (named.has(r.marker) && isOpen(r) ? { ...leftStarting(r), state: 'stopped', stopReason: 'terminals restarted', endedAt: at } : r)))
     },
     async remove(marker) {
       if (!records.some((r) => r.marker === marker)) return false
@@ -187,7 +195,8 @@ export function createSessionStore(o: { file: string; writable: boolean; now: ()
     },
     settle(changes) {
       if (changes.size === 0) return Promise.resolve()
-      return commit(records.map((r) => (changes.has(r.marker) ? { ...r, ...changes.get(r.marker) } : r)))
+      // Each reconcile change moves its record to `live`, `ended`, or `stopped`: out of `starting`.
+      return commit(records.map((r) => (changes.has(r.marker) ? { ...leftStarting(r), ...changes.get(r.marker) } : r)))
     },
     saved: () => writes,
     onChange(fn) {
@@ -211,11 +220,12 @@ export function followChannel(store: SessionStore, channel: { onEvent(fn: (e: Te
  * At a start with a terminal channel: asks the host which sessions it holds, and settles the `starting` and `live`
  * records there were when it asked. A record that changed meanwhile, or one added since, is left alone. `terminals
  * unavailable` stops them; any other failure asks once more `retryMs` later, then changes nothing.
+ * Answers the markers it set to `stopped · app closed`, oldest first: main sweeps what they left behind.
  */
 export async function reconcileSessions(
   store: SessionStore,
   o: { list(): Promise<SessionInfo[]>; retryMs?: number; wait?: (ms: number) => Promise<void> },
-): Promise<void> {
+): Promise<string[]> {
   const asked = new Map(store.list().filter(isOpen).map((r) => [r.marker, r.state]))
   const wait = o.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref()))
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -243,8 +253,9 @@ export async function reconcileSessions(
       else changes.set(r.marker, { state: 'ended' })
     }
     await store.settle(changes)
-    return
+    return [...changes].filter(([, c]) => c.stopReason === 'app closed').map(([marker]) => marker)
   }
+  return []
 }
 
 /** Reads `<hooks dir>/<marker>.jsonl` with `readHookState`, again only when its size or change time differs. */
@@ -305,4 +316,31 @@ export function hostedSession(r: StoredSession, hook: HookState | undefined): Ho
   if (r.exitCode !== undefined) out.exitCode = r.exitCode
   if (r.typeYourself) out.typeYourself = true
   return out
+}
+
+/** What Resume needs to know from disk: whether the repo folder and the live session's conversation file are there. */
+export type ResumeFacts = { folder: boolean; conversation: boolean }
+
+const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
+const isFile = (p: string) => stat(p).then((s) => s.isFile(), () => false)
+
+/**
+ * Reads `ResumeFacts` for a session in `repoPath` whose live session is `liveSession`. The conversation is
+ * `<claude dir>/projects/<projectDirName(repoPath)>/<liveSession>.jsonl`; a live session that isn't a UUID v4 (it
+ * comes from a hook line) names no file, so it has no conversation.
+ */
+export async function resumeFacts(repoPath: string, liveSession: string, claudeDir: string): Promise<ResumeFacts> {
+  const [folder, conversation] = await Promise.all([isDir(repoPath), UUID_V4.test(liveSession) ? isFile(sessionFileOf(claudeDir, repoPath, liveSession)) : false])
+  return { folder, conversation }
+}
+
+/**
+ * Whether Resume can start `liveSession` again. First match: no repo folder, no conversation file, a `starting` or
+ * `live` session in any repo that holds it (`open`: each open session's `sessions`), else `ok`.
+ */
+export function resumeOf(facts: ResumeFacts, liveSession: string, open: readonly (readonly string[])[]): SessionResume {
+  if (!facts.folder) return 'no folder'
+  if (!facts.conversation) return 'no conversation'
+  if (open.some((sessions) => sessions.includes(liveSession))) return 'in use'
+  return 'ok'
 }
