@@ -88,9 +88,12 @@ const inTerminal = (page: Page) => page.evaluate(() => document.activeElement?.m
  */
 async function writeTranscript(h: Harness, repo: string): Promise<void> {
   const board = (await (await fetch(`http://127.0.0.1:${h.port}/api/board`, { signal: AbortSignal.timeout(5_000) })).json()) as Board
-  const session = board.repos.find((r) => r.path === repo)?.hosted?.find((s) => s.state === 'live')?.liveSession
+  // The test's one repo, by the Board's own path: the resume check builds the folder name from it, and on Windows its
+  // form may differ from the path the test added.
+  const row = board.repos.find((r) => r.hosted?.some((s) => s.state === 'live'))
+  const session = row?.hosted?.find((s) => s.state === 'live')?.liveSession
   expect(session, 'the live session on the Board').toBeTruthy()
-  const project = join(h.dir, 'claude', 'projects', projectDirName(repo))
+  const project = join(h.dir, 'claude', 'projects', projectDirName(row!.path))
   mkdirSync(project, { recursive: true })
   writeFileSync(join(project, `${session}.jsonl`), `${JSON.stringify({ type: 'user', cwd: repo, message: { role: 'user', content: 'add a clock' } })}\n`)
 }
