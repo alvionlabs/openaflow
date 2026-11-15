@@ -2,7 +2,7 @@
 // `electron` import: pty-host-main.ts is the glue. The rules are in pod-docs/sprints/host-core.md (§4) and
 // pod-docs/feature-details/desktop.md (Terminal host).
 
-import type { StartSpec } from '@openaflow/pty-host/protocol'
+import type { HostToMain, SessionInfo, StartSpec } from '@openaflow/pty-host/protocol'
 import { hostLogLine } from './pty-host-launch.ts'
 
 export const READY_LIMIT_MS = 20_000
@@ -31,8 +31,6 @@ export type StarterEvent =
   | { type: 'failed' }
 
 export type StarterState = 'idle' | 'starting' | 'ready' | 'unresponsive' | 'failed' | 'stopped'
-/** A session that waits for its pid is listed with pid 0. */
-export type SessionInfo = { id: string; pid: number; live: boolean; startedAt: number }
 export type StopResult = 'stopped' | 'killed' | 'not running'
 
 export type PtyHostStarter = {
@@ -55,9 +53,6 @@ export type PtyHostStarter = {
   pid(): number | undefined
 }
 
-// The messages that protocol.ts doesn't name yet (H1 adds them). Their shapes are §4's.
-type ListAnswer = { type: 'list'; sessions: SessionInfo[] }
-
 const UNAVAILABLE = 'terminals unavailable'
 const EXITED = 'terminal host exited'
 const LOG = 'openaflow desktop: terminal host'
@@ -65,6 +60,7 @@ const LOG = 'openaflow desktop: terminal host'
 type Waiter<T> = { resolve(value: T): void; reject(err: Error): void }
 
 const isRecord = (m: unknown): m is Record<string, unknown> => typeof m === 'object' && m !== null
+/** A session that waits for its pid is listed with pid 0. */
 const isSession = (s: unknown): s is SessionInfo =>
   isRecord(s) && typeof s.id === 'string' && typeof s.pid === 'number' && typeof s.live === 'boolean' && typeof s.startedAt === 'number'
 
@@ -192,7 +188,7 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
     } else if (m.type === 'snapshot' && typeof m.id === 'string' && (m.text === null || typeof m.text === 'string')) {
       take(r.snapshots, m.id)?.resolve(m.text)
     } else if (m.type === 'list' && Array.isArray(m.sessions) && m.sessions.every(isSession)) {
-      r.lists.shift()?.resolve((m as ListAnswer).sessions)
+      r.lists.shift()?.resolve((m as Extract<HostToMain, { type: 'list' }>).sessions)
     }
   }
 
