@@ -1,6 +1,6 @@
 // Hosted sessions: the sessions the app started in its terminal host, on the runs list.
 // Which run a session joins, the one a row shows, and its view, word and dot.
-// Pure. The shapes are sprint terminal-tab's shared contract §4; the rules and why are in
+// Pure. The shapes are sprint terminal-tab's shared contract §4 and session-life's §4; the rules and why are in
 // pod-docs/feature-details/runs-and-pipeline.md.
 
 import type { BoardRepo, HostedSession } from './board.ts'
@@ -81,3 +81,7 @@ export function sessionWord(s: HostedSession, now: number): string {
 const DOTS: Record<SessionView, SessionDot> = { starting: 'run', live: 'run', waiting: 'you', ended: 'idle', stopped: 'idle' }
 
 export const sessionDot = (view: SessionView): SessionDot => DOTS[view]
+
+/** The session's name in the quit dialog: `<repo name> · <joined run>`, or `<repo name> · no plan yet` on the repo row. */
+export const sessionLabel = (repo: BoardRepo, session: HostedSession, now: number): string =>
+  `${repo.name} · ${joinedRun(repo, session, now) ?? 'no plan yet'}`
