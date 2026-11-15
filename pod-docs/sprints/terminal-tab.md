@@ -1,7 +1,7 @@
 # Sprint: Terminal tab
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=5 -->
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=6 -->
 
 ## Status board
 
@@ -12,9 +12,9 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: act
 | 1 | X1 | Real `claude` proofs in a separate signed-in config folder | terminal-tab-X1 | merged | done | medium | — |
 | 1 | L1 | Look: terminal theme from tokens, the Start with listbox, xterm deps | terminal-tab-L1 | merged | done | medium | — |
 | 1 | F1 | Web terminal link: bridge, port client, open-tab request | terminal-tab-F1 | merged | done | medium | — |
-| 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | https://github.com/alvionlabs/openaflow/pull/126 | pushed | medium | M1, D1 |
-| 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | https://github.com/alvionlabs/openaflow/pull/126 | pushed | medium | M1 |
-| 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | https://github.com/alvionlabs/openaflow/pull/126 | pushed | medium | M1, L1, F1 |
+| 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | merged | done | medium | M1, D1 |
+| 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | merged | done | medium | M1 |
+| 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | merged | done | medium | M1, L1, F1 |
 | 3 | T1 | Terminal tab: xterm view, stop bar, Dismiss, browser rule | terminal-tab-T1 | — | pending | — | M1, L1, F1, S1, N1 |
 | 3 | E2 | Electron product-path checks, the `cmd.exe` route on Windows, CI, docs | terminal-tab-E2 | — | pending | — | D1, S1 |
 
