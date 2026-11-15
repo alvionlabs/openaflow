@@ -219,3 +219,34 @@ describe('session label', () => {
     expect(sessionLabel(repoOf([older, newer], [both], { name: 'shop' }), both, NOW)).toBe('shop · beta')
   })
 })
+
+describe('resume leaves rows alone', () => {
+  it('resume leaves rows alone', () => {
+    const values: (HostedSession['resume'] | undefined)[] = [undefined, 'ok', 'no folder', 'no conversation', 'in use']
+    const states: Partial<HostedSession>[] = [
+      { state: 'starting', hooked: false },
+      { state: 'live' },
+      { state: 'live', hooked: false, startedAt: NOW - 5 * MIN },
+      { state: 'ended', exitCode: 0 },
+      { state: 'ended', exitCode: 3 },
+      { state: 'stopped', stopReason: 'app closed' },
+      { state: 'stopped' },
+    ]
+    const read = (s: HostedSession) => {
+      const repo = repoOf([agent({ plan: 'alpha', session: 'sess-start' })], [s])
+      return {
+        view: sessionView(s, NOW),
+        word: sessionWord(s, NOW),
+        dot: sessionDot(sessionView(s, NOW)),
+        run: joinedRun(repo, s, NOW),
+        row: rowSessions(repo, 'alpha', NOW).map((x) => x.marker),
+        shown: shownSession([hosted({ marker: 'other', state: 'ended', startedAt: NOW - 3 * MIN }), s])?.marker,
+        label: sessionLabel(repo, s, NOW),
+      }
+    }
+    for (const over of states) {
+      const plain = read(hosted(over))
+      for (const resume of values) expect(read(hosted({ ...over, ...(resume ? { resume } : {}) })), `${over.state} ${resume}`).toEqual(plain)
+    }
+  })
+})

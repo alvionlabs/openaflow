@@ -118,7 +118,15 @@ export type HostedSession = {
   prompted: boolean
   /** The start line went to the user to type; the text is never stored. */
   typeYourself?: true
+  /** Whether Resume can start this session again, and why not. Only with state `ended` or `stopped`. */
+  resume?: SessionResume
 }
+
+/**
+ * Whether a hosted session can resume. First match: the repo path isn't a folder (`no folder`); its transcript
+ * file is gone (`no conversation`); a `starting` or `live` record holds its live session (`in use`); else `ok`.
+ */
+export type SessionResume = 'ok' | 'no folder' | 'no conversation' | 'in use'
 
 export type BoardRepo = {
   id: string
