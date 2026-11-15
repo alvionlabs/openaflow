@@ -108,10 +108,16 @@ export async function launchHarness(o: { env?: Record<string, string>; dir?: str
   }
   const app = await _electron.launch({ executablePath, args, env: appEnv(dir, port, { ...extra, ...o.env }), timeout: LAUNCH_MS })
   const close = async () => {
-    const proc = app.process()
+    // Playwright may lose the process handle when the launch failed half-way: then there is nothing to end by ID.
+    let proc: ReturnType<ElectronApplication['process']> | undefined
+    try {
+      proc = app.process()
+    } catch {
+      proc = undefined
+    }
     await Promise.race([app.close().catch(() => {}), sleep(CLOSE_MS)])
     // A main process that is still there after the quit: end that one process by its ID.
-    if (proc.exitCode === null && proc.signalCode === null) proc.kill()
+    if (proc && proc.exitCode === null && proc.signalCode === null) proc.kill()
     if (owned) await removeWithRetry(dir)
   }
   try {
@@ -119,7 +125,8 @@ export async function launchHarness(o: { env?: Record<string, string>; dir?: str
     await page.waitForURL(`http://127.0.0.1:${port}/**`, { timeout: LAUNCH_MS })
     return { app, page, port, dir, close }
   } catch (err) {
-    await close()
+    // The launch's own error is the one to show, never a later one from the clean-up.
+    await close().catch((cleanup: unknown) => console.error(`electron-harness: clean-up after a failed launch failed: ${String(cleanup)}`))
     throw err
   }
 }
