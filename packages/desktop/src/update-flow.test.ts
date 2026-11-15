@@ -62,6 +62,7 @@ function setup(
     stop?: () => Promise<unknown>
     updaterThrows?: boolean
     ask?: (v: string) => Promise<Answer>
+    endSessions?: () => Promise<boolean>
   } = {},
 ) {
   const events: string[] = []
@@ -108,6 +109,7 @@ function setup(
         events.push('stop')
         return 'stopped'
       }),
+    endSessions: o.endSessions ?? (async () => true),
     quit: () => void events.push('quit'),
     quitting: () => quitting,
     clock,
@@ -433,6 +435,161 @@ describe('createUpdateFlow', () => {
     stop.resolve('stopped')
     await settle()
     expect(t.events).toEqual(['ask 1.0.1', 'install'])
+  })
+
+  describe('Restart now asks the quit question', () => {
+    /** An `endSessions` that records its call and answers when the test says so. */
+    const sessionsAsk = (t: () => { events: string[] }) => {
+      const answers: Array<ReturnType<typeof deferred<boolean>>> = []
+      return {
+        answers,
+        endSessions: () => {
+          t().events.push('end sessions')
+          const d = deferred<boolean>()
+          answers.push(d)
+          return d.promise
+        },
+      }
+    }
+
+    test('restart with live sessions', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart', 'restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      q.answers[0]!.resolve(false)
+      await settle()
+      // Cancel: like Later.
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      expect(t.logs).toContain('openaflow desktop: update 1.0.1: kept, sessions are active')
+      // No install limit runs, and the timed checks go on.
+      await t.clock.advance(INSTALL_LIMIT_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check'])
+
+      // No second ask for this version in this run, but a newer version asks.
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check'])
+      await t.download('1.0.2')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check', 'ask 1.0.2', 'end sessions'])
+    })
+
+    test('restart after the quit question', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      // The sessions end before the server stops and the installer starts.
+      await t.clock.advance(RECHECK_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      q.answers[0]!.resolve(true)
+      await settle()
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'stop', 'install'])
+      expect(t.logs.join('\n')).not.toContain('kept')
+    })
+
+    test('restart with no sessions', async () => {
+      // endSessions gives true at once when no session is live: today's restart.
+      const t = setup({
+        endSessions: async () => {
+          t.events.push('end sessions')
+          return true
+        },
+      })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'stop', 'install'])
+
+      // The last chance follows the same rule.
+      const last = setup({
+        endSessions: async () => {
+          last.events.push('end sessions')
+          return true
+        },
+      })
+      last.answers.push('restart')
+      last.port.nextCheck = async () => {
+        await last.download('1.0.1')
+        return null
+      }
+      last.flow.start()
+      let done = false
+      void last.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(last.events).toEqual(['check', 'ask 1.0.1', 'end sessions', 'stop', 'install'])
+      expect(done).toBe(false)
+    })
+
+    test('while the quit question is open: no check, no box, and a second launch waits', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      await t.clock.advance(FIRST_CHECK_MS + RECHECK_MS)
+      await t.download('1.0.2')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      void t.flow.lastChance()
+      await settle()
+      expect(t.flow.reopen()).toBe('wait')
+      expect(t.checks()).toBe(0)
+    })
+
+    test('a quit that goes through during the question installs nothing', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      t.beginQuit()
+      q.answers[0]!.resolve(true)
+      await settle()
+      await t.clock.advance(INSTALL_LIMIT_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+    })
+
+    test('an endSessions that fails keeps the version and logs no message', async () => {
+      const t = setup({ endSessions: () => Promise.reject(Object.assign(new Error('https://example.com'), { code: 'EBOX' })) })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1'])
+      expect(t.logs.join('\n')).toContain('EBOX')
+      expect(t.logs).toContain('openaflow desktop: update 1.0.1: kept, sessions are active')
+      expect(t.logs.join()).not.toContain('example.com')
+    })
+
+    test('in the last chance, Cancel resolves, and a version kept earlier asks again', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart', 'restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      q.answers[0]!.resolve(false)
+      await settle()
+
+      t.port.nextCheck = async () => {
+        await t.download('1.0.1')
+        return null
+      }
+      let done = false
+      void t.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check', 'ask 1.0.1', 'end sessions'])
+      expect(done).toBe(false)
+      q.answers[1]!.resolve(false)
+      await settle()
+      expect(done).toBe(true)
+      expect(t.events).not.toContain('install')
+    })
   })
 
   describe('last chance, after the server failed', () => {

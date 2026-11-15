@@ -76,6 +76,8 @@ export function startUpdater(ctx: ShellContext): UpdateFlow | undefined {
     appImage: ctx.env.APPIMAGE,
     updater: () => realUpdater(feed),
     ask,
+    // Before the stop: the windows still show the Ending overlay while the sessions end.
+    endSessions: () => ctx.endSessions(),
     stop: () => {
       // The page has no server from here on.
       hideWindows(BrowserWindow.getAllWindows())

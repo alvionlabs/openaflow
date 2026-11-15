@@ -1,5 +1,6 @@
 // Windows Job Objects for hosted sessions: one job per session, with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so closing
-// the job ends the session's program and every child it started after the assign, detached ones too. No native
+// the job ends the session's program and every child it started, detached ones too: those it started after the
+// assign join on their own, and the helper puts the ones it started before in the job at the assign. No native
 // dependency: one hidden `powershell.exe` child of main compiles a small C# class with `Add-Type` and holds the job
 // handles. When that helper ends (its stdin closes, or it is killed), Windows closes its handles, so every job's
 // processes end too. No `electron` import: the glue passes Node's `spawn`. The rules are in
@@ -7,7 +8,11 @@
 //
 // Lines, one request at a time, answered in order:
 //   main → helper: `assign <id> <pid>`  `close <id>`
-//   helper → main: `ok <id>`  `fail <id> <win32 error>`  `closed <id>`
+//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error>`  `closed <id>`
+// `joined`: how many processes the session's program started before the assign, and their children, the helper put in
+// the job after it. Without that, a child started while the helper was still starting stays outside the job (CI,
+// session-life wave 3): close and the helper's exit never end it, and once its parent has ended, taskkill /T can't
+// find it either. `close` puts such children in the job once more before it ends the job.
 
 export type JobControl = {
   /** Puts a running process in the session's job. False on any failure: the caller falls back to a tree kill. */
@@ -88,10 +93,28 @@ public static class OpenAFlowJobs
         public UIntPtr PeakJobMemoryUsed;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct ProcessEntry
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
     const int JobObjectExtendedLimitInformation = 9;
     const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     const uint PROCESS_TERMINATE = 0x0001;
     const uint PROCESS_SET_QUOTA = 0x0100;
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    const uint TH32CS_SNAPPROCESS = 0x0002;
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern IntPtr CreateJobObject(IntPtr attributes, string name);
@@ -105,6 +128,118 @@ public static class OpenAFlowJobs
     static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32FirstW", ExactSpelling = true)]
+    static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32NextW", ExactSpelling = true)]
+    static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint length, IntPtr returned);
+
+    const int JobObjectBasicProcessIdList = 3;
+    const int MEMBERS_MAX = 4096;
+    // Passes of JoinEarlier: a process outside the job may start another one between two passes.
+    const int JOIN_PASSES = 5;
+
+    // A process's start time, or -1 when it is gone or can't be read.
+    static long Started(uint pid)
+    {
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (process == IntPtr.Zero) return -1;
+        long creation, exit, kernel, user;
+        bool read = GetProcessTimes(process, out creation, out exit, out kernel, out user);
+        CloseHandle(process);
+        return read ? creation : -1;
+    }
+
+    // The processes that descend from root now, by parent pid. A process that started before the parent it names
+    // is the child of an earlier holder of that pid, and is left out with its own children.
+    static List<uint> Descendants(uint root)
+    {
+        List<uint> found = new List<uint>();
+        long rootStart = Started(root);
+        if (rootStart < 0) return found;
+        List<uint> pids = new List<uint>();
+        List<uint> parents = new List<uint>();
+        IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == new IntPtr(-1)) return found;
+        ProcessEntry entry = new ProcessEntry();
+        entry.dwSize = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+        bool more = Process32First(snapshot, ref entry);
+        while (more)
+        {
+            pids.Add(entry.th32ProcessID);
+            parents.Add(entry.th32ParentProcessID);
+            more = Process32Next(snapshot, ref entry);
+        }
+        CloseHandle(snapshot);
+        Dictionary<uint, long> start = new Dictionary<uint, long>();
+        start[root] = rootStart;
+        Queue<uint> todo = new Queue<uint>();
+        todo.Enqueue(root);
+        while (todo.Count > 0)
+        {
+            uint parent = todo.Dequeue();
+            for (int i = 0; i < pids.Count; i++)
+            {
+                uint pid = pids[i];
+                if (parents[i] != parent || pid == 0 || start.ContainsKey(pid)) continue;
+                long born = Started(pid);
+                if (born < 0 || born < start[parent]) continue;
+                start[pid] = born;
+                found.Add(pid);
+                todo.Enqueue(pid);
+            }
+        }
+        return found;
+    }
+
+    // Puts in the job each of root's descendants that is not in it: the ones root started before it joined the job,
+    // and theirs. What root starts after it joined is in the job already. Answers how many joined.
+    static int JoinEarlier(IntPtr job, uint root)
+    {
+        int joined = 0;
+        for (int pass = 0; pass < JOIN_PASSES; pass++)
+        {
+            int added = 0;
+            foreach (uint pid in Descendants(root))
+            {
+                IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                if (process == IntPtr.Zero) continue;
+                bool inJob;
+                if (IsProcessInJob(process, job, out inJob) && !inJob && AssignProcessToJobObject(job, process)) added++;
+                CloseHandle(process);
+            }
+            joined += added;
+            if (added == 0) break;
+        }
+        return joined;
+    }
+
+    // The pids in the job now.
+    static List<uint> Members(IntPtr job)
+    {
+        List<uint> list = new List<uint>();
+        // Two counts, then the pid list, one pointer-sized entry each.
+        int size = 8 + IntPtr.Size * MEMBERS_MAX;
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, (uint)size, IntPtr.Zero)) return list;
+            int count = Marshal.ReadInt32(buffer, 4);
+            for (int i = 0; i < count && i < MEMBERS_MAX; i++) list.Add((uint)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size).ToInt64());
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+        return list;
+    }
 
     static string Assign(Dictionary<string, IntPtr> jobs, string id, uint pid)
     {
@@ -138,7 +273,7 @@ public static class OpenAFlowJobs
             return "fail " + id + " " + error;
         }
         if (made) jobs[id] = job;
-        return "ok " + id;
+        return "ok " + id + " " + JoinEarlier(job, pid);
     }
 
     public static void Run()
@@ -159,6 +294,8 @@ public static class OpenAFlowJobs
                 IntPtr job;
                 if (jobs.TryGetValue(p[1], out job))
                 {
+                    // A child that a process outside the job started after the assign's last pass.
+                    foreach (uint member in Members(job)) JoinEarlier(job, member);
                     TerminateJobObject(job, 1);
                     CloseHandle(job);
                     jobs.Remove(p[1]);
@@ -194,6 +331,8 @@ type Request = {
   /** The answer line that settles it, minus a `fail` for an assign. */
   kind: 'assign' | 'close'
   id: string
+  /** When main sent it. */
+  at: number
   /** Set once the caller has its result (an answer, a timeout, or a dead helper). */
   settle: ((ok: boolean) => void) | null
 }
@@ -235,6 +374,11 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
     if (head.kind === 'assign' && (word === 'ok' || word === 'fail')) {
       h.queue.shift()
       if (word === 'fail' && head.settle) o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}`)
+      if (word === 'ok' && head.settle) {
+        const joined = Number(code ?? 0)
+        const note = joined > 0 ? `; ${joined} processes it started before joined too` : ''
+        o.log(`${LOG} session ${id} in a job after ${Date.now() - head.at} ms${note}`)
+      }
       finish(head, word === 'ok')
     } else if (head.kind === 'close' && word === 'closed') {
       h.queue.shift()
@@ -299,6 +443,7 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
         const r: Request = {
           kind: 'assign',
           id,
+          at: Date.now(),
           settle: (ok) => {
             clearTimeout(timer)
             resolve(ok)
@@ -315,6 +460,7 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
         const r: Request = {
           kind: 'close',
           id,
+          at: Date.now(),
           settle: () => {
             clearTimeout(timer)
             resolve()
