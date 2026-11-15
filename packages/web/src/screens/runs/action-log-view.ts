@@ -1,7 +1,7 @@
 // The action log list under Other activity: the newest actions across every repo,
 // each with its time, repo, target, and a result chip.
 
-import type { ActionEntry } from '@openaflow/model'
+import { SKILLS, type ActionEntry } from '@openaflow/model'
 import type { Chip, ChipClass } from './view.ts'
 
 export const ACTION_LOG_CAP = 20
@@ -43,6 +43,25 @@ export type ActionLogRow = { key: string; time: string; repo: string; target: st
 
 const isAuto = (e: ActionEntry): boolean => e.action === 'resume' && e.auto
 
+const SESSION_WORDS: Partial<Record<ActionEntry['action'], string>> = { 'new-session': 'New session', 'dismiss-session': 'Dismissed session' }
+
+/** A skill's command (`/pod:plan`) or `plain` as its label (`Plan`, `Plain session`); any other word as it is. */
+function skillWords(word: string): string {
+  const skill = SKILLS.find((s) => (s.command ?? 'plain') === word)
+  return skill ? skill.label : word
+}
+
+/**
+ * The target as the list shows it. A session action's (`<skill command or plain> · <marker first 8>`) reads in words:
+ * `New session · Plan · 0f3c9a12`. It never holds the text the session started with.
+ */
+function targetWords(e: ActionEntry): string {
+  const words = SESSION_WORDS[e.action]
+  if (words === undefined) return isAuto(e) ? `${e.target} · auto` : e.target
+  const [skill, ...rest] = e.target.split(' · ')
+  return [words, rest.length > 0 ? skillWords(skill!) : skill!, ...rest].join(' · ')
+}
+
 /** The newest ACTION_LOG_CAP entries, newest first. */
 export function actionLogRows(entries: ActionEntry[] | undefined, now: number): ActionLogRow[] {
   return (entries ?? [])
@@ -53,7 +72,7 @@ export function actionLogRows(entries: ActionEntry[] | undefined, now: number): 
       key: `${e.at}-${e.repoId}-${e.target}-${i}`,
       time: when(e.at, now),
       repo: e.repo,
-      target: isAuto(e) ? `${e.target} · auto` : e.target,
+      target: targetWords(e),
       auto: isAuto(e),
       chip: outcomeChip(e.result),
     }))

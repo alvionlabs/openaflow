@@ -1,7 +1,9 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import type { BoardRepo } from '@openaflow/model'
 import { BarMenuView } from './BarMenu.tsx'
+import { menuRepo } from './new-session-flow.ts'
 
 const noop = () => {}
 const store = (value?: string) => ({ getItem: () => value ?? null, setItem: noop })
@@ -87,3 +89,27 @@ describe('Forget item', () => {
     expect(html).not.toContain('Remove repo')
   })
 })
+
+describe('New session item', () => {
+  const repo = (over: Partial<BoardRepo> = {}): BoardRepo =>
+    ({ id: 'notes', name: 'notes', path: '/n', source: 'registered', model: { docs: { supported: true } }, agents: [], prs: [], claims: [], ...over }) as unknown as BoardRepo
+  const bridge = { connect: async () => {}, onHostState: () => () => {} }
+
+  it('shows only with the bridge', () => {
+    // The desktop app's bridge and a readable repo: the item, for that repo.
+    expect(menuRepo(repo(), bridge)?.id).toBe('notes')
+    // The browser build (no bridge), no repo, or a repo the app can't read: no item.
+    expect(menuRepo(repo(), undefined)).toBeUndefined()
+    expect(menuRepo(undefined, bridge)).toBeUndefined()
+    expect(menuRepo(repo({ error: 'folder not found' }), bridge)).toBeUndefined()
+    expect(menuRepo(repo({ model: { docs: { supported: false } } } as never), bridge)).toBeUndefined()
+
+    // The item: a plain action named New session, after Ports and before the danger items.
+    expect(text(render({ portBase: 3100 }))).not.toContain('New session')
+    const html = render({ newSession: { onPick: noop }, portBase: 3100, remove: { onPick: noop } })
+    expect(html).toMatch(/<button type="button" class="mi mi-action" aria-haspopup="dialog">New session<\/button>/)
+    expect(html.indexOf('Ports')).toBeLessThan(html.indexOf('New session'))
+    expect(html.indexOf('New session')).toBeLessThan(html.indexOf('Remove repo'))
+  })
+})
+

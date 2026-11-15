@@ -110,4 +110,31 @@ describe('action log view', () => {
     expect(actionLogRows([remove('removed')], NOW)[0]).toMatchObject({ repo: 'chess-web', target: 'C:/code/chess-web', auto: false, chip: { cls: 's-ok', label: 'removed' } })
     expect(actionLogRows([remove('failed')], NOW)[0]!.chip).toEqual({ cls: 's-bad', label: 'failed' })
   })
+
+  it('session actions', () => {
+    const session = (action: 'new-session' | 'dismiss-session', target: string, result: 'started' | 'dismissed' | 'failed'): ActionEntry =>
+      ({ at: NOW, action, repoId: 'r1', repo: 'notes-app', target, result }) as ActionEntry
+    // In words: what happened, the skill's label, and the marker's first 8. Never the text (the target holds none).
+    expect(actionLogRows([session('new-session', '/pod:plan · 0f3c9a12', 'started')], NOW)[0]).toMatchObject({
+      repo: 'notes-app',
+      target: 'New session · Plan · 0f3c9a12',
+      auto: false,
+      chip: { cls: 's-ok', label: 'started' },
+    })
+    expect(actionLogRows([session('new-session', 'plain · 0f3c9a12', 'failed')], NOW)[0]).toMatchObject({
+      target: 'New session · Plain session · 0f3c9a12',
+      chip: { cls: 's-bad', label: 'failed' },
+    })
+    expect(actionLogRows([session('new-session', '/pod:ship · 0f3c9a12', 'started')], NOW)[0]!.target).toBe('New session · Ship an idea · 0f3c9a12')
+    expect(actionLogRows([session('dismiss-session', '/pod:task · 0f3c9a12', 'dismissed')], NOW)[0]).toMatchObject({
+      target: 'Dismissed session · One task · 0f3c9a12',
+      chip: { cls: 's-ok', label: 'dismissed' },
+    })
+    // A skill the page doesn't know keeps its own word; a target of another shape stays as written after the words.
+    expect(actionLogRows([session('new-session', '/pod:teach · 0f3c9a12', 'started')], NOW)[0]!.target).toBe('New session · /pod:teach · 0f3c9a12')
+    expect(actionLogRows([session('dismiss-session', 'odd', 'failed')], NOW)[0]!.target).toBe('Dismissed session · odd')
+    // Other actions keep their target as it is.
+    expect(actionLogRows([entry({ target: 'PR #41' })], NOW)[0]!.target).toBe('PR #41')
+  })
 })
+

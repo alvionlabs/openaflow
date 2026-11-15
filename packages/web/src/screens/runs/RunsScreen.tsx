@@ -203,6 +203,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     <BarMenu
       key={runKey}
       portBase={selected?.portBase}
+      newSession={repo}
       {...(toForget ? { forget: { onPick: () => forgetFlow.open(toForget) } } : {})}
       {...(toRemove ? { remove: { onPick: () => removeFlow.open(toRemove) } } : {})}
     />
