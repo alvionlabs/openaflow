@@ -1,7 +1,7 @@
 # Sprint: Session life
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: active · Generated: 2026-11-15_
-<!-- autopilot-run: started=2026-11-15T09:51:09Z sprints=0 waves=2 -->
+<!-- autopilot-run: started=2026-11-15T09:51:09Z sprints=0 waves=3 -->
 
 ## Status board
 
@@ -16,8 +16,8 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: act
 | 2 | D2 | Main: quit dialog, ending sessions, leftovers, window events | session-life-D2 | merged | done | medium | H2, E1, J1 |
 | 2 | W2 | Terminal tab: Resume, can't resume, saved screen, untested paths | session-life-W2 | merged | done | medium | M2 |
 | 2 | W3 | Host banner, Ending overlay, hosted Waiting rows, reply card | session-life-W3 | merged | done | medium | M2 |
-| 3 | U2 | Restart now asks the quit question | session-life-U2 | blocked | blocked | — | D2 |
-| 3 | X2 | Electron checks for quit, crashes, and Resume; CI; docs | session-life-X2 | blocked | blocked | — | H2, C2, S3, D2, W2, W3 |
+| 3 | U2 | Restart now asks the quit question | session-life-U2 | https://github.com/alvionlabs/openaflow/pull/145 | pushed | medium | D2 |
+| 3 | X2 | Electron checks for quit, crashes, and Resume; CI; docs | session-life-X2 | https://github.com/alvionlabs/openaflow/pull/145 | pushed | medium | H2, C2, S3, D2, W2, W3 |
 
 ## Shared contract
 
