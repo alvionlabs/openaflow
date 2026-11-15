@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -194,6 +195,12 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
         // Main's own pid: on Windows the process Playwright started is not the main process that forks the server.
         const main = await h.app.evaluate(() => process.pid)
+        // PROBE, to be reverted: which process Playwright started, and which is main.
+        if (WIN) {
+          const filter = `ProcessId=${h.pid} or ProcessId=${main} or ProcessId=${server}`
+          const info = execFileSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter '${filter}' | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress`], { windowsHide: true, encoding: 'utf8' })
+          process.stderr.write(`real-quit › app crash leftovers: playwright pid ${h.pid}, main ${main}, server ${server}: ${info}\n`)
+        }
         const at = Date.now()
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
