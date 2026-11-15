@@ -9,7 +9,8 @@
 // - On request: when a `child-gate` file holding a JSON list of kinds shows up, it takes the file and starts each
 //   child. `detached` is a detached child with the session's env. `setsid` (Linux) is started through `setsid -f`
 //   with an empty env, so it has its own session, is no child of the fake, and holds no OPENAFLOW_RUN. Each child
-//   listens on 127.0.0.1 and appends `{kind, pid, port}` to `children.jsonl`.
+//   listens on 127.0.0.1 and appends `{kind, pid, port, spawnedAt}` to `children.jsonl` (`spawnedAt`: the fake's
+//   clock at the spawn call, so a test can compare it with when the session joined its Windows job).
 // Everything ends on its own after 5 minutes, so a leftover never runs on. The fake also ends when its input ends.
 
 import { spawn } from 'node:child_process'
@@ -21,10 +22,10 @@ const LIFE_MS = 300_000
 const script = process.argv[1]
 const args = process.argv.slice(2)
 
-if (args[0] === '--life-child') child(args[1], args[2])
+if (args[0] === '--life-child') child(args[1], args[2], Number(args[3]))
 else fake()
 
-function child(kind, here) {
+function child(kind, here, spawnedAt) {
   setTimeout(() => process.exit(0), LIFE_MS)
   // A probe may close at once: the reset must not end the child.
   const server = createServer((socket) => {
@@ -32,7 +33,7 @@ function child(kind, here) {
     socket.end()
   })
   server.listen(0, '127.0.0.1', () => {
-    appendFileSync(join(here, 'children.jsonl'), JSON.stringify({ kind, pid: process.pid, port: server.address().port }) + '\n')
+    appendFileSync(join(here, 'children.jsonl'), JSON.stringify({ kind, pid: process.pid, port: server.address().port, spawnedAt }) + '\n')
   })
 }
 
@@ -85,7 +86,7 @@ function fake() {
 }
 
 function startChild(kind, here) {
-  const childArgs = [script, '--life-child', kind, here]
+  const childArgs = [script, '--life-child', kind, here, String(Date.now())]
   if (kind === 'setsid') {
     const setsid = ['/usr/bin/setsid', '/bin/setsid'].find((p) => existsSync(p))
     if (!setsid) return process.stdout.write('no setsid\r\n')

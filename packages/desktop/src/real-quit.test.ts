@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, type TestContext } from 'vitest'
 import {
   alive,
   desktopLog,
@@ -8,6 +8,7 @@ import {
   healthy,
   hostedOf,
   launchLife,
+  lifeChildren,
   lifeChildrenUp,
   lifeDetails,
   lifeRepo,
@@ -54,12 +55,27 @@ const procStat = (pid: number) => {
   return { ppid: Number(rest[1]), pgid: Number(rest[2]) }
 }
 
+/**
+ * Windows: each child's spawn time and main's job lines, printed after every test that ran a session, green or red, so
+ * a run shows whether a child started before its session joined the job.
+ */
+function printJobLines(name: string, w: LifeWorld): void {
+  if (!WIN) return
+  const children = lifeChildren(w).map((c) => `${c.kind} child ${c.pid} spawned ${c.spawnedAt ? new Date(c.spawnedAt).toISOString() : '?'}`)
+  if (children.length === 0) return
+  const lines = desktopLog(w)
+    .split('\n')
+    .filter((l) => /\bjob\b|left \d+ processes|end failed/.test(l))
+  process.stderr.write(`real-quit › ${name}: ${[...children, ...lines].join('\n  ')}\n`)
+}
+
 /** Runs `check` on a new world, and always ends the app, the fake's processes, and the folders. */
-async function inWorld(check: (w: LifeWorld) => Promise<void>): Promise<void> {
+async function inWorld(ctx: TestContext, check: (w: LifeWorld) => Promise<void>): Promise<void> {
   const w = makeLifeWorld()
   try {
     await check(w)
   } finally {
+    printJobLines(ctx.task.name, w)
     endLifeProcesses(w)
     await removeWithRetry(w.dir)
   }
@@ -75,8 +91,8 @@ async function withApp(w: LifeWorld, run: (h: Harness) => Promise<void>): Promis
 }
 
 describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINUX || WIN))('real quit (unpackaged)', () => {
-  test('no session, no question', async () => {
-    await inWorld((w) =>
+  test('no session, no question', async (ctx) => {
+    await inWorld(ctx, (w) =>
       withApp(w, async (h) => {
         await lifeUntil('the repo on the Board', async () => (await lifeRepo(h, w)) !== undefined, 60_000, w)
         await lifeUntil('the test hook', () => testHooks(h).ready(), 60_000, w)
@@ -87,8 +103,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
     )
   }, RUN_MS)
 
-  test('cancel keeps everything', async () => {
-    await inWorld((w) =>
+  test('cancel keeps everything', async (ctx) => {
+    await inWorld(ctx, (w) =>
       withApp(w, async (h) => {
         const { marker } = await lifeSession(h, w)
         const [child] = await lifeChildrenUp(w, ['detached'])
@@ -112,8 +128,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
     )
   }, RUN_MS)
 
-  test('quit ends the session tree', async () => {
-    await inWorld((w) =>
+  test('quit ends the session tree', async (ctx) => {
+    await inWorld(ctx, (w) =>
       withApp(w, async (h) => {
         const { marker } = await lifeSession(h, w)
         const children = await lifeChildrenUp(w, ['detached'])
@@ -130,13 +146,14 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
     )
   }, RUN_MS)
 
-  test('scope', async ({ skip }) => {
+  test('scope', async (ctx) => {
+    const { skip } = ctx
     if (!LINUX) {
       process.stderr.write(`real-quit › scope: skipped, no systemd scope on ${process.platform}\n`)
       skip()
       return
     }
-    await inWorld((w) =>
+    await inWorld(ctx, (w) =>
       withApp(w, async (h) => {
         const { marker } = await lifeSession(h, w)
         const cgroup = lifeStarts(w)[0]!.cgroup ?? ''
@@ -167,8 +184,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
     )
   }, RUN_MS)
 
-  test('host crash leftovers', async () => {
-    await inWorld((w) =>
+  test('host crash leftovers', async (ctx) => {
+    await inWorld(ctx, (w) =>
       withApp(w, async (h) => {
         await lifeSession(h, w)
         const children = await lifeChildrenUp(w, ['detached'])
@@ -182,8 +199,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
     )
   }, RUN_MS)
 
-  test('app crash leftovers', async () => {
-    await inWorld(async (w) => {
+  test('app crash leftovers', async (ctx) => {
+    await inWorld(ctx, async (w) => {
       let marker = ''
       let children: LifeChild[] = []
       await withApp(w, async (h) => {

@@ -157,7 +157,7 @@ export type LifeWorld = { dir: string; cfg: string; repo: string; bin: string; c
 /** One start of the fake: its pid, its args, and (Linux) its `/proc/self/cgroup`. */
 export type LifeStart = { pid: number; execPath: string; args: string[]; cgroup?: string }
 /** A child the fake started on request: `detached` keeps the session's env; `setsid` (Linux) has none and its own session. */
-export type LifeChild = { kind: 'detached' | 'setsid'; pid: number; port: number }
+export type LifeChild = { kind: 'detached' | 'setsid'; pid: number; port: number; spawnedAt?: number }
 export type Answer = { status: number; body: Record<string, unknown> }
 type TestHooks = typeof globalThis & {
   __openaflowTest?: {
