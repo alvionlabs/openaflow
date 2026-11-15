@@ -35,7 +35,7 @@ export type SessionCommand = { program: string; args: string[]; cwd: string; env
 export type SessionCommandError = 'bad skill' | 'bad id' | 'bad path' | 'bad text' | 'node not found' | 'cmd.exe not found' | 'unsafe claude path'
 
 /** A run marker or session id: a lowercase UUID v4 (contract §3), which `record.sh` also requires. */
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+export const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/
 const MAX_TEXT = 2000
