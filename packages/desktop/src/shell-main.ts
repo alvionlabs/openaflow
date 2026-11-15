@@ -1,6 +1,7 @@
 // Glue: the app's start, for main.ts and the guarded probe. The logic is in the plain modules. The
 // rules are in pod-docs/feature-details/desktop.md.
 
+import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu } from 'electron'
 import { hideWindows } from './hide-windows.ts'
@@ -9,8 +10,11 @@ import { startNotifier } from './notifier-main.ts'
 import { ptyHostEntry } from './pty-host-launch.ts'
 import { createPtyHost } from './pty-host-main.ts'
 import { createQuitFlow } from './quit-flow.ts'
+import { showQuitDialog, tellQuitting } from './quit-main.ts'
 import { createServerHost, type ServerHost } from './server-host.ts'
 import { serverEntry, serverEnv } from './server-launch.ts'
+import { createSessionEnder, realEnderOs } from './session-ender.ts'
+import { createSessionRoster } from './session-roster.ts'
 import { createShellBus, type ShellBus } from './shell-bus.ts'
 import { startTerminalLink } from './terminal-port-main.ts'
 import { startTerminalRelay } from './terminal-relay.ts'
@@ -21,6 +25,7 @@ import { applyTestEnv, TEST_ENV_FILE } from './update-feed.ts'
 import { failureText, relaunchArgs } from './update-flow.ts'
 import { startUpdater } from './updater-main.ts'
 import { startWindow } from './window-main.ts'
+import { createJobControl } from './windows-jobs.ts'
 import { originOf } from './window-rules.ts'
 
 /** `pnpm package --test-feed` sets this. In every other build the test feed's code is removed. */
@@ -34,6 +39,16 @@ export type ShellContext = {
   env: NodeJS.ProcessEnv
   /** Registers the toast activator at the start. Electron then writes a Start-menu shortcut, so a dev run doesn't. */
   activatorAtStart: boolean
+  /**
+   * For a Restart now: no live session → true with no question; else the quit question. Cancel → false; a confirm
+   * ends every session first → true, and the quit after it asks nothing.
+   */
+  endSessions(): Promise<boolean>
+  /**
+   * The quit goes through (no live session, a confirm, the server failed, a Windows shutdown): once, before the ends
+   * and the stops. Never on Cancel. Use this, not `before-quit`, which also fires for a quit that Cancel stops.
+   */
+  onQuitThrough(fn: () => void): void
 }
 
 export type ShellOptions = {
@@ -74,8 +89,18 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
 
   const place = { packaged: app.isPackaged, appPath: o.appPath ?? app.getAppPath(), resourcesPath: process.resourcesPath }
   const entry = serverEntry(place)
+  /** The current server's pid: no session end may signal it. */
+  let serverPid: number | undefined
   const host = createServerHost({
-    fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid, place), onSpawn: o.onServer }),
+    fork: () =>
+      forkServer({
+        entry,
+        env: serverEnv(o.env, process.pid, place),
+        onSpawn: (pid) => {
+          serverPid = pid
+          o.onServer?.(pid)
+        },
+      }),
   })
   let updater: ReturnType<typeof startUpdater>
   const shellBus = createShellBus()
@@ -88,13 +113,18 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
       else if (next === 'relaunch') app.relaunch({ args: relaunchArgs(process.argv) })
     },
   }
-  const ctx: ShellContext = { host, bus, env: o.env, activatorAtStart: o.activatorAtStart ?? app.isPackaged }
   // The terminal host forks after the server's first ready; until then, terminal calls wait. Its failure leaves the
   // board running.
   const ptyHost = createPtyHost({ entry: ptyHostEntry(place), env: o.env })
-  if (__OPENAFLOW_TEST_HOOKS__) installTestHooks(ptyHost)
-  // The server's sessions: its start, list, and dispose go to the host; answers, exits, and lost ids come back.
-  startTerminalRelay({ server: host, starter: ptyHost, log: (line) => console.log(line) })
+  const testHooks = __OPENAFLOW_TEST_HOOKS__ ? installTestHooks(ptyHost) : undefined
+  const log = (line: string) => console.log(line)
+  // The sessions main started this app life, and their ends: a Job Object per session on Windows only.
+  const jobs = process.platform === 'win32' ? createJobControl({ spawn, log }) : undefined
+  const ender = createSessionEnder({ platform: process.platform, os: realEnderOs(), jobs, protectedPids: () => [ptyHost.pid(), serverPid], log })
+  const roster = createSessionRoster({ platform: process.platform, ender, jobs, flush: () => ptyHost.flush(), log })
+  // The server's sessions: its start, list, and dispose go to the host; answers, exits, and lost ids come back. Its
+  // stop, sweep, and labels feed the roster.
+  const relay = startTerminalRelay({ server: host, starter: ptyHost, roster, log })
   startTerminalLink({
     starter: ptyHost,
     origin: () => {
@@ -103,11 +133,33 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
     },
   })
 
+  let serverFailed = false
   const flow = createQuitFlow({
     stops: [() => host.stop(), () => ptyHost.stop()],
     hide: () => hideWindows(BrowserWindow.getAllWindows()),
     quit: () => app.quit(),
+    sessions: {
+      live: () => roster.live(),
+      ask: (q) => (testHooks ? testHooks.quitAnswer() : showQuitDialog(q)),
+      confirmed: (count) => {
+        relay.silence()
+        tellQuitting(count)
+      },
+      silence: () => relay.silence(),
+      endAll: () => roster.endAll(),
+      serverFailed: () => serverFailed,
+      log,
+    },
   })
+  const ctx: ShellContext = {
+    host,
+    bus,
+    env: o.env,
+    activatorAtStart: o.activatorAtStart ?? app.isPackaged,
+    endSessions: () => flow.endSessions(),
+    onQuitThrough: (fn) => flow.onThrough(fn),
+  }
+
   app.on('before-quit', (e) => flow.beforeQuit(e))
   // `session-end` is a window's event, so each window reports it.
   app.on('browser-window-created', (_e, win) => win.on('session-end', () => flow.sessionEnd()))
@@ -115,6 +167,7 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   // Once: a later ready, after a server restart, does nothing.
   host.onReady(() => ptyHost.start())
   host.onFailed((error) => {
+    serverFailed = true
     ;(o.onFailed ?? showFailure)(error, updater?.willCheck() ?? false)
     // The page has no server. The tray stays, so Quit still works while the update check runs.
     hideWindows(BrowserWindow.getAllWindows())

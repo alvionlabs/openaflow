@@ -114,8 +114,8 @@ export function startWindow(ctx: ShellContext): void {
   tray.setContextMenu(Menu.buildFromTemplate(trayMenu({ onOpen: () => bus.showWindow(), onQuit: () => app.quit() })))
   bus.onAttention((on) => tray?.setImage(icon(on ? 'tray-dot.png' : 'tray.png')))
 
-  // shell-main's listener holds the quit. This one lets the window close when the quit goes through.
-  app.on('before-quit', () => flow.quitting())
+  // The window closes, and a show does nothing, only once the quit goes through: after a Cancel, Open still shows it.
+  ctx.onQuitThrough(() => flow.quitting())
   app.on('will-quit', () => {
     tray?.destroy()
     tray = undefined

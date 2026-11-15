@@ -124,10 +124,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       const page = s.page!
       expect(new URL(page.url).origin).toBe(`http://127.0.0.1:${s.readyPorts[0]}`)
 
-      // Exactly the bridge's three functions, and no Node or Electron in the page.
+      // Exactly the bridge's five functions, and no Node or Electron in the page.
       expect(page.look).toEqual({
         openaflow: 'object',
-        keys: ['pickFolder', 'connectTerminals', 'onTerminalHost'],
+        keys: ['pickFolder', 'connectTerminals', 'onTerminalHost', 'onQuitting', 'terminalHostState'],
         pickFolder: 'function',
         require: 'undefined',
         process: 'undefined',

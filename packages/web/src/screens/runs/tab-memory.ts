@@ -2,7 +2,8 @@
 // Nothing stored means every tab is closed. A stored Terminal reads closed on a row without the tab (no hosted
 // session, or the browser build), and stays stored for the next row that has it. Pure; the screen passes `localStorage`.
 
-import type { View } from '../../selection.ts'
+import type { RunSummary } from '@openaflow/model'
+import { hashFor, type View } from '../../selection.ts'
 
 export type Tab = 'waiting' | 'log' | 'terminal'
 
@@ -53,4 +54,17 @@ export const toggleTab = (open: Tab | undefined, clicked: Tab): Tab | undefined 
 export function shownTab(stored: Tab | undefined, at: { view: View; terminal?: boolean }): Tab | undefined {
   if (at.view === 'agent') return 'log'
   return stored === 'terminal' && at.terminal !== true ? undefined : stored
+}
+
+/** What a tab request does: store `save`, and go to `go` first when given. */
+export type TabRequest = { save: Tab; go?: string }
+
+/**
+ * The page's answer to a request to open `tab` (Open terminal, a started New session). It stores the tab, and on
+ * an engineer's view, which always shows Log, goes to its run's own page: unless the page already moved on
+ * (`hash` is no longer that view's), or there is no run.
+ */
+export function tabRequest(tab: Tab, at: { view: View; run: Pick<RunSummary, 'repoId' | 'plan' | 'fix'> | undefined; agent: string | undefined; hash: string }): TabRequest {
+  if (at.view === 'agent' && at.run && at.hash === hashFor(at.run, 'agent', at.agent)) return { save: tab, go: hashFor(at.run) }
+  return { save: tab }
 }

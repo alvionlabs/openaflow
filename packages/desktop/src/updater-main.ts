@@ -65,7 +65,8 @@ export function startUpdater(ctx: ShellContext): UpdateFlow | undefined {
   }
 
   let quitting = false
-  app.once('before-quit', () => {
+  // Not on `before-quit`: after a Cancel, the updater still asks.
+  ctx.onQuitThrough(() => {
     quitting = true
   })
 

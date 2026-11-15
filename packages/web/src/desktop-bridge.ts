@@ -18,11 +18,18 @@ export function folderBridge(win: unknown = globalThis.window): PickFolder | und
 
 export type TerminalHostState = 'ready' | 'unresponsive' | 'restarted' | 'failed'
 
+/** What `terminalHostState()` reads at page load; the events add `restarted` and never `starting`. */
+export type TerminalHostRead = 'starting' | 'ready' | 'unresponsive' | 'failed'
+
 export type TerminalBridge = {
   /** The shell puts a port on the page as a `window` message, then resolves; it rejects with `terminals unavailable` or `forbidden`. */
   connect(): Promise<void>
   /** Calls `fn` on each host state; returns a function that stops the calls. */
   onHostState(fn: (state: TerminalHostState) => void): () => void
+  /** Calls `fn(count)` once a quit is confirmed and the sessions end; returns a stop function. Undefined where the shell has no `onQuitting`. */
+  onQuitting?: ((fn: (count: number) => void) => () => void) | undefined
+  /** The host's state now. Undefined where the shell has no `terminalHostState`. */
+  hostState?: (() => Promise<TerminalHostRead>) | undefined
 }
 
 /**
@@ -33,7 +40,12 @@ export function terminalBridge(win: unknown = globalThis.window): TerminalBridge
   if (typeof win !== 'object' || win === null) return undefined
   const bridge = (win as { openaflow?: unknown }).openaflow
   if (typeof bridge !== 'object' || bridge === null) return undefined
-  const { connectTerminals, onTerminalHost } = bridge as { connectTerminals?: unknown; onTerminalHost?: unknown }
+  const { connectTerminals, onTerminalHost, onQuitting, terminalHostState } = bridge as {
+    connectTerminals?: unknown
+    onTerminalHost?: unknown
+    onQuitting?: unknown
+    terminalHostState?: unknown
+  }
   if (typeof connectTerminals !== 'function') return undefined
   return {
     connect: () => (connectTerminals as () => Promise<void>).call(bridge),
@@ -42,5 +54,13 @@ export function terminalBridge(win: unknown = globalThis.window): TerminalBridge
       const stop = (onTerminalHost as (f: typeof fn) => unknown).call(bridge, fn)
       return typeof stop === 'function' ? (stop as () => void) : () => {}
     },
+    onQuitting:
+      typeof onQuitting === 'function'
+        ? (fn) => {
+            const stop = (onQuitting as (f: typeof fn) => unknown).call(bridge, fn)
+            return typeof stop === 'function' ? (stop as () => void) : () => {}
+          }
+        : undefined,
+    hostState: typeof terminalHostState === 'function' ? () => (terminalHostState as () => Promise<TerminalHostRead>).call(bridge) : undefined,
   }
 }

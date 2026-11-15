@@ -59,8 +59,8 @@ export function startNotifier(ctx: ShellContext): void {
   })
   ctx.host.onReady((port) => stream.moveTo(port))
 
-  // A quit always goes through once it starts. A toast from here on would open a window that is closing.
-  app.once('before-quit', () => {
+  // Once the quit goes through, a toast would open a window that is closing. A Cancel keeps the toasts.
+  ctx.onQuitThrough(() => {
     stream.close()
     notifier.close()
   })

@@ -4,7 +4,8 @@ import type { ActionReply } from '../../actions-client.ts'
 import type { AnswerState } from './answer-flow.ts'
 import { confirmView, createMergeFlow, type MergeState, type Post } from './merge-flow.ts'
 import { createResumeFlow, resumeView, sendLabel, startedText } from './resume-flow.ts'
-import type { NextItem } from './next-step.ts'
+import { DESKTOP_TERMINAL, hostedRow, type NextItem } from './next-step.ts'
+import type { ReplyPanelView } from './reply-view.ts'
 import type { WaitingRow } from './queue-view.ts'
 import type { EntryKind } from './entry-kind.ts'
 import { answerAnchor, groupOpen, kindChip, wouldClamp, moreLabel, toggleGroup, keepOpen, mergeAnchor, replyGhost, replySeen, rowMeta, toggleOpen, waitGroups } from './waiting-tab.ts'
@@ -233,5 +234,39 @@ describe('waiting tab', () => {
       word: 'continue',
       result: { chip: { cls: 's-ok', label: 'started' }, words: startedText(undefined), note: 'Not saved to the action log.' },
     })
+  })
+
+  it('hosted rows', () => {
+    const target = { repoId: 'r', run: 'plan-a' }
+    const reply = (hosted?: ReplyPanelView['hosted']): NextItem => ({
+      key: 'reply:plan-a',
+      tier: 'reply',
+      status: 'needs-you',
+      title: 'Send continue',
+      detail: 'Open the terminal and type `continue`.',
+      action: { kind: 'reply', panel: { target, rows: [{ key: 'continue', word: 'continue', why: 'why' }], ...(hosted ? { hosted } : {}) } },
+    })
+    const waiting: NextItem = { key: 'waiting:m1', tier: 'pending', status: 'needs-you', goesOn: true, title: 'Claude waits for you in the terminal', detail: 'It may ask you to trust this folder.', action: { kind: 'open-terminal' } }
+
+    // A hosted reply in the rest list and a waiting card: Open terminal, and the row's own words. The row draws no
+    // reply panel (no Copy, no Run it yourself), which is what a `hostedRow` answer stands for.
+    for (const item of [reply({ word: 'continue', stopped: false }), reply({ word: 'continue', stopped: true }), waiting]) {
+      const view = hostedRow(item, true)
+      expect(view, item.key).toEqual({ ...(item.detail === undefined ? {} : { detail: item.detail }), form: false, openTerminal: true })
+    }
+    // A stopped session that can resume keeps its own line.
+    const resumable = reply({ word: 'continue', stopped: true, resumable: true })
+    expect(hostedRow({ ...resumable, detail: "This run's terminal has stopped. Resume it in the Terminal tab, then type `continue`." }, true)?.detail).toContain('Resume it')
+
+    // The browser has no terminal: the desktop note replaces the button.
+    for (const item of [reply({ word: 'continue', stopped: false }), waiting]) {
+      expect(hostedRow(item, false), item.key).toMatchObject({ openTerminal: false, note: DESKTOP_TERMINAL })
+    }
+
+    // Other rows are not hosted rows: an outside reply keeps its panel, and entries, PRs and info keep theirs.
+    expect(hostedRow(reply(), true)).toBeUndefined()
+    expect(hostedRow(entry('a'), true)).toBeUndefined()
+    expect(hostedRow(pr(7), false)).toBeUndefined()
+    expect(hostedRow(info('x'), true)).toBeUndefined()
   })
 })

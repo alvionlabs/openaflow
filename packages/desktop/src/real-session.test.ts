@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest'
 import { projectDirName } from '../../server/src/transcript-files.ts'
 import { DESKTOP, harnessDir, launchHarness, packagedApp, removeWithRetry, type Harness } from '../test/electron-harness.ts'
 import { hooksPluginDir } from './pty-host-launch.ts'
-import type { TestTerminals } from './test-hooks-main.ts'
+import type { TestQuit, TestTerminals } from './test-hooks-main.ts'
 
 // Hosted sessions through the product path, in the real Electron app: the New session and Dismiss routes, the
 // server's session store, main's terminal link, and the pty host, with test/fixtures/fake-session-claude.mjs as
@@ -25,7 +25,7 @@ const SIZE = { cols: 400, rows: 30 }
 const TEXT = 'hello & world'
 const PROMPT = `/pod:task ${TEXT}`
 
-type Hooked = typeof globalThis & { __openaflowTest?: { terminals?: TestTerminals } }
+type Hooked = typeof globalThis & { __openaflowTest?: { terminals?: TestTerminals; quit?: TestQuit } }
 type Start = { pid: number; execPath: string; args: string[] }
 type Answer = { status: number; body: Record<string, unknown> }
 
@@ -375,6 +375,11 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       } finally {
         await first.close()
       }
+      // The quit asked about the live session; the test-hooks build answers end with no native box, so the close
+      // quits. The session's program is gone before the next start.
+      const log = readText(join(w.dir, 'shell', 'desktop.log'))
+      expect(log).toContain('openaflow desktop: quit asked about 1 sessions: end')
+      expect(starts(w).every((s) => !alive(s.pid)), log.slice(-4_000)).toBe(true)
       const second = await launch(w)
       try {
         await until('the repo on the Board', async () => (await repoOf(second, w)) !== undefined, 60_000, second, w)
@@ -388,6 +393,39 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       } finally {
         await second.close()
       }
+      expect(starts(w).every((s) => !alive(s.pid))).toBe(true)
+    } finally {
+      endFakes(w)
+      await removeWithRetry(w.dir)
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)('cancel at quit leaves the app as it was', async () => {
+    const w = makeWorld()
+    const log = join(w.dir, 'shell', 'desktop.log')
+    try {
+      const h = await launch(w)
+      try {
+        const { marker } = await liveSession(h, w)
+        const visible = () => h.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((x) => x.isVisible()))
+        await until('the window visible', async () => (await visible()).includes(true), 30_000, h, w)
+
+        await h.app.evaluate(() => (globalThis as Hooked).__openaflowTest!.quit!.answer('cancel'))
+        await h.app.evaluate(({ app }) => app.quit())
+        await until('the quit answered cancel', () => readText(log).includes('quit asked about 1 sessions: cancel'), 15_000, h, w)
+
+        // The tray's Open (and a second launch) still shows a hidden window.
+        await h.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.hide())
+        await until('the window hidden', async () => !(await visible()).includes(true), 15_000, h, w)
+        await h.app.evaluate(({ app }) => void app.emit('second-instance'))
+        await until('the window shown after the cancel', async () => (await visible()).includes(true), 15_000, h, w)
+        expect(await health(h)).toBe(true)
+        expect(await hosted(h, w, marker)).toMatchObject({ state: 'live' })
+      } finally {
+        await h.close()
+      }
+      // The harness's close() answers end: that quit ends the session.
+      expect(readText(log)).toContain('quit asked about 1 sessions: end')
       expect(starts(w).every((s) => !alive(s.pid))).toBe(true)
     } finally {
       endFakes(w)

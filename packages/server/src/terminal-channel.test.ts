@@ -32,6 +32,28 @@ afterEach(async () => {
 })
 
 describe('terminal channel', () => {
+  test('start carries the screen file and the stop; sweep and labels go out as they are', async () => {
+    const f = fakeLink()
+    const ch = createTerminalChannel({ link: f.link, log: (l) => logs.push(l) })
+    const withScreen: StartSpec = { ...spec(), screenFile: '/cfg/screens/x.txt' }
+    void ch.start(withScreen, ['/usr/bin/systemctl', '--user', 'stop', 'openaflow-run-x.scope'])
+    void ch.start(spec('22222222-2222-4222-8222-222222222222'))
+    expect(f.sent[0]).toEqual({ type: TERMINAL_MESSAGE, op: 'start', req: 1, spec: withScreen, stop: ['/usr/bin/systemctl', '--user', 'stop', 'openaflow-run-x.scope'] })
+    ch.sweep([{ id: M1, stop: ['/usr/bin/systemctl', '--user', 'stop', 'u'] }, { id: S1 }])
+    ch.labels([{ id: M1, label: 'a · no plan yet' }])
+    expect(f.sent).toEqual([
+      { type: TERMINAL_MESSAGE, op: 'start', req: 1, spec: withScreen, stop: ['/usr/bin/systemctl', '--user', 'stop', 'openaflow-run-x.scope'] },
+      { type: TERMINAL_MESSAGE, op: 'start', req: 2, spec: spec('22222222-2222-4222-8222-222222222222') },
+      { type: TERMINAL_MESSAGE, op: 'sweep', sessions: [{ id: M1, stop: ['/usr/bin/systemctl', '--user', 'stop', 'u'] }, { id: S1 }] },
+      { type: TERMINAL_MESSAGE, op: 'labels', labels: [{ id: M1, label: 'a · no plan yet' }] },
+    ])
+    // After close nothing more goes out.
+    ch.close()
+    ch.sweep([{ id: M1 }])
+    ch.labels([])
+    expect(f.sent).toHaveLength(4)
+  })
+
   test('start, list and dispose ask main and take its answers', async () => {
     const f = fakeLink()
     const ch = createTerminalChannel({ link: f.link, log: (l) => logs.push(l) })

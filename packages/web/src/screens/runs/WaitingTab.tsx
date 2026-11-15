@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { BoardRepo, RunSummary } from '@openaflow/model'
+import { terminalBridge } from '../../desktop-bridge.ts'
+import { requestTab } from '../../open-tab.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { AnswerForm } from './AnswerForm.tsx'
 import { INITIAL, createAnswerFlow, type AnswerState } from './answer-flow.ts'
 import { MergeConfirm, mergeButtonId, useMergeFlow } from './MergeConfirm.tsx'
-import type { NextItem } from './next-step.ts'
+import { codeParts, hostedRow, type NextItem } from './next-step.ts'
 import { answerNote, type WaitingRow } from './queue-view.ts'
 import { ReplyPanel } from './ReplyPanel.tsx'
 import { INITIAL_RESOLVE, createResolveFlow, resolveAnchor, triageTarget, type ResolveState } from './resolve-flow.ts'
@@ -68,6 +70,23 @@ function EntryToggle({ row, open, onToggle }: { row: WaitingRow; open: boolean; 
   )
 }
 
+/** Text with its backticked parts as code. */
+function CodeText({ text }: { text: string }) {
+  return (
+    <>
+      {codeParts(text).map((p, i) =>
+        p.code ? (
+          <code key={i} className="mono">
+            {p.text}
+          </code>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
+    </>
+  )
+}
+
 function KindTag({ row }: { row: WaitingRow }) {
   const k = kindChip(row)
   return <span className={`status ${k.cls} wait-kind`}>{k.label}</span>
@@ -85,6 +104,8 @@ export function WaitingTab({ repo, run, items }: Props) {
   const [resolve, setResolve] = useState<ResolveState>(INITIAL_RESOLVE)
   const resolveFlow = useMemo(() => createResolveFlow(setResolve), [])
   const answerButtons = useRef(new Map<string, HTMLButtonElement>())
+  // The desktop app's terminal bridge is there or not for the page's life; the browser build has none.
+  const [terminals] = useState(() => terminalBridge() !== undefined)
   const [lastReply, setLastReply] = useState<ReplySeen | undefined>()
   // Groups whose open state differs from their start (Someday starts closed), kept by key like the rows.
   const [flipped, setFlipped] = useState<ReadonlySet<string>>(() => new Set())
@@ -135,6 +156,8 @@ export function WaitingTab({ repo, run, items }: Props) {
     const isOpen = shown.has(item.key)
     // Close or Keep sits beside Answer, only on an entry you can answer.
     const triage = a.kind === 'answer' ? triageTarget(e, repo.id) : undefined
+    // A hosted reply or a waiting card: Open terminal (the desktop note in the browser), never Copy or Run it yourself.
+    const hosted = hostedRow(item, terminals)
     return (
       <li key={item.key} className={`wait-row t-${item.tier}`}>
         {e ? (
@@ -142,7 +165,11 @@ export function WaitingTab({ repo, run, items }: Props) {
         ) : (
           <div className="wait-head">
             <span className="wait-title">{item.title}</span>
-            {item.detail && <span className="wait-detail muted">{item.detail}</span>}
+            {(hosted?.detail ?? item.detail) && (
+              <span className="wait-detail muted">
+                <CodeText text={(hosted?.detail ?? item.detail)!} />
+              </span>
+            )}
           </div>
         )}
         {e && <TriageLine row={e} />}
@@ -182,7 +209,15 @@ export function WaitingTab({ repo, run, items }: Props) {
             </button>
           </div>
         )}
-        {a.kind === 'reply' && <ReplyPanel key="reply-panel" view={a.panel} target={a.panel.target} framed={false} />}
+        {hosted?.openTerminal && (
+          <div className="inplace-actions">
+            <button className="btn sm" type="button" onClick={() => requestTab('terminal')}>
+              Open terminal
+            </button>
+          </div>
+        )}
+        {hosted?.note && <p className="wait-detail muted">{hosted.note}</p>}
+        {a.kind === 'reply' && !hosted && <ReplyPanel key="reply-panel" view={a.panel} target={a.panel.target} framed={false} />}
         {answerAt === item.key && form}
         {mergeAt === item.key && confirm}
         {resolveAt === item.key && resolveError}

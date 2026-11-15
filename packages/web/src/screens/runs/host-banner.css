@@ -1,0 +1,67 @@
+/*
+ * The terminal host banner and the quit overlay (draft terminal-host-look, sections 4 and 5).
+ * Tokens only: the banner is the draft's blocked-bordered box; the overlay a full page with the run dot.
+ */
+
+.host-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--blocked);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.host-banner-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blocked);
+}
+
+.host-banner-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--size-body);
+  overflow-wrap: anywhere;
+}
+
+.host-banner-text b {
+  font-weight: 500;
+}
+
+.host-banner-text b::after {
+  content: "";
+  display: block;
+}
+
+.host-banner-note {
+  color: var(--muted);
+  font-size: var(--size-dense);
+}
+
+/* A full page over the screen: nothing under it takes a click while the sessions end. */
+.quit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.quit-overlay-line {
+  margin: 0;
+}
+
+.quit-overlay-line .status {
+  color: var(--fg);
+  font-size: var(--size-body);
+  white-space: normal;
+}

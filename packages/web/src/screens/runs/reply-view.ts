@@ -22,14 +22,15 @@ export type ReplyRowView = { key: string; word: ReplyWord; why: string; send?: '
 export type ReplySessionView = { line: string; time?: string; path: string; cd?: string; resume?: string }
 /**
  * `hosted`: the run's session is one the app hosts (`isHostedSession`), so no row sends (the server refuses it) and the
- * card says to type `word` in the terminal; `stopped` when the row's shown session ended or stopped.
+ * card says to type `word` in the terminal; `stopped` when the row's shown session ended or stopped; `resumable`
+ * only then, when the session's `resume` is `ok` (the Terminal tab's Resume works).
  */
 export type ReplyPanelView = {
   target: { repoId: string; run: string }
   rows: ReplyRowView[]
   session?: ReplySessionView
   noSession?: string
-  hosted?: { word: ReplyWord; stopped: boolean }
+  hosted?: { word: ReplyWord; stopped: boolean; resumable?: true }
 }
 
 /** Local `HH:MM`. */
@@ -72,10 +73,12 @@ export function replyPanel(run: RunSummary | undefined, repo: BoardRepo | undefi
   const target = { repoId: repo.id, run: plan }
   const holder = s && (repo.hosted ?? []).find((h) => h.sessions.includes(s.id))
   if (holder) {
-    const view = sessionView(shownSession(rowSessions(repo, plan, now)) ?? holder, now)
+    const hosting = shownSession(rowSessions(repo, plan, now)) ?? holder
+    const view = sessionView(hosting, now)
+    const stopped = view === 'ended' || view === 'stopped'
     const word = (rows.find((r) => r.send !== undefined) ?? rows[0]!).word
     const copyOnly = rows.map(({ send: _send, ...r }): ReplyRowView => r)
-    return { target, rows: copyOnly, noSession: HOSTED_CHAT, hosted: { word, stopped: view === 'ended' || view === 'stopped' } }
+    return { target, rows: copyOnly, noSession: HOSTED_CHAT, hosted: { word, stopped, ...(stopped && hosting.resume === 'ok' ? { resumable: true as const } : {}) } }
   }
   if (!s) return { target, rows, noSession: NO_SESSION }
   const session: ReplySessionView = { line: `Session ${s.id}`, path: s.repoPath }

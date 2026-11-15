@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DismissSessionResult } from '@openaflow/model'
 import { RESTARTED, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
 import { RELOAD, TRY_AGAIN } from '../../add-repo.ts'
-import { createDismissFlow, DISMISS_ERRORS, STILL_RUNNING, type DismissState } from './dismiss-flow.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { barStatus, createDismissFlow, DISMISS_ERRORS, STILL_RUNNING, type DismissState } from './dismiss-flow.ts'
+import { StopBarPanel } from './TerminalTab.tsx'
 
 const MARKER = '7f3c9a12-0000-4000-8000-000000000001'
 const TARGET = { repoId: 'notes', marker: MARKER }
@@ -59,6 +62,38 @@ describe('dismiss flow', () => {
     await gone.reply(fail(404, 'no session'))
     expect(gone.flow.state()).toEqual({ kind: 'idle' })
     expect(gone.done).toEqual(['gone'])
+
+    const bar = { dot: 's-idle' as const, word: 'Ended · Claude exited', line: 'The terminal ended at 14:02.', resume: false }
+    const draw = (s: { busy?: 'resume' | 'dismiss'; error?: string }) => renderToStaticMarkup(createElement(StopBarPanel, { bar, ...s, onResume: () => {}, onDismiss: () => {} }))
+    // A 409 shows the alert under the bar and keeps the bar.
+    const kept = setup()
+    kept.flow.dismiss(TARGET)
+    // While it is out: Dismiss is off, no alert.
+    const out = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, last: 'dismiss' }))
+    expect(out).toMatch(/<button class="btn" type="button" disabled=""[^>]*>Dismiss<\/button>/)
+    expect(out).not.toContain('role="alert"')
+    await kept.reply(fail(409, 'session is live'))
+    // Refused: the bar stays with Dismiss on, and the alert box sits under it with the words.
+    const html = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, last: 'dismiss' }))
+    expect(html).toContain('class="stop-bar"')
+    expect(html).toContain('Ended · Claude exited')
+    expect(html).toMatch(/<button class="btn" type="button"[^>]*>Dismiss<\/button>/)
+    expect(html).not.toMatch(/disabled=""/)
+    expect(html).toContain('role="alert"')
+    expect(html).toContain(STILL_RUNNING.replaceAll("'", '&#x27;'))
+    expect(html.indexOf('class="stop-bar"')).toBeLessThan(html.indexOf('role="alert"'))
+    expect(kept.done).toEqual([])
+
+    // One box: the error of the button pressed last. A Resume pressed after shows its own (or none).
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: true, last: 'resume' })).toEqual({})
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: true, resumeError: 'R', last: 'resume' })).toEqual({ error: 'R' })
+    // The bar no longer offers Resume (the Board says why it can't): the bar says it, so the box doesn't say it again.
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, resumeError: 'The session file is gone.', last: 'resume' })).toEqual({})
+    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: false, offers: true, resumeError: 'R', last: 'dismiss' })).toEqual({})
+    // Busy: Resume first, then Dismiss.
+    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: true, offers: true, last: 'resume' })).toEqual({ busy: 'resume' })
+    expect(barStatus({ dismiss: { kind: 'dismissing' }, resuming: false, offers: false, last: 'dismiss' })).toEqual({ busy: 'dismiss' })
+  
   })
 
   it('other refusals go in the box; the exact cause goes to the console', async () => {
