@@ -1,15 +1,15 @@
 # Sprint: Host core
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=1 -->
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=2 -->
 
 ## Status board
 
 | Wave | Slice | Title | Branch | PR | Status | Confidence | Depends on |
 |------|-------|-------|--------|----|--------|------------|------------|
-| 1 | N1 | node-pty proof: minimal pty host outside the asar, packaged, in CI on Windows and Linux | host-core-N1 | https://github.com/alvionlabs/openaflow/pull/117 | pushed | medium | — |
-| 1 | C1 | Linux start test, the Linux test failures, config copy keeps modified times | host-core-C1 | https://github.com/alvionlabs/openaflow/pull/117 | pushed | medium | — |
-| 1 | K1 | Hooks plugin and the hook-state reader | host-core-K1 | https://github.com/alvionlabs/openaflow/pull/117 | pushed | medium | — |
+| 1 | N1 | node-pty proof: minimal pty host outside the asar, packaged, in CI on Windows and Linux | host-core-N1 | merged | done | medium | — |
+| 1 | C1 | Linux start test, the Linux test failures, config copy keeps modified times | host-core-C1 | merged | done | medium | — |
+| 1 | K1 | Hooks plugin and the hook-state reader | host-core-K1 | merged | done | medium | — |
 | 2 | H1 | Full pty host: attach, replay, input, resize, flow control, heartbeat | host-core-H1 | — | pending | — | N1 |
 | 2 | S1 | Host starter and window link in the main process | host-core-S1 | — | pending | — | N1 |
 | 2 | P1 | Linux AppImage, release workflow, Linux verify job | host-core-P1 | — | pending | — | N1, C1, K1 |
