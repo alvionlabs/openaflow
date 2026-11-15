@@ -5,8 +5,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { answerOf, PICK_FOLDER_CHANNEL } from './folder-bridge.ts'
 import {
+  createDeliveries,
   createPortRequests,
-  PAGE_PORT_MESSAGE,
   TERMINAL_CONNECT_CHANNEL,
   TERMINAL_PORT_CHANNEL,
   TERMINAL_STATE_CHANNEL,
@@ -17,19 +17,11 @@ const STATES: readonly unknown[] = ['ready', 'unresponsive', 'restarted', 'faile
 
 // contextBridge can't carry a port, so it reaches the page as a `window` message. The call resolves once this
 // world sees that message too: the page's own listeners ran before it.
+const deliveries = createDeliveries<MessagePort>((message, port) => window.postMessage(message, window.location.origin, [port]))
+window.addEventListener('message', (e) => deliveries.seen(e.data))
 const ports = createPortRequests<MessagePort>({
   invoke: (id) => ipcRenderer.invoke(TERMINAL_CONNECT_CHANNEL, id),
-  deliver: (port, id) =>
-    new Promise<void>((resolve) => {
-      const seen = (e: MessageEvent) => {
-        const data = e.data as { type?: unknown; request?: unknown } | null
-        if (data?.type !== PAGE_PORT_MESSAGE || data.request !== id) return
-        window.removeEventListener('message', seen)
-        resolve()
-      }
-      window.addEventListener('message', seen)
-      window.postMessage({ type: PAGE_PORT_MESSAGE, request: id }, window.location.origin, [port])
-    }),
+  deliver: (port) => deliveries.deliver(port),
 })
 ipcRenderer.on(TERMINAL_PORT_CHANNEL, (e, message: { request?: unknown } | null) => ports.receive(message?.request, e.ports[0]))
 

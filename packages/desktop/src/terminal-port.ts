@@ -102,7 +102,7 @@ function replyError(reply: unknown): string | undefined {
 export function createPortRequests<P>(o: {
   invoke(id: number): Promise<unknown>
   /** Posts the port to the page; resolves once the page's listeners have run. */
-  deliver(port: P, id: number): Promise<void>
+  deliver(port: P): Promise<void>
 }): { connect(): Promise<void>; receive(id: unknown, port: P | undefined): void } {
   let next = 0
   const waiting = new Map<number, () => void>()
@@ -128,7 +128,30 @@ export function createPortRequests<P>(o: {
       const done = waiting.get(id)
       if (done === undefined) return
       waiting.delete(id)
-      void o.deliver(port, id).then(done)
+      void o.deliver(port).then(done)
+    },
+  }
+}
+
+/**
+ * The preload's posts of ports to the page, as §5's `{ type: 'openaflow:terminal-port' }` with the port in `ports[0]`.
+ * The preload's world sees each such message after the page's listeners ran; posts arrive in order, so each one seen
+ * ends the oldest delivery.
+ */
+export function createDeliveries<P>(post: (message: { type: typeof PAGE_PORT_MESSAGE }, port: P) => void): {
+  deliver(port: P): Promise<void>
+  /** Call with each `window` message's data. */
+  seen(data: unknown): void
+} {
+  const waiting: (() => void)[] = []
+  return {
+    deliver: (port) =>
+      new Promise<void>((resolve) => {
+        waiting.push(resolve)
+        post({ type: PAGE_PORT_MESSAGE }, port)
+      }),
+    seen(data) {
+      if (typeof data === 'object' && data !== null && 'type' in data && data.type === PAGE_PORT_MESSAGE) waiting.shift()?.()
     },
   }
 }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { BridgeCaller } from './folder-bridge.ts'
 import type { StarterEvent, StarterState } from './pty-host-starter.ts'
-import { createPortRequests, createTerminalLink, PORT_WAIT_MS, type PortReply, type TerminalHostState } from './terminal-port.ts'
+import { createDeliveries, createPortRequests, createTerminalLink, PORT_WAIT_MS, type PortReply, type TerminalHostState } from './terminal-port.ts'
 import { originOf } from './window-rules.ts'
 
 type Win = { id: number }
@@ -182,12 +182,12 @@ describe('the terminal link', () => {
 
 describe('the preload side', () => {
   const setupPreload = (reply: () => Promise<unknown>) => {
-    const delivered: Array<[Port, number]> = []
+    const delivered: Port[] = []
     let deliver!: () => void
     const requests = createPortRequests<Port>({
       invoke: vi.fn(reply),
-      deliver: (port, id) => {
-        delivered.push([port, id])
+      deliver: (port) => {
+        delivered.push(port)
         return new Promise<void>((resolve) => (deliver = resolve))
       },
     })
@@ -202,7 +202,7 @@ describe('the preload side', () => {
     expect(resolved).toBe(false)
     s.requests.receive(1, { name: 'p' })
     await vi.advanceTimersByTimeAsync(0)
-    expect(s.delivered).toEqual([[{ name: 'p' }, 1]])
+    expect(s.delivered).toEqual([{ name: 'p' }])
     expect(resolved).toBe(false)
     s.done()
     await p
@@ -221,7 +221,32 @@ describe('the preload side', () => {
     s.done()
     answer({ ok: true })
     await p
-    expect(s.delivered).toEqual([[{ name: 'early' }, 1]])
+    expect(s.delivered).toEqual([{ name: 'early' }])
+  })
+
+  test('the page gets exactly the contract message, and each delivery ends when the page has seen it', async () => {
+    const posted: Array<[unknown, Port]> = []
+    const d = createDeliveries<Port>((message, port) => posted.push([message, port]))
+    const done: string[] = []
+    void d.deliver({ name: 'a' }).then(() => done.push('a'))
+    void d.deliver({ name: 'b' }).then(() => done.push('b'))
+    expect(posted).toEqual([
+      [{ type: 'openaflow:terminal-port' }, { name: 'a' }],
+      [{ type: 'openaflow:terminal-port' }, { name: 'b' }],
+    ])
+    // Other messages end nothing.
+    for (const other of [undefined, null, 'openaflow:terminal-port', {}, { type: 'other' }]) d.seen(other)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toEqual([])
+    // Posts arrive in order, so the oldest delivery ends first.
+    d.seen({ type: 'openaflow:terminal-port' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toEqual(['a'])
+    d.seen({ type: 'openaflow:terminal-port' })
+    // One more than was posted changes nothing.
+    d.seen({ type: 'openaflow:terminal-port' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toEqual(['a', 'b'])
   })
 
   test('errors keep their word', async () => {
