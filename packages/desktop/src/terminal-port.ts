@@ -135,23 +135,42 @@ export function createPortRequests<P>(o: {
 
 /**
  * The preload's posts of ports to the page, as §5's `{ type: 'openaflow:terminal-port' }` with the port in `ports[0]`.
- * The preload's world sees each such message after the page's listeners ran; posts arrive in order, so each one seen
- * ends the oldest delivery.
+ * The preload's world sees a posted message before the page's world does, so `watch` sets a one-time listener in the
+ * page's world that ends after that message's dispatch, when every page listener has run. One delivery at a time, so
+ * each watch sees its own message.
  */
-export function createDeliveries<P>(post: (message: { type: typeof PAGE_PORT_MESSAGE }, port: P) => void): {
-  deliver(port: P): Promise<void>
-  /** Call with each `window` message's data. */
-  seen(data: unknown): void
-} {
-  const waiting: (() => void)[] = []
+export function createDeliveries<P>(o: {
+  watch(): Promise<void>
+  post(message: { type: typeof PAGE_PORT_MESSAGE }, port: P): void
+}): { deliver(port: P): Promise<void> } {
+  let last: Promise<void> = Promise.resolve()
   return {
-    deliver: (port) =>
-      new Promise<void>((resolve) => {
-        waiting.push(resolve)
-        post({ type: PAGE_PORT_MESSAGE }, port)
-      }),
-    seen(data) {
-      if (typeof data === 'object' && data !== null && 'type' in data && data.type === PAGE_PORT_MESSAGE) waiting.shift()?.()
+    deliver(port) {
+      const next = last.then(async () => {
+        const seen = o.watch()
+        o.post({ type: PAGE_PORT_MESSAGE }, port)
+        try {
+          await seen
+        } catch {
+          // No page world to watch (a closed or navigated frame): the post is all there is.
+        }
+      })
+      last = next
+      return next
     },
   }
 }
+
+/** The code `watch` runs in the page's world. A message that never comes ends the watch after 1 s, so nothing hangs. */
+export const WATCH_PAGE_PORT = `new Promise((resolve) => {
+  const end = () => {
+    window.removeEventListener('message', seen)
+    clearTimeout(limit)
+    setTimeout(resolve, 0)
+  }
+  const seen = (e) => {
+    if (e.data && e.data.type === ${JSON.stringify(PAGE_PORT_MESSAGE)}) end()
+  }
+  const limit = setTimeout(end, 1000)
+  window.addEventListener('message', seen)
+})`

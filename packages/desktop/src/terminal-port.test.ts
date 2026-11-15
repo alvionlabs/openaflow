@@ -224,29 +224,35 @@ describe('the preload side', () => {
     expect(s.delivered).toEqual([{ name: 'early' }])
   })
 
-  test('the page gets exactly the contract message, and each delivery ends when the page has seen it', async () => {
-    const posted: Array<[unknown, Port]> = []
-    const d = createDeliveries<Port>((message, port) => posted.push([message, port]))
+  test('the page gets exactly the contract message, one at a time, and each delivery ends when the page has seen it', async () => {
+    const steps: string[] = []
+    const seen: Array<() => void> = []
+    const d = createDeliveries<Port>({
+      watch: () => {
+        steps.push('watch')
+        return new Promise<void>((resolve) => seen.push(resolve))
+      },
+      post: (message, port) => steps.push(`post ${JSON.stringify(message)} ${port.name}`),
+    })
     const done: string[] = []
     void d.deliver({ name: 'a' }).then(() => done.push('a'))
     void d.deliver({ name: 'b' }).then(() => done.push('b'))
-    expect(posted).toEqual([
-      [{ type: 'openaflow:terminal-port' }, { name: 'a' }],
-      [{ type: 'openaflow:terminal-port' }, { name: 'b' }],
-    ])
-    // Other messages end nothing.
-    for (const other of [undefined, null, 'openaflow:terminal-port', {}, { type: 'other' }]) d.seen(other)
     await vi.advanceTimersByTimeAsync(0)
+    // The watch is set before the post, and b waits until the page has seen a.
+    expect(steps).toEqual(['watch', 'post {"type":"openaflow:terminal-port"} a'])
     expect(done).toEqual([])
-    // Posts arrive in order, so the oldest delivery ends first.
-    d.seen({ type: 'openaflow:terminal-port' })
+    seen.shift()!()
     await vi.advanceTimersByTimeAsync(0)
     expect(done).toEqual(['a'])
-    d.seen({ type: 'openaflow:terminal-port' })
-    // One more than was posted changes nothing.
-    d.seen({ type: 'openaflow:terminal-port' })
+    expect(steps.slice(2)).toEqual(['watch', 'post {"type":"openaflow:terminal-port"} b'])
+    seen.shift()!()
     await vi.advanceTimersByTimeAsync(0)
     expect(done).toEqual(['a', 'b'])
+
+    // A watch that fails still delivers, and the next one goes on.
+    const e = createDeliveries<Port>({ watch: () => Promise.reject(new Error('no frame')), post: () => {} })
+    await expect(e.deliver({ name: 'x' })).resolves.toBeUndefined()
+    await expect(e.deliver({ name: 'y' })).resolves.toBeUndefined()
   })
 
   test('errors keep their word', async () => {
