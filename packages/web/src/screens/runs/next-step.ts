@@ -268,6 +268,17 @@ export function cardTerminal(card: NextItem, terminals: boolean): CardTerminal {
   return terminals ? { ...detail, form: false, openTerminal: true } : { ...detail, form: false, openTerminal: false, note: DESKTOP_TERMINAL }
 }
 
+/**
+ * A hosted row in the Waiting tab's rest list (a hosted reply, or the waiting card): its words and Open terminal, or the
+ * desktop note in the browser. Defined means the row draws no reply panel, so no Copy and no Run it yourself. Any other
+ * row: undefined.
+ */
+export function hostedRow(item: NextItem, terminals: boolean): CardTerminal | undefined {
+  const a = item.action
+  if (a.kind !== 'open-terminal' && !(a.kind === 'reply' && a.panel.hosted)) return undefined
+  return cardTerminal(item, terminals)
+}
+
 /** `text` cut at its backticks: the parts between a pair show as code. An unpaired backtick stays text. */
 export function codeParts(text: string): { code: boolean; text: string }[] {
   const out: { code: boolean; text: string }[] = []
