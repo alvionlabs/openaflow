@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { buildFixPipeline, buildFlow, buildPipeline, type Board, type RunSummary } from '@openaflow/model'
+import { buildFixPipeline, buildFlow, buildPipeline, rowSessions, shownSession, type Board, type RunSummary } from '@openaflow/model'
 import type { StreamState } from '../../board-stream.ts'
 import { hashFor, type View } from '../../selection.ts'
 import { ConfirmModal } from '../../components/ConfirmModal.tsx'
+import { terminalBridge } from '../../desktop-bridge.ts'
+import { onTabRequest } from '../../open-tab.ts'
 import { returnFocus } from '../../components/modal.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { BoardScreen } from '../board/BoardScreen.tsx'
@@ -24,7 +26,7 @@ import {
   navigateAfterForget,
   type ForgetState,
 } from './forget-flow.ts'
-import { nextSteps } from './next-step.ts'
+import { cardTerminal, nextSteps } from './next-step.ts'
 import { runHeader } from './plan-view.ts'
 import { switchView } from './resume-flow.ts'
 import { MENU_TRIGGER_ID } from './BarMenu.tsx'
@@ -44,7 +46,9 @@ import { RunsList } from './RunsList.tsx'
 import { SideHandle } from './SideHandle.tsx'
 import { UrgentBanner } from './UrgentBanner.tsx'
 import { readWidth, saveWidth } from './sidebar-width.ts'
-import { readTab, saveTab, shownTab, type Tab, type TabStorage } from './tab-memory.ts'
+import { readTab, saveTab, shownTab, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
+import { hasTerminalTab, tabDot } from './terminal-tab.ts'
+import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
 import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
 import './runs.css'
@@ -76,14 +80,15 @@ function pageStorage(): TabStorage | undefined {
   }
 }
 
-const TAB_LABELS: Record<Tab, string> = { waiting: 'Waiting', log: 'Log' }
-const TABS: Tab[] = ['waiting', 'log']
+const TAB_LABELS: Record<Tab, string> = { waiting: 'Waiting', log: 'Log', terminal: 'Terminal' }
 
 export function RunsScreen({ board, stream, runs, selected, view, slice, agent, now, storage, planFallback, navigate }: Props) {
   const store = useRef(storage ?? pageStorage())
   const [stored, setStored] = useState<Tab | undefined>(() => readTab(store.current))
   const [picking, setPicking] = useState(false)
   const [sideWidth, setSideWidth] = useState(() => readWidth(store.current))
+  // The desktop app's terminal bridge is there or not for the page's life; the browser build has none.
+  const [bridge] = useState(() => terminalBridge())
   const repoButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
   // The hash the urgent banner's Open run went to, so focus lands on that run's title.
@@ -95,7 +100,13 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const pipeline = repo && !isFix && selected?.plan !== undefined ? buildPipeline(repo, selected.plan, now) : undefined
   const header = runHeader(selected, repo, now, board?.transcriptDays)
   const steps = nextSteps(selected, repo, now)
-  const shown = shownTab(stored, { view })
+  // The row's hosted session (the one the Next step card reads), and its Terminal tab: desktop app only.
+  const rowSession = repo && selected ? shownSession(rowSessions(repo, selected.plan, now)) : undefined
+  const terminal = hasTerminalTab(bridge !== undefined, rowSession)
+  const tabs = tabsFor({ terminal })
+  const shown = shownTab(stored, { view, terminal })
+  // The browser build shows the session under the card; the card may already say to open the desktop app.
+  const cardNote = steps !== undefined && cardTerminal(steps.card, false).note !== undefined
   const notices = banners(board, stream)
   const lost = connectionStatus(stream)
   const autoSwitch = switchView(selected, board)
@@ -115,8 +126,21 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   // Remove repo, from the header's ⋯ or a sidebar card's ⋯: both open the one confirm modal.
   // After a removal the page moves on when the open run's repo left.
   const [removeState, setRemoveState] = useState<RemoveState>(REMOVE_IDLE)
-  const latest = useRef({ planFallback, navigate, selected })
-  latest.current = { planFallback, navigate, selected }
+  const latest = useRef({ planFallback, navigate, selected, view, agent })
+  latest.current = { planFallback, navigate, selected, view, agent }
+  // Open terminal and a started New session ask for the Terminal tab. It is stored, not applied to this row only: the
+  // ⋯ New session moves the page in the same tick, and each row reads the stored tab as it can (`shownTab`).
+  useEffect(
+    () =>
+      onTabRequest((t) => {
+        saveTab(store.current, t)
+        setStored(t)
+        // An engineer's view always shows Log: go to its run, unless the page already moved on.
+        const { view: v, selected: run, agent: id } = latest.current
+        if (v === 'agent' && run && window.location.hash === hashFor(run, 'agent', id)) window.location.hash = hashFor(run)
+      }),
+    [],
+  )
   const removeFlow = useMemo(
     () =>
       createRemoveFlow(setRemoveState, (target, after) => {
@@ -183,6 +207,14 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     if (wasOpen.current && !modalOpen) setTimeout(() => returnFocus(MENU_TRIGGER_ID, document), 0)
     wasOpen.current = modalOpen
   }, [modalOpen])
+
+  // After Dismiss the stop bar leaves with its button: focus goes to the run title, unless the user has moved to
+  // another run since the press.
+  const shownRun = useRef(runKey)
+  shownRun.current = runKey
+  const dismissedOn = (key: string) => () => {
+    if (shownRun.current === key) runTitle.current?.focus()
+  }
 
   const press = (t: Tab) => {
     const next = tabPress(shown, t, view)
@@ -293,9 +325,18 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
               )}
               <Flow key={`flow:${runKey}`} stages={stages} />
               {steps && <NextStepCard key={runKey} repo={repo} run={selected} card={steps.card} />}
+              {!bridge && rowSession && <TerminalNote session={rowSession} now={now} note={!cardNote} />}
               <div className="tabs" role="group" aria-label="More about this run">
-                {TABS.map((t) => (
-                  <button key={t} className="tab" type="button" aria-expanded={shown === t} aria-controls={shown === t ? `tab-${t}` : undefined} onClick={() => press(t)}>
+                {tabs.map((t) => (
+                  <button
+                    key={t}
+                    className="tab"
+                    type="button"
+                    aria-expanded={shown === t}
+                    aria-controls={shown === t ? `tab-${t}` : undefined}
+                    onClick={() => press(t)}
+                  >
+                    {t === 'terminal' && tabDot(rowSession, now) && <span className="status s-run tab-dot" aria-hidden="true" />}
                     {TAB_LABELS[t]}
                     {t === 'waiting' && <span className="n">{steps?.rest.length ?? 0}</span>}
                   </button>
@@ -313,6 +354,17 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                       {...(view === 'agent' && agent !== undefined ? { agent } : {})}
                       now={now}
                       actions={board.actions ?? []}
+                    />
+                  )}
+                  {shown === 'terminal' && rowSession && (
+                    <TerminalTab
+                      key={runKey}
+                      repoId={repo.id}
+                      repoPath={repo.path}
+                      session={rowSession}
+                      now={now}
+                      bridge={bridge}
+                      onDismissed={dismissedOn(runKey)}
                     />
                   )}
                 </div>

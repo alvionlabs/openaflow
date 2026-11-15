@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { readTab, saveTab, shownTab, TAB_KEY, toggleTab, type TabStorage } from './tab-memory.ts'
+import type { HostedSession } from '@openaflow/model'
+import { readTab, saveTab, shownTab, TAB_KEY, tabsFor, toggleTab, type TabStorage } from './tab-memory.ts'
+import { hasTerminalTab } from './terminal-tab.ts'
 
 /** A plain-object storage; `fail` makes each call throw, as a browser with blocked site data does. */
 function store(initial: Record<string, string> = {}, fail = false): TabStorage & { data: Record<string, string> } {
@@ -69,5 +71,46 @@ describe('tab memory', () => {
     const s = store({ [TAB_KEY]: 'waiting' })
     expect(shownTab(readTab(s), { view: 'agent' })).toBe('log')
     expect(s.data[TAB_KEY]).toBe('waiting')
+  })
+
+  it('terminal tab', () => {
+    const session = (state: HostedSession['state']): HostedSession => ({
+      marker: 'm1',
+      sessionId: 's1',
+      liveSession: 's1',
+      sessions: ['s1'],
+      skill: 'plan',
+      startedAt: 0,
+      state,
+      hooked: true,
+      prompted: false,
+    })
+    // The tab shows only in the desktop app (a terminal bridge) and only on a row with a hosted session, in any state.
+    for (const state of ['starting', 'live', 'ended', 'stopped'] as const) {
+      expect(hasTerminalTab(true, session(state))).toBe(true)
+      expect(hasTerminalTab(false, session(state))).toBe(false)
+    }
+    expect(hasTerminalTab(true, undefined)).toBe(false)
+    expect(hasTerminalTab(false, undefined)).toBe(false)
+
+    // The tab list: Waiting and Log, then Terminal only where the row has it.
+    expect(tabsFor({ terminal: false })).toEqual(['waiting', 'log'])
+    expect(tabsFor({ terminal: true })).toEqual(['waiting', 'log', 'terminal'])
+
+    // A stored terminal is remembered like the other tabs.
+    const s = store()
+    saveTab(s, 'terminal')
+    expect(s.data[TAB_KEY]).toBe('terminal')
+    expect(readTab(s)).toBe('terminal')
+    // It shows on a row with the tab; on a row with no session, or in the browser (no tab), it reads closed.
+    expect(shownTab('terminal', { view: 'pipeline', terminal: true })).toBe('terminal')
+    expect(shownTab('terminal', { view: 'pipeline', terminal: false })).toBeUndefined()
+    expect(shownTab('terminal', { view: 'board', terminal: false })).toBeUndefined()
+    expect(shownTab('terminal', { view: 'pipeline' })).toBeUndefined()
+    // Reading it closed doesn't clear it: the next row with a session opens it again.
+    expect(s.data[TAB_KEY]).toBe('terminal')
+    // The other tabs don't care; an engineer's view still shows Log.
+    expect(shownTab('log', { view: 'pipeline', terminal: false })).toBe('log')
+    expect(shownTab('terminal', { view: 'agent', terminal: true })).toBe('log')
   })
 })
