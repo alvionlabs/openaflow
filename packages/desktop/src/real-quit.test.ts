@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
@@ -194,7 +194,6 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
         // Main's own pid: on Windows the process Playwright started is not the main process that forks the server.
         const main = await h.app.evaluate(() => process.pid)
-        const at = Date.now()
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
         // The server sees its parent gone at its next poll (2 s), then drains and exits.
@@ -208,10 +207,6 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
           } catch {
             // Gone meanwhile.
           }
-        }
-        // PROBE, to be reverted: the server's own trace of its parent watch and its shutdown.
-        for (const name of readdirSync(w.cfg).filter((n) => n.startsWith('probe-trace-'))) {
-          process.stderr.write(`real-quit › app crash leftovers: ${name} (main ${main}, killed at ${new Date(at).toISOString()})\n${readFileSync(join(w.cfg, name), 'utf8').split('\n').filter((l) => !l.includes('poll') || !l.endsWith(': ok')).join('\n')}\n`)
         }
         expect(serverOutlived, `the server (pid ${server}) still ran ${SERVER_AFTER_MAIN_MS / 1000} s after main ended`).toBe(false)
       })

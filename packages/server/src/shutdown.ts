@@ -3,7 +3,6 @@
 // signal quits at once. The rules and why are in pod-docs/feature-details/server.md.
 
 import type { MiddlewareHandler } from 'hono'
-import { probe, probeResources } from './probe-trace.ts'
 
 /** The longest shutdown waits for running work: past a merge's 60 s gh timeout, so it can finish and log. */
 export const DRAIN_CAP_MS = 70_000
@@ -58,9 +57,7 @@ export function createShutdown(d: ShutdownDeps): () => void {
   const exit = (code: number) => {
     if (exited) return
     exited = true
-    probe(`exit(${code}) called`)
     d.exit(code)
-    probe(`exit(${code}) returned`)
   }
   return () => {
     if (stopping) {
@@ -68,13 +65,9 @@ export function createShutdown(d: ShutdownDeps): () => void {
       return
     }
     stopping = true
-    probeResources('stop start')
-    setInterval(() => probeResources('heartbeat'), 3000).unref()
-    process.on('exit', (c) => probe(`process exit event ${c}`))
     d.auto.stop()
     d.server.close()
     const n = d.work.size()
-    probe(`server.close called; work ${n}`)
     if (n > 0) log(`openaflow: waiting for ${n} action${n === 1 ? '' : 's'} to finish; press Ctrl+C again to quit now`)
     let timer: NodeJS.Timeout | undefined
     const cap = new Promise<void>((resolve) => {
@@ -82,13 +75,10 @@ export function createShutdown(d: ShutdownDeps): () => void {
     })
     void Promise.race([Promise.all([d.auto.settled(), d.work.settled()]), cap])
       .finally(() => clearTimeout(timer))
-      .then(() => probe('drain settled'))
       .then(() => d.watcher.close())
-      .then(() => probe('watcher closed'))
       .catch(() => {})
       .then(() => {
         if (!exited) d.release?.()
-        probe('released')
       })
       .catch(() => {})
       .then(() => exit(0))
