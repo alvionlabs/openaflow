@@ -237,8 +237,9 @@ describe('board service', () => {
     const hooks = join(root, 'config', 'hooks')
     await mkdir(hooks, { recursive: true })
     const id = (n: number, c: string) => `${String(n).repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`
-    const [S1, L1, S2, L2, S3, S4, S5, S6, S7] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => id(n, 'a'))
-    const [R1, R2, R3, R4, R5, R6, R7, R8, R9] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => id(n, 'c'))
+    const nine = (c: string) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => id(n, c)) as [string, string, string, string, string, string, string, string, string]
+    const [S1, L1, S2, L2, S3, S4, S5, S6, S7] = nine('a')
+    const [R1, R2, R3, R4, R5, R6, R7, R8, R9] = nine('c')
     const conversation = async (repo: string, session: string) => {
       const dir = join(claudeDir, 'projects', projectDirName(repo))
       await mkdir(dir, { recursive: true })
