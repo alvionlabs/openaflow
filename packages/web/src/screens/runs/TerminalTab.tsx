@@ -89,7 +89,7 @@ function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed
   useEffect(() => () => flow.dispose(), [flow])
   // One alert box: the error of the button pressed last.
   const [last, setLast] = useState<'resume' | 'dismiss'>('dismiss')
-  const { busy, error } = barStatus({ dismiss: state, resuming, resumeError, last })
+  const { busy, error } = barStatus({ dismiss: state, resuming, offers: bar.resume, resumeError, last })
   return (
     <StopBarPanel
       bar={bar}

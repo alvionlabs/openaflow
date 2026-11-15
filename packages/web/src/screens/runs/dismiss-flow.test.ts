@@ -69,12 +69,12 @@ describe('dismiss flow', () => {
     const kept = setup()
     kept.flow.dismiss(TARGET)
     // While it is out: Dismiss is off, no alert.
-    const out = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, last: 'dismiss' }))
+    const out = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, last: 'dismiss' }))
     expect(out).toMatch(/<button class="btn" type="button" disabled=""[^>]*>Dismiss<\/button>/)
     expect(out).not.toContain('role="alert"')
     await kept.reply(fail(409, 'session is live'))
     // Refused: the bar stays with Dismiss on, and the alert box sits under it with the words.
-    const html = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, last: 'dismiss' }))
+    const html = draw(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, last: 'dismiss' }))
     expect(html).toContain('class="stop-bar"')
     expect(html).toContain('Ended · Claude exited')
     expect(html).toMatch(/<button class="btn" type="button"[^>]*>Dismiss<\/button>/)
@@ -85,12 +85,14 @@ describe('dismiss flow', () => {
     expect(kept.done).toEqual([])
 
     // One box: the error of the button pressed last. A Resume pressed after shows its own (or none).
-    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, last: 'resume' })).toEqual({})
-    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, resumeError: 'R', last: 'resume' })).toEqual({ error: 'R' })
-    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: false, resumeError: 'R', last: 'dismiss' })).toEqual({})
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: true, last: 'resume' })).toEqual({})
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: true, resumeError: 'R', last: 'resume' })).toEqual({ error: 'R' })
+    // The bar no longer offers Resume (the Board says why it can't): the bar says it, so the box doesn't say it again.
+    expect(barStatus({ dismiss: kept.flow.state(), resuming: false, offers: false, resumeError: 'The session file is gone.', last: 'resume' })).toEqual({})
+    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: false, offers: true, resumeError: 'R', last: 'dismiss' })).toEqual({})
     // Busy: Resume first, then Dismiss.
-    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: true, last: 'resume' })).toEqual({ busy: 'resume' })
-    expect(barStatus({ dismiss: { kind: 'dismissing' }, resuming: false, last: 'dismiss' })).toEqual({ busy: 'dismiss' })
+    expect(barStatus({ dismiss: { kind: 'idle' }, resuming: true, offers: true, last: 'resume' })).toEqual({ busy: 'resume' })
+    expect(barStatus({ dismiss: { kind: 'dismissing' }, resuming: false, offers: false, last: 'dismiss' })).toEqual({ busy: 'dismiss' })
   
   })
 

@@ -72,10 +72,11 @@ export function createDismissFlow(
 
 /**
  * The stop bar's busy button and its one alert box (session-life §9): busy while Resume or Dismiss runs; the error of
- * the button pressed last.
+ * the button pressed last, but no Resume error once the bar offers no Resume (`offers`), so one error shows in one place.
  */
-export function barStatus(o: { dismiss: DismissState; resuming: boolean; resumeError?: string | undefined; last: 'resume' | 'dismiss' }): { busy?: 'resume' | 'dismiss'; error?: string } {
+export function barStatus(o: { dismiss: DismissState; resuming: boolean; offers: boolean; resumeError?: string | undefined; last: 'resume' | 'dismiss' }): { busy?: 'resume' | 'dismiss'; error?: string } {
   const busy = o.resuming ? 'resume' : o.dismiss.kind === 'dismissing' ? 'dismiss' : undefined
-  const error = o.last === 'resume' ? o.resumeError : o.dismiss.kind === 'idle' ? o.dismiss.error : undefined
+  // A Resume refusal once the bar no longer offers Resume (the Board says why it can't): the bar says it, once.
+  const error = o.last === 'resume' ? (o.offers ? o.resumeError : undefined) : o.dismiss.kind === 'idle' ? o.dismiss.error : undefined
   return { ...(busy ? { busy } : {}), ...(error ? { error } : {}) }
 }
