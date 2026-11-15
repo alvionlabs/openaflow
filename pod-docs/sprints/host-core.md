@@ -1,7 +1,7 @@
 # Sprint: Host core
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=2 -->
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=0 waves=3 -->
 
 ## Status board
 
@@ -10,10 +10,10 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: active
 | 1 | N1 | node-pty proof: minimal pty host outside the asar, packaged, in CI on Windows and Linux | host-core-N1 | merged | done | medium | — |
 | 1 | C1 | Linux start test, the Linux test failures, config copy keeps modified times | host-core-C1 | merged | done | medium | — |
 | 1 | K1 | Hooks plugin and the hook-state reader | host-core-K1 | merged | done | medium | — |
-| 2 | H1 | Full pty host: attach, replay, input, resize, flow control, heartbeat | host-core-H1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1 |
-| 2 | S1 | Host starter and window link in the main process | host-core-S1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1 |
-| 2 | P1 | Linux AppImage, release workflow, Linux verify job | host-core-P1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1, C1, K1 |
-| 2 | A1 | Start command and skill list, proved with real `claude` | host-core-A1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1, K1 |
+| 2 | H1 | Full pty host: attach, replay, input, resize, flow control, heartbeat | host-core-H1 | merged | done | medium | N1 |
+| 2 | S1 | Host starter and window link in the main process | host-core-S1 | merged | done | medium | N1 |
+| 2 | P1 | Linux AppImage, release workflow, Linux verify job | host-core-P1 | merged | done | medium | N1, C1, K1 |
+| 2 | A1 | Start command and skill list, proved with real `claude` | host-core-A1 | merged | done | medium | N1, K1 |
 | 3 | E1 | Electron terminal checks, unpackaged and packaged, in CI; docs | host-core-E1 | — | pending | — | H1, S1, P1 |
 
 ## Shared contract
