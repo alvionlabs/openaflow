@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createTerminalLink, type TerminalLink } from '../../terminal-link.ts'
 import { readTerminalLook, watchTerminalLook } from '../../theme/terminal-theme.ts'
-import { focusMove, UNAVAILABLE } from './terminal-tab.ts'
+import { savedScreen } from '../../actions-client.ts'
+import { focusMove, screenHandlers, screenUnder, wantSaved, type Lost } from './terminal-tab.ts'
 
 let pageLink: TerminalLink | undefined
 
@@ -47,7 +48,10 @@ export function TerminalView({ id, bridge, attach, ended, focus = false, onFocus
   const term = useRef<import('@xterm/xterm').Terminal | undefined>(undefined)
   const [ready, setReady] = useState(false)
   // `gone`: the host has no such session; `unavailable`: the host can't be used (a later replay brings it back).
-  const [lost, setLost] = useState<'gone' | 'unavailable' | undefined>(undefined)
+  const [lost, setLost] = useState<Lost>(undefined)
+  // The stopped session's saved screen, once the host lacks it; asked for once.
+  const [saved, setSaved] = useState<string | undefined>(undefined)
+  const asked = useRef(false)
   // The attach was sent: keys typed from now on reach the session.
   const [attached, setAttached] = useState(false)
   const endedNow = useRef(ended)
@@ -115,22 +119,7 @@ export function TerminalView({ id, bridge, attach, ended, focus = false, onFocus
     const link = linkFor(bridge)
     let stopped = false
     void link
-      .open(id, sizeOf(t.cols, t.rows), {
-      replay(data) {
-        // A replay after the host restarted draws the whole screen again.
-        t.reset()
-        t.write(data)
-        setLost(undefined)
-      },
-      data(data, written) {
-        t.write(data, written)
-      },
-      exit() {
-        // The Board says it ended; the stop bar comes from there.
-      },
-      gone: () => setLost('gone'),
-      unavailable: () => setLost('unavailable'),
-    })
+      .open(id, sizeOf(t.cols, t.rows), screenHandlers(t, setLost))
       .then(() => {
         if (!stopped) setAttached(true)
       })
@@ -158,19 +147,50 @@ export function TerminalView({ id, bridge, attach, ended, focus = false, onFocus
     if (ended) t.blur()
   }, [ended, ready])
 
-  // An ended session the host no longer holds: the stop bar stands alone.
-  const hidden = lost !== undefined
+  useEffect(() => {
+    if (!wantSaved({ ended, lost }) || asked.current) return
+    asked.current = true
+    let stopped = false
+    void savedScreen(id).then((text) => {
+      if (!stopped) setSaved(text)
+    })
+    return () => {
+      stopped = true
+      asked.current = false
+    }
+  }, [id, ended, lost])
+
+  // An ended session the host no longer holds: its saved screen, else the stop bar stands alone.
+  const under = screenUnder({ ended, lost, saved })
+  const hidden = under.show !== 'terminal'
   return (
     <>
-      {hidden && !ended && (
+      {under.line !== undefined && (
         <p className="term-lost muted" role="status">
-          {UNAVAILABLE}
+          {under.line}
         </p>
       )}
+      {under.show === 'saved' && <SavedScreen text={saved ?? ''} />}
       {/* xterm opens in the inner box: fit measures its element whole, so the padding stays on the outer one. */}
       <div className={ended ? 'term faded' : 'term'} hidden={hidden} aria-hidden={ended ? true : undefined}>
         <div ref={box} className="term-fit" />
       </div>
     </>
+  )
+}
+
+/** A stopped session's saved screen, faded, as text: scrolled to its end, where the session stopped. */
+export function SavedScreen({ text }: { text: string }) {
+  const pre = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    const el = pre.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [text])
+  return (
+    <div className="term faded saved" aria-hidden="true">
+      <pre ref={pre} className="term-saved">
+        {text}
+      </pre>
+    </div>
   )
 }

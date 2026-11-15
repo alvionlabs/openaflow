@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { WAITING_AFTER_MS, type HostedSession } from '@openaflow/model'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DESKTOP_TERMINAL } from './next-step.ts'
 import { runChip } from './view.ts'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
+import { createTerminalLink } from '../../terminal-link.ts'
 import { StopBarPanel, TerminalNote, TerminalTab } from './TerminalTab.tsx'
-import { browserView, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
+import { SavedScreen } from './TerminalView.tsx'
+import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
 // Local times, so the HH:MM checks hold in any time zone.
 const START = new Date(2026, 10, 15, 13, 40).getTime()
@@ -219,5 +221,107 @@ describe('terminal tab', () => {
       expect(html).not.toContain('Resume')
       expect(stopBar({ ...s, resume: 'ok' }, NOW, false).resume).toBe(false)
     }
+  })
+
+  it('screen under the bar', () => {
+    // The host holds it: its replay, in xterm, faded. Else the saved screen, faded. Else the bar alone.
+    expect(screenUnder({ ended: true, lost: undefined, saved: 'old text' })).toEqual({ show: 'terminal' })
+    expect(screenUnder({ ended: true, lost: undefined, saved: undefined })).toEqual({ show: 'terminal' })
+    for (const lost of ['gone', 'unavailable'] as const) {
+      expect(screenUnder({ ended: true, lost, saved: 'old text' })).toEqual({ show: 'saved' })
+      // An empty file is a screen too.
+      expect(screenUnder({ ended: true, lost, saved: '' })).toEqual({ show: 'saved' })
+      expect(screenUnder({ ended: true, lost, saved: undefined })).toEqual({ show: 'none' })
+    }
+    // A live session the host lacks: the unavailable line, never a saved screen.
+    expect(screenUnder({ ended: false, lost: 'gone', saved: 'old text' })).toEqual({ show: 'none', line: UNAVAILABLE })
+    expect(screenUnder({ ended: false, lost: undefined, saved: undefined })).toEqual({ show: 'terminal' })
+    // The saved screen is asked for only once the host lacks an ended session.
+    expect(wantSaved({ ended: true, lost: 'gone' })).toBe(true)
+    expect(wantSaved({ ended: true, lost: 'unavailable' })).toBe(true)
+    expect(wantSaved({ ended: true, lost: undefined })).toBe(false)
+    expect(wantSaved({ ended: false, lost: 'gone' })).toBe(false)
+
+    // Drawn: the text as text (never HTML), faded, hidden from screen readers like the faded terminal.
+    const html = renderToStaticMarkup(createElement(SavedScreen, { text: 'line 1\n<b>2</b> & more' }))
+    expect(html).toMatch(/class="term faded saved"/)
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).toContain('<pre class="term-saved">line 1\n&lt;b&gt;2&lt;/b&gt; &amp; more</pre>')
+  })
+
+  it('host paths', async () => {
+    // The page's link to a fake host: each connect gives a new port, as the preload does.
+    type Sent = { type: string; id?: string }
+    const target = new EventTarget()
+    const win = target as unknown as Window
+    const ports: { sent: Sent[]; onmessage: ((e: { data: unknown }) => void) | null; postMessage(m: Sent): void }[] = []
+    let hostState: ((s: 'ready' | 'unresponsive' | 'restarted' | 'failed') => void) | undefined
+    const bridge: TerminalBridge = {
+      connect: vi.fn(async () => {
+        const port = { sent: [] as Sent[], onmessage: null as ((e: { data: unknown }) => void) | null, postMessage(m: Sent) { this.sent.push(m) } }
+        ports.push(port)
+        const e = new Event('message') as Event & { data: unknown; source: unknown; ports: unknown[] }
+        e.data = { type: 'openaflow:terminal-port' }
+        e.source = win
+        e.ports = [port]
+        target.dispatchEvent(e)
+      }),
+      onHostState: (fn) => ((hostState = fn), () => {}),
+    }
+    const link = createTerminalLink(bridge, win)
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+    }
+    // The view, as TerminalView runs it: attach when `canAttach`, with `screenHandlers`; draw what `screenUnder` says.
+    const drawn: string[] = []
+    let lost: 'gone' | 'unavailable' | undefined
+    const term = { reset: () => drawn.splice(0), write: (d: string) => void drawn.push(d) }
+    const handlers = screenHandlers(term, (l) => (lost = l))
+    let opened = false
+    const render = async (s: HostedSession) => {
+      if (!opened && canAttach(s, NOW)) {
+        opened = true
+        await link.open(s.marker, { cols: 80, rows: 24 }, handlers)
+      }
+      await flush()
+      return screenUnder({ ended: terminalBody(s, NOW, true).kind === 'stopped', lost, saved: undefined })
+    }
+
+    // Starting: no attach (not even a connect), while the host may not hold it yet.
+    expect(canAttach(STARTING, NOW)).toBe(false)
+    expect(await render(STARTING)).toEqual({ show: 'terminal' })
+    expect(bridge.connect).not.toHaveBeenCalled()
+    // Live: resize, then attach; the replay draws.
+    expect(canAttach(LIVE, NOW)).toBe(true)
+    expect(canAttach(WAITING, START + WAITING_AFTER_MS)).toBe(true)
+    await render(LIVE)
+    expect(ports[0]!.sent.map((m) => m.type)).toEqual(['resize', 'attach'])
+    ports[0]!.onmessage!({ data: { type: 'replay', id: LIVE.marker, data: 'screen 1' } })
+    expect(drawn).toEqual(['screen 1'])
+
+    // The host failed for good: the unavailable line in place of the terminal.
+    hostState!('failed')
+    expect(lost).toBe('unavailable')
+    expect(await render(LIVE)).toEqual({ show: 'none', line: UNAVAILABLE })
+
+    // The host restarted: the page connects again and attaches again; the replay brings the terminal back.
+    hostState!('restarted')
+    await flush()
+    expect(ports).toHaveLength(2)
+    expect(ports[1]!.sent.map((m) => m.type)).toEqual(['resize', 'attach'])
+    ports[1]!.onmessage!({ data: { type: 'replay', id: LIVE.marker, data: 'screen 2' } })
+    expect(lost).toBeUndefined()
+    expect(drawn).toEqual(['screen 2'])
+    expect(await render(LIVE)).toEqual({ show: 'terminal' })
+    // Live data after it, acked once written.
+    ports[1]!.onmessage!({ data: { type: 'data', id: LIVE.marker, data: 'more' } })
+    expect(drawn).toEqual(['screen 2', 'more'])
+
+    // A restart the host lost the session in: gone, and a live session reads unavailable.
+    hostState!('restarted')
+    await flush()
+    ports[2]!.onmessage!({ data: { type: 'error', id: LIVE.marker, error: 'no session' } })
+    expect(lost).toBe('gone')
+    expect(await render(LIVE)).toEqual({ show: 'none', line: UNAVAILABLE })
   })
 })

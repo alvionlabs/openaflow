@@ -4,6 +4,7 @@
 
 import { sessionDot, sessionView, sessionWord, type HostedSession, type SessionDot, type SessionResume } from '@openaflow/model'
 import { hashFor, parseHash } from '../../selection.ts'
+import type { TerminalHandlers } from '../../terminal-link.ts'
 import { DESKTOP_TERMINAL } from './next-step.ts'
 import type { ChipClass } from './view.ts'
 
@@ -99,4 +100,43 @@ export const keepFocusAsk = (ask: string | undefined, shown: string): boolean =>
 export function focusMove(v: { attached: boolean; ended: boolean; lost: boolean }): FocusMove {
   if (v.ended || v.lost) return 'drop'
   return v.attached ? 'take' : 'wait'
+}
+
+/** Why the host can't give a session's screen: it has no such session (`gone`), or it can't be used (`unavailable`). */
+export type Lost = 'gone' | 'unavailable' | undefined
+
+/** A `starting` session holds its attach until it is live: the host may not hold it yet, and an early attach would read as gone. */
+export const canAttach = (s: HostedSession, now: number): boolean => sessionView(s, now) !== 'starting'
+
+/** The view's handlers on the terminal link: a replay draws the whole screen again and brings the terminal back. */
+export function screenHandlers(t: { reset(): void; write(data: string, done?: () => void): void }, setLost: (l: Lost) => void): TerminalHandlers {
+  return {
+    replay(data) {
+      // A replay after the host restarted draws the whole screen again.
+      t.reset()
+      t.write(data)
+      setLost(undefined)
+    },
+    data(data, written) {
+      t.write(data, written)
+    },
+    exit() {
+      // The Board says it ended; the stop bar comes from there.
+    },
+    gone: () => setLost('gone'),
+    unavailable: () => setLost('unavailable'),
+  }
+}
+
+/** The saved screen is asked for once the host lacks an ended session. */
+export const wantSaved = (v: { ended: boolean; lost: Lost }): boolean => v.ended && v.lost !== undefined
+
+/**
+ * What the view draws (session-life §9). A live session: the terminal, or the unavailable line once the host lacks it.
+ * Under the stop bar: the host's replay while it holds the session; else the saved screen; else nothing.
+ */
+export function screenUnder(v: { ended: boolean; lost: Lost; saved: string | undefined }): { show: 'terminal' | 'saved' | 'none'; line?: string } {
+  if (v.lost === undefined) return { show: 'terminal' }
+  if (!v.ended) return { show: 'none', line: UNAVAILABLE }
+  return { show: v.saved === undefined ? 'none' : 'saved' }
 }

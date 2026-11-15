@@ -9,7 +9,7 @@ import { ModalAlert } from '../../components/ModalAlert.tsx'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createDismissFlow, type DismissState } from './dismiss-flow.ts'
 import { createResumeFlow, resumeBusy, resumeError, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
-import { browserView, terminalBody, type StopBar } from './terminal-tab.ts'
+import { browserView, canAttach, terminalBody, type StopBar } from './terminal-tab.ts'
 import { TerminalView } from './TerminalView.tsx'
 import './terminal.css'
 
@@ -57,7 +57,7 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
           {...(onDismissed ? { onDismissed } : {})}
         />
       )}
-      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={view !== 'starting'} ended={ended} focus={focus || ownFocus} onFocusDone={focusDone} />
+      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={canAttach(session, now)} ended={ended} focus={focus || ownFocus} onFocusDone={focusDone} />
       {!ended && (
         <p className="term-foot">
           <span className={`status ${view === 'waiting' ? 's-you' : 's-run'}`}>{sessionWord(session, now)}</span>
