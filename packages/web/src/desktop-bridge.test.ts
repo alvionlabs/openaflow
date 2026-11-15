@@ -71,4 +71,39 @@ describe('terminal bridge', () => {
     const bridge = terminalBridge({ openaflow: { connectTerminals: async () => {} } })!
     expect(() => bridge.onHostState(() => {})()).not.toThrow()
   })
+
+  it('gives onQuitting and hostState, or undefined where the page lacks them', async () => {
+    const bare = terminalBridge({ openaflow: { connectTerminals: async () => {} } })!
+    expect(bare.onQuitting).toBeUndefined()
+    expect(bare.hostState).toBeUndefined()
+    // Not functions: left out, not called.
+    const wrong = terminalBridge({ openaflow: { connectTerminals: async () => {}, onQuitting: 'x', terminalHostState: 1 } })!
+    expect(wrong.onQuitting).toBeUndefined()
+    expect(wrong.hostState).toBeUndefined()
+
+    let quit: ((n: number) => void) | undefined
+    const off = vi.fn()
+    const terminalHostState = vi.fn(async () => 'unresponsive')
+    const bridge = terminalBridge({
+      openaflow: {
+        connectTerminals: async () => {},
+        onQuitting: (fn: (n: number) => void) => {
+          quit = fn
+          return off
+        },
+        terminalHostState,
+      },
+    })!
+    const counts: number[] = []
+    const stop = bridge.onQuitting!((n) => counts.push(n))
+    quit!(2)
+    expect(counts).toEqual([2])
+    stop()
+    expect(off).toHaveBeenCalled()
+    await expect(bridge.hostState!()).resolves.toBe('unresponsive')
+    expect(terminalHostState).toHaveBeenCalledTimes(1)
+    // A shell whose onQuitting returns nothing still gives a stop function.
+    const quiet = terminalBridge({ openaflow: { connectTerminals: async () => {}, onQuitting: () => undefined } })!
+    expect(() => quiet.onQuitting!(() => {})()).not.toThrow()
+  })
 })
