@@ -4,6 +4,7 @@
 // pod-docs/feature-details/server.md.
 
 import { envValue, type Env } from './config.ts'
+import { probe } from './probe-trace.ts'
 
 export const STOP_MESSAGE = { type: 'openaflow:stop' } as const
 export type ReadyMessage = { type: 'openaflow:ready'; port: number }
@@ -64,8 +65,10 @@ export function isStopMessage(m: unknown): boolean {
 export function processAlive(pid: number, kill: (pid: number, signal: number) => unknown = process.kill): boolean {
   try {
     kill(pid, 0)
+    probe(`poll ${pid}: ok`)
     return true
   } catch (err) {
+    probe(`poll ${pid}: ${(err as NodeJS.ErrnoException).code}`)
     return (err as NodeJS.ErrnoException).code !== 'ESRCH'
   }
 }
@@ -155,7 +158,15 @@ export function linkParent(o: { env: Env; stops: StopPath; proc?: ProcessLike })
   channel?.onMessage((m) => {
     if (isStopMessage(m)) o.stops.request()
   })
-  if (pid !== undefined) watchParent({ pid, onGone: () => o.stops.request() })
+  probe(`link: platform ${process.platform}, pid ${process.pid}, ppid ${process.ppid}, parent ${pid}, parentPort ${proc.parentPort !== undefined}`)
+  if (pid !== undefined)
+    watchParent({
+      pid,
+      onGone: () => {
+        probe('parent gone: stop requested')
+        o.stops.request()
+      },
+    })
   let sent = false
   return {
     ...(terminals ? { terminals } : {}),
