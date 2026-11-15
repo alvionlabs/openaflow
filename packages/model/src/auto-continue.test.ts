@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as model from './index.ts'
-import type { AgentRun, Board, BoardRepo, Claim, PrStatus } from './board.ts'
+import type { AgentRun, Board, BoardRepo, Claim, HostedSession, PrStatus } from './board.ts'
 import { autoMaySend, autoSends, sendableFrom, sendableReply, type AutoToggle, repoPathKey } from './auto-continue.ts'
 import { SEND_SIGNALS, runReplies, type ReplySignal, type ReplyWord, type RunReply } from './replies.ts'
 import { buildRepoModel, type RepoFiles } from './run-model.ts'
@@ -403,6 +403,62 @@ describe('autoSends', () => {
     expect(autoSends(board(a, c), [toggle('alpha'), toggle('alpha', undefined, '/b')], NOW, always).map((x) => x.session)).toEqual(['sess-1', 'sess-2'])
     // A busy first session doesn't stop the second.
     expect(autoSends(board(a, c), [toggle('alpha'), toggle('alpha', undefined, '/b')], NOW, (_r, s) => s === 'sess-2').map((x) => x.session)).toEqual(['sess-2'])
+  })
+})
+
+/** A session the app hosts, holding `sessions` (its start id first). */
+function hostedSession(state: HostedSession['state'], sessions: string[], over: Partial<HostedSession> = {}): HostedSession {
+  return { marker: `m-${state}`, sessionId: sessions[0]!, liveSession: sessions.at(-1)!, sessions, skill: 'plan', startedAt: NOW - 30 * MIN, state, hooked: true, prompted: true, ...over }
+}
+
+describe('hosted sessions get no automatic send', () => {
+  it('hosted sessions get no automatic send', () => {
+    const { repo } = BY_SIGNAL['wave-merged']
+    const t: AutoToggle[] = [{ path: '/r', run: 'alpha' }]
+    // Sanity: the same run with no hosted session sends.
+    expect(autoSends(board(repo), t, NOW, always)).toHaveLength(1)
+    const states: [HostedSession['state'], Partial<HostedSession>][] = [
+      ['starting', {}],
+      ['live', {}],
+      ['live', { hooked: false, startedAt: NOW - 20 * MIN }],
+      ['ended', { exitCode: 0, endedAt: NOW - MIN }],
+      ['stopped', { stopReason: 'terminals restarted' }],
+      ['stopped', { stopReason: 'app closed' }],
+    ]
+    for (const [state, over] of states) {
+      const asked: string[] = []
+      const hosted = { ...repo, hosted: [hostedSession(state, ['sess-1'], over)] }
+      expect(autoSends(board(hosted), t, NOW, (_r, s) => (asked.push(s), true)), state).toEqual([])
+      // The idle check is never asked about it.
+      expect(asked, state).toEqual([])
+    }
+  })
+
+  it('a hosted session on another repo, or another session here, changes nothing', () => {
+    const { repo } = BY_SIGNAL['wave-merged']
+    const t: AutoToggle[] = [{ path: '/r', run: 'alpha' }]
+    const other = { ...planRepo(BETWEEN, {}, 'sess-1'), id: 'id-b', path: '/b', hosted: [hostedSession('live', ['sess-1'])] }
+    expect(autoSends(board(repo, other), t, NOW, always)).toHaveLength(1)
+    expect(autoSends(board({ ...repo, hosted: [hostedSession('live', ['sess-9'])] }), t, NOW, always)).toHaveLength(1)
+  })
+
+  it('the next toggle on another session still sends', () => {
+    const a = { ...BY_SIGNAL['wave-merged'].repo, hosted: [hostedSession('live', ['sess-1'])] }
+    const c = { ...planRepo(BETWEEN, {}, 'sess-2'), id: 'id-b', path: '/b' }
+    expect(autoSends(board(a, c), [{ path: '/r', run: 'alpha' }, { path: '/b', run: 'alpha' }], NOW, always).map((x) => x.session)).toEqual(['sess-2'])
+  })
+})
+
+describe('every held id', () => {
+  it('every held id', () => {
+    // The session started as sess-start; after /clear the run's agent writes under sess-1.
+    const { repo } = BY_SIGNAL['wave-merged']
+    const t: AutoToggle[] = [{ path: '/r', run: 'alpha' }]
+    const cleared = hostedSession('live', ['sess-start', 'sess-1'])
+    expect(autoSends(board({ ...repo, hosted: [cleared] }), t, NOW, always)).toEqual([])
+    // Its start id too, when the run's agent still writes under it.
+    const first = planRepo({ docs: { one: PUSHED } }, { prs: [gh(7, 'merged')], hosted: [cleared] }, 'sess-start')
+    expect(autoSends(board(first), t, NOW, always)).toEqual([])
   })
 })
 
