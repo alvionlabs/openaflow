@@ -27,6 +27,16 @@ const require = createRequire(import.meta.url)
 
 type Hook = { at: number; payload: Record<string, unknown> | null }
 
+/** The hook file's lines; a line that doesn't parse (one being written) is skipped, as contract §8 says. */
+const hookLines = (text: string): Hook[] =>
+  text.split('\n').flatMap((l) => {
+    try {
+      return l.trim() ? [JSON.parse(l) as Hook] : []
+    } catch {
+      return []
+    }
+  })
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** What the launch saw; the tests only read it. */
@@ -76,7 +86,7 @@ describe.runIf(REAL)('real claude start', () => {
     seen.cmd = cmd
     seen.sessionId = sessionId
     const hookFile = join(configDir, 'hooks', `${runMarker}.jsonl`)
-    const hooks = (): Hook[] => (existsSync(hookFile) ? readFileSync(hookFile, 'utf8') : '').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Hook)
+    const hooks = (): Hook[] => hookLines(existsSync(hookFile) ? readFileSync(hookFile, 'utf8') : '')
     const has = (event: string) => hooks().some((h) => h.payload?.hook_event_name === event)
 
     const cols = 120
@@ -137,8 +147,12 @@ describe.runIf(REAL)('real claude start', () => {
       const file = join(projects, dir, `${sessionId}.jsonl`)
       if (!existsSync(file)) continue
       for (const line of readFileSync(file, 'utf8').split('\n')) {
-        if (!line.trim()) continue
-        const rec = JSON.parse(line) as { type?: string; message?: { model?: string; content?: unknown } }
+        let rec: { type?: string; message?: { model?: string; content?: unknown } }
+        try {
+          rec = JSON.parse(line)
+        } catch {
+          continue // empty, or still being written
+        }
         if (rec.type !== 'assistant') continue
         if (rec.message?.model) seen.models.push(rec.message.model)
         const content = Array.isArray(rec.message?.content) ? (rec.message.content as { type: string; text?: string }[]) : []
@@ -149,18 +163,14 @@ describe.runIf(REAL)('real claude start', () => {
 
   afterAll(async () => {
     // One summary line, so a run on another machine shows what it saw.
-    const names = seen.hookText.split('\n').filter(Boolean).map((l) => (JSON.parse(l) as Hook).payload?.hook_event_name)
+    const names = hookLines(seen.hookText).map((h) => h.payload?.hook_event_name)
     console.log(`real-claude-start: trust prompt ${seen.trustScreen ? 'shown' : 'not shown'}; models ${seen.models.join(', ')}; hooks ${names.join(', ')}`)
     await stop()
     if (root) rmSync(root, { recursive: true, force: true })
   })
 
   const events = (name: string) =>
-    seen.hookText
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Hook)
-      .filter((h) => h.payload?.hook_event_name === name)
+    hookLines(seen.hookText).filter((h) => h.payload?.hook_event_name === name)
 
   test('a slash command start argument runs as the first turn', () => {
     expect(seen.models.length, `no assistant record in the transcript; screen:\n${seen.screen}`).toBeGreaterThan(0)
