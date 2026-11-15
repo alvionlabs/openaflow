@@ -53,7 +53,6 @@ export function readStat(r: ProcReader, pid: number): ProcStat | null {
  */
 export function snapshot(r: ProcReader, o: { pid: number; marker: string }): Snapshot {
   const out: Snapshot = new Map()
-  if (!MARKER_RE.test(o.marker)) return out
   const stats: ProcStat[] = []
   for (const pid of r.pids()) {
     const s = readStat(r, pid)

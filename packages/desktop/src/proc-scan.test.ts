@@ -68,6 +68,8 @@ describe('snapshot', () => {
       { pid: 1006, ppid: 1, pgid: 1006, start: 106, env: null }, // unreadable stranger
       { pid: 1007, ppid: 1000, pgid: 1000, state: 'Z', start: 107, env: marked }, // a zombie is gone already
       { pid: 2000, ppid: 1, pgid: 2000, start: 200, env: ['PATH=/usr/bin'] }, // a stranger
+      { pid: 2001, ppid: 1, pgid: 2001, start: 201, env: ['OPENAFLOW_RUN='] }, // empty marker
+      { pid: 2002, ppid: 1, pgid: 2002, start: 202, env: ['OPENAFLOW_RUN=A B'] }, // not a marker
     ], { unreadableStat: [3000] })
 
   test('holds the group, the descendants, and marker holders with start times, and skips unreadable entries', () => {
