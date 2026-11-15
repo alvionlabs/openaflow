@@ -1,7 +1,8 @@
 import { isAbsolute } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { HostToMain, StartSpec } from './protocol.ts'
+import type { HostToMain, HostToWindow, StartSpec } from './protocol.ts'
 import { startPtyHost, type PtyModule, type PtyProcess, type PtySpawnOptions } from './service.ts'
+import type { WindowPort } from './session.ts'
 
 type FakePty = PtyProcess & {
   file: string
@@ -12,6 +13,7 @@ type FakePty = PtyProcess & {
   /** With `latePid`: the process starts now, as ConPTY's does after its output pipe connects. */
   connect(): void
   killed: string[]
+  written: string[]
 }
 
 const DIR = isAbsolute('/work') ? '/work' : 'C:\\work'
@@ -38,6 +40,11 @@ function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?:
         args,
         options,
         killed: [],
+        written: [],
+        write: (d) => void pty.written.push(d),
+        resize: () => {},
+        pause: () => {},
+        resume: () => {},
         onData: (fn) => {
           data.push(fn)
           return { dispose() {} }
@@ -74,7 +81,30 @@ function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModul
     ...(o.shutdownWaitMs === undefined ? {} : { shutdownWaitMs: o.shutdownWaitMs }),
   })
   const of = <T extends HostToMain['type']>(type: T) => sent.filter((m): m is Extract<HostToMain, { type: T }> => m.type === type)
-  return { service, sent, exits, spawned: pty.spawned, of }
+  /** What main got, without `ready` and the beats. */
+  const answers = () => sent.filter((m) => m.type !== 'ready' && m.type !== 'beat')
+  /** A window port, given to the host as main's `connect` does. */
+  const connect = () => {
+    const w = fakePort()
+    service.handle({ type: 'connect' }, [w.port])
+    return w
+  }
+  return { service, sent, exits, spawned: pty.spawned, of, answers, connect }
+}
+
+/** A stand-in for Electron's MessagePortMain. */
+function fakePort() {
+  const on: { message: ((e: { data: unknown }) => void)[]; close: (() => void)[] } = { message: [], close: [] }
+  const got: HostToWindow[] = []
+  let started = false
+  const port: WindowPort = {
+    on: (event: 'message' | 'close', fn: never) => void on[event].push(fn),
+    start: () => {
+      started = true
+    },
+    postMessage: (m) => void got.push(m as HostToWindow),
+  }
+  return { port, got, started: () => started, send: (data: unknown) => on.message.forEach((fn) => fn({ data })), close: () => on.close.forEach((fn) => fn()) }
 }
 
 const spec = (o: Partial<StartSpec> = {}): StartSpec => ({ id: 'run-1', program: PROGRAM, args: ['-c', 'echo hi'], cwd: DIR, env: { TERM: 'xterm-256color' }, cols: 80, rows: 24, ...o })
@@ -300,7 +330,7 @@ describe('pty host service', () => {
       h.spawned[0]!.connect()
       h.spawned[0]!.end(7)
       h.spawned[0]!.end(7)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([
+      expect(h.answers()).toEqual([
         { type: 'started', id: 'run-1', pid: 100 },
         { type: 'exit', id: 'run-1', exitCode: 7 },
       ])
@@ -311,9 +341,9 @@ describe('pty host service', () => {
       const h = host({ pty: fakePtyModule({ latePid: true }) })
       h.service.handle({ type: 'start', spec: spec() })
       h.spawned[0]!.end(-1)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the program ended before it started (exit code -1)' }])
+      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the program ended before it started (exit code -1)' }])
       await vi.advanceTimersByTimeAsync(20_000)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      expect(h.answers()).toHaveLength(1)
       h.service.handle({ type: 'snapshot', id: 'run-1' })
       await vi.advanceTimersByTimeAsync(10)
       expect(h.of('snapshot')).toEqual([{ type: 'snapshot', id: 'run-1', text: null }])
@@ -327,15 +357,15 @@ describe('pty host service', () => {
       const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
       h.service.handle({ type: 'start', spec: spec() })
       await vi.advanceTimersByTimeAsync(9_990)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([])
+      expect(h.answers()).toEqual([])
       await vi.advanceTimersByTimeAsync(20)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: no process ID after 10 s' }])
+      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: no process ID after 10 s' }])
       expect(h.spawned[0]!.killed).toHaveLength(1)
       // A pid or exit that comes later sends nothing.
       h.spawned[0]!.connect()
       h.spawned[0]!.end(0)
       await vi.advanceTimersByTimeAsync(1_000)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      expect(h.answers()).toHaveLength(1)
       h.service.handle({ type: 'start', spec: spec() })
       expect(h.spawned).toHaveLength(2)
     })
@@ -353,11 +383,11 @@ describe('pty host service', () => {
       const h = host({ pty: fakePtyModule({ latePid: true }) })
       h.service.handle({ type: 'start', spec: spec() })
       h.service.handle({ type: 'dispose', id: 'run-1' })
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: disposed before it started' }])
+      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: disposed before it started' }])
       expect(h.spawned[0]!.killed).toHaveLength(1)
       h.spawned[0]!.connect()
       await vi.advanceTimersByTimeAsync(20_000)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      expect(h.answers()).toHaveLength(1)
     })
 
     test('shutdown while waiting answers spawn failed and the host still exits', async () => {
@@ -365,13 +395,13 @@ describe('pty host service', () => {
       const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
       h.service.handle({ type: 'start', spec: spec() })
       h.service.handle({ type: 'shutdown' })
-      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the host is shutting down' }])
+      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the host is shutting down' }])
       expect(h.spawned[0]!.killed).toHaveLength(1)
       await vi.advanceTimersByTimeAsync(0)
       expect(h.exits).toEqual([0])
       h.spawned[0]!.connect()
       await vi.advanceTimersByTimeAsync(20_000)
-      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      expect(h.answers()).toHaveLength(1)
     })
   })
 
@@ -381,5 +411,278 @@ describe('pty host service', () => {
       expect(() => h.service.handle(m)).not.toThrow()
     }
     expect(h.spawned).toHaveLength(0)
+  })
+  test('the host beats every 5 s', async () => {
+    vi.useFakeTimers()
+    const h = host()
+    expect(h.sent).toEqual([{ type: 'ready', version: 1 }])
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(h.of('beat')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.of('beat')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.of('beat')).toHaveLength(3)
+    expect(h.of('ready')).toHaveLength(1)
+    // The beats stop once the host has shut down.
+    h.service.handle({ type: 'shutdown' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.exits).toEqual([0])
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(h.of('beat')).toHaveLength(3)
+  })
+
+  test('a host that failed to load never beats', async () => {
+    vi.useFakeTimers()
+    const h = host({
+      load: () => {
+        throw new Error('no pty.node')
+      },
+    })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(h.sent).toEqual([{ type: 'load-failed', error: 'no pty.node' }])
+  })
+
+  test('list', () => {
+    vi.useFakeTimers({ now: 1_000 })
+    const h = host()
+    h.service.handle({ type: 'list' })
+    expect(h.sent.at(-1)).toEqual({ type: 'list', sessions: [] })
+    h.service.handle({ type: 'start', spec: spec({ id: 'a' }) })
+    vi.setSystemTime(2_000)
+    h.service.handle({ type: 'start', spec: spec({ id: 'b' }) })
+    h.spawned[1]!.end(4)
+    h.service.handle({ type: 'list' })
+    expect(h.sent.at(-1)).toEqual({
+      type: 'list',
+      sessions: [
+        { id: 'a', pid: 100, live: true, startedAt: 1_000 },
+        { id: 'b', pid: 101, live: false, startedAt: 2_000 },
+      ],
+    })
+  })
+
+  test('a session waiting for its pid lists with pid 0', () => {
+    vi.useFakeTimers({ now: 1_000 })
+    const h = host({ pty: fakePtyModule({ latePid: true }) })
+    h.service.handle({ type: 'start', spec: spec() })
+    h.service.handle({ type: 'list' })
+    expect(h.sent.at(-1)).toEqual({ type: 'list', sessions: [{ id: 'run-1', pid: 0, live: true, startedAt: 1_000 }] })
+  })
+
+  test('kill and dispose', async () => {
+    const h = host()
+    const w = h.connect()
+    h.service.handle({ type: 'start', spec: spec() })
+    w.send({ type: 'attach', id: 'run-1' })
+    h.service.handle({ type: 'kill', id: 'run-1' })
+    h.service.handle({ type: 'kill', id: 'run-1' })
+    await until(() => w.got.some((m) => m.type === 'exit'))
+    h.service.handle({ type: 'kill', id: 'run-1' })
+    // The pty's own kill; one exit to main and one to the port.
+    expect(h.spawned[0]!.killed).toEqual(['default', 'default'])
+    expect(h.of('exit')).toEqual([{ type: 'exit', id: 'run-1', exitCode: 0, signal: 1 }])
+    expect(w.got.filter((m) => m.type === 'exit')).toEqual([{ type: 'exit', id: 'run-1', exitCode: 0 }])
+    h.service.handle({ type: 'list' })
+    expect(h.of('list').at(-1)!.sessions).toMatchObject([{ id: 'run-1', live: false }])
+
+    h.service.handle({ type: 'dispose', id: 'run-1' })
+    h.service.handle({ type: 'list' })
+    expect(h.of('list').at(-1)!.sessions).toEqual([])
+    // A kill or dispose of an unknown id does nothing.
+    h.service.handle({ type: 'kill', id: 'nobody' })
+    h.service.handle({ type: 'dispose', id: 'nobody' })
+    expect(h.answers().filter((m) => m.type !== 'list' && m.type !== 'started')).toHaveLength(1)
+  })
+
+  test('dispose of a live session kills it and sends no exit', async () => {
+    const h = host()
+    const w = h.connect()
+    h.service.handle({ type: 'start', spec: spec() })
+    w.send({ type: 'attach', id: 'run-1' })
+    await until(() => w.got.length === 1)
+    h.service.handle({ type: 'dispose', id: 'run-1' })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(h.spawned[0]!.killed).toHaveLength(1)
+    expect(h.of('exit')).toEqual([])
+    expect(w.got.map((m) => m.type)).toEqual(['replay'])
+  })
+
+  test('kill while waiting for the pid ends the start with spawn failed', () => {
+    const h = host({ pty: fakePtyModule({ latePid: true }) })
+    h.service.handle({ type: 'start', spec: spec() })
+    h.service.handle({ type: 'kill', id: 'run-1' })
+    expect(h.spawned[0]!.killed).toHaveLength(1)
+    // The fake ends on kill, after a microtask.
+    return until(() => h.answers().length === 1).then(() => {
+      expect(h.answers()).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the program ended before it started (exit code 0)' }])
+    })
+  })
+
+  describe('window ports', () => {
+    test('connect starts the port; input reaches the pty; output and exit reach the port', async () => {
+      const h = host()
+      const w = h.connect()
+      expect(w.started()).toBe(true)
+      h.service.handle({ type: 'start', spec: spec() })
+      w.send({ type: 'attach', id: 'run-1' })
+      w.send({ type: 'input', id: 'run-1', data: 'echo hi\r' })
+      expect(h.spawned[0]!.written).toEqual(['echo hi\r'])
+      await until(() => w.got.length === 1)
+      h.spawned[0]!.emit('hi\r\n')
+      h.spawned[0]!.end(0)
+      await until(() => w.got.length === 3)
+      expect(w.got).toMatchObject([{ type: 'replay', id: 'run-1' }, { type: 'data', id: 'run-1', data: 'hi\r\n' }, { type: 'exit', id: 'run-1', exitCode: 0 }])
+      // Input after the exit is ignored.
+      w.send({ type: 'input', id: 'run-1', data: 'late' })
+      expect(h.spawned[0]!.written).toEqual(['echo hi\r'])
+    })
+
+    test('attach edges', async () => {
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      const w = h.connect()
+      w.send({ type: 'attach', id: 'nobody' })
+      expect(w.got).toEqual([{ type: 'error', id: 'nobody', error: 'no session' }])
+
+      // A session still waiting for its pid is not there yet for a window.
+      h.service.handle({ type: 'start', spec: spec() })
+      w.send({ type: 'attach', id: 'run-1' })
+      w.send({ type: 'input', id: 'run-1', data: 'x' })
+      w.send({ type: 'resize', id: 'run-1', cols: 90, rows: 30 })
+      expect(w.got.slice(1)).toEqual([
+        { type: 'error', id: 'run-1', error: 'no session' },
+        { type: 'error', id: 'run-1', error: 'no session' },
+        { type: 'error', id: 'run-1', error: 'no session' },
+      ])
+      expect(h.spawned[0]!.written).toEqual([])
+
+      // An exited session: replay, then exit.
+      h.spawned[0]!.connect()
+      h.spawned[0]!.emit('done\r\n')
+      h.spawned[0]!.end(5)
+      w.got.length = 0
+      w.send({ type: 'attach', id: 'run-1' })
+      await until(() => w.got.length === 2)
+      expect(w.got.map((m) => m.type)).toEqual(['replay', 'exit'])
+      expect(w.got[1]).toEqual({ type: 'exit', id: 'run-1', exitCode: 5 })
+      expect((w.got[0] as { data: string }).data).toContain('done')
+
+      // A disposed one is gone.
+      h.service.handle({ type: 'dispose', id: 'run-1' })
+      w.send({ type: 'attach', id: 'run-1' })
+      expect(w.got.at(-1)).toEqual({ type: 'error', id: 'run-1', error: 'no session' })
+    })
+
+    test('resize applies to the pty, and a bad size answers bad resize', () => {
+      const resized: string[] = []
+      const pty = fakePtyModule()
+      const h = host({ pty })
+      const w = h.connect()
+      h.service.handle({ type: 'start', spec: spec() })
+      h.spawned[0]!.resize = (cols, rows) => void resized.push(`${cols}x${rows}`)
+      w.send({ type: 'resize', id: 'run-1', cols: 120, rows: 40 })
+      w.send({ type: 'resize', id: 'run-1', cols: 501, rows: 40 })
+      expect(resized).toEqual(['120x40'])
+      expect(w.got).toEqual([{ type: 'error', id: 'run-1', error: 'bad resize' }])
+    })
+
+    test("a window port can't start, kill, or dispose", async () => {
+      const h = host()
+      h.service.handle({ type: 'start', spec: spec() })
+      const before = h.sent.length
+      const w = h.connect()
+      for (const m of [
+        { type: 'start', spec: spec({ id: 'run-2' }) },
+        { type: 'kill', id: 'run-1' },
+        { type: 'dispose', id: 'run-1' },
+        { type: 'list' },
+        { type: 'snapshot', id: 'run-1' },
+        { type: 'connect' },
+        { type: 'shutdown' },
+      ]) {
+        w.got.length = 0
+        expect(() => w.send(m)).not.toThrow()
+        expect(w.got, m.type).toEqual([{ type: 'error', ...('id' in m ? { id: m.id } : {}), error: 'not allowed' }])
+      }
+      await new Promise((r) => setTimeout(r, 20))
+      // Nothing changed: one pty, never killed, still live and listed; main heard nothing; no exit.
+      expect(h.spawned).toHaveLength(1)
+      expect(h.spawned[0]!.killed).toEqual([])
+      expect(h.sent.length).toBe(before)
+      expect(h.exits).toEqual([])
+      h.service.handle({ type: 'list' })
+      expect(h.of('list').at(-1)!.sessions).toMatchObject([{ id: 'run-1', live: true }])
+    })
+
+    test('bad messages', () => {
+      const h = host()
+      h.service.handle({ type: 'start', spec: spec() })
+      const w = h.connect()
+      const bad = [
+        null,
+        1,
+        'attach',
+        [],
+        {},
+        { type: 'nope', id: 'run-1' },
+        { type: 'attach' },
+        { type: 'attach', id: 5 },
+        { type: 'detach' },
+        { type: 'input', id: 'run-1' },
+        { type: 'input', id: 'run-1', data: 5 },
+        { type: 'resize', id: 'run-1', cols: '80', rows: 24 },
+        { type: 'resize', id: 'run-1', cols: 80 },
+        { type: 'ack', id: 'run-1' },
+        { type: 'ack', id: 'run-1', chars: -1 },
+        { type: 'ack', id: 'run-1', chars: 1.5 },
+        { type: 'ack', id: 'run-1', chars: '10' },
+      ]
+      for (const m of bad) {
+        w.got.length = 0
+        expect(() => w.send(m)).not.toThrow()
+        const id = typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string' ? { id: (m as { id: string }).id } : {}
+        expect(w.got, JSON.stringify(m)).toEqual([{ type: 'error', ...id, error: 'bad message' }])
+      }
+      // From main, with no port to answer on: never throws, and changes nothing.
+      for (const m of [{ type: 'connect' }, { type: 'kill' }, { type: 'kill', id: 5 }, { type: 'list', id: 'x' }, { type: 'dispose' }]) {
+        expect(() => h.service.handle(m)).not.toThrow()
+      }
+      expect(() => h.service.handle({ type: 'connect' }, [{}])).not.toThrow()
+      expect(() => h.service.handle({ type: 'connect' }, [null])).not.toThrow()
+      expect(h.spawned[0]!.killed).toEqual([])
+      expect(h.spawned[0]!.written).toEqual([])
+    })
+
+    test('a port that throws on post never throws out of the host', async () => {
+      const h = host()
+      const w = h.connect()
+      w.port.postMessage = () => {
+        throw new Error('closed')
+      }
+      h.service.handle({ type: 'start', spec: spec() })
+      expect(() => w.send({ type: 'attach', id: 'nobody' })).not.toThrow()
+      expect(() => w.send({ type: 'attach', id: 'run-1' })).not.toThrow()
+      h.spawned[0]!.emit('x')
+      await new Promise((r) => setTimeout(r, 20))
+    })
+
+    test('a closed port gets nothing more and its acks no longer matter', async () => {
+      const h = host()
+      const w = h.connect()
+      h.service.handle({ type: 'start', spec: spec() })
+      w.send({ type: 'attach', id: 'run-1' })
+      await until(() => w.got.length === 1)
+      w.close()
+      h.spawned[0]!.emit('after\r\n')
+      await new Promise((r) => setTimeout(r, 20))
+      expect(w.got.map((m) => m.type)).toEqual(['replay'])
+    })
+
+    test('after shutdown a port gets no answer', async () => {
+      const h = host()
+      const w = h.connect()
+      h.service.handle({ type: 'shutdown' })
+      w.send({ type: 'attach', id: 'nobody' })
+      expect(w.got).toEqual([])
+    })
   })
 })
