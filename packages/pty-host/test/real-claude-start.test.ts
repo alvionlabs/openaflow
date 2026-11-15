@@ -8,7 +8,7 @@ import { Terminal } from '@xterm/headless'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { envKey, resolveBin } from '../../server/src/bin-path.ts'
 import { readHookState } from '../../server/src/hook-state.ts'
-import { sessionCommand, type SessionCommand } from '../../server/src/session-command.ts'
+import { resumeCommand, sessionCommand, type SessionCommand } from '../../server/src/session-command.ts'
 
 // The start command with real `claude` (contract §7): never in `pnpm verify` or CI. It runs only with
 // OPENAFLOW_REAL_CLAUDE=1 and OPENAFLOW_REAL_CLAUDE_CONFIG_DIR, a separate Claude Code config folder the human
@@ -117,10 +117,19 @@ const seen = {
   ran: false,
   hookText2: '',
   screen2: '',
+  // Launch 3: `--resume` of launch 1's session, then one question about its first turn.
+  resumeArgs: [] as string[],
+  resumeHookText: '',
+  resumeScreen: '',
+  /** The replies written after launch 3's spawn. */
+  resumeReplies: [] as string[],
   // Both launches, from their transcripts.
   models: [] as string[],
   replies: [] as string[],
 }
+
+/** The question launch 3 asks: only the first turn's reply holds the answer. */
+const RECALL = 'What exact token did you reply with earlier in this conversation? Answer with that token only.'
 
 let root = ''
 /** The running launch's end: SIGHUP first, then a forced end after 5 s. */
@@ -190,23 +199,13 @@ describe.runIf('dir' in GATE)('real claude start', () => {
     const claude = resolveBin('claude', process.env)
     if (claude === undefined) throw new Error('no claude on PATH')
 
-    /** Starts one `claude` in `repo` with the builder's exact command. */
-    const launch = (text: string) => {
-      const sessionId = randomUUID()
+    /** Starts one `claude` in `repo` with the builder's exact command: a new session with `text`, or a resume of `resume`. */
+    const launch = (text: string, resume?: string) => {
+      const sessionId = resume ?? randomUUID()
       const runMarker = randomUUID()
-      const cmd = sessionCommand({
-        claude,
-        repo,
-        skill: 'plain',
-        text,
-        sessionId,
-        runMarker,
-        pluginDir: plugin,
-        configDir,
-        env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir },
-        platform: process.platform,
-      })
-      if (typeof cmd === 'string') throw new Error(`sessionCommand refused: ${cmd}`)
+      const base = { claude, repo, sessionId, runMarker, pluginDir: plugin, configDir, env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir }, platform: process.platform }
+      const cmd = resume === undefined ? sessionCommand({ ...base, skill: 'plain', text }) : resumeCommand(base)
+      if (typeof cmd === 'string') throw new Error(`the command builder refused: ${cmd}`)
       if (cmd.env.CLAUDE_CONFIG_DIR !== claudeDir) throw new Error(`the launch would not use ${claudeDir}`)
       const hookFile = join(configDir, 'hooks', `${runMarker}.jsonl`)
       const hookText = () => (existsSync(hookFile) ? readFileSync(hookFile, 'utf8') : '')
@@ -320,6 +319,32 @@ describe.runIf('dir' in GATE)('real claude start', () => {
       await stop()
     }
 
+    // Launch 3: Resume's exact command for launch 1's session, in the same folder. One question about the first turn;
+    // ends at its Stop, or when claude ends, or after 120 s.
+    const three = launch('', seen.sessionId)
+    seen.resumeArgs = three.cmd.args
+    try {
+      const end = Date.now() + 120_000
+      let asked = false
+      while (!three.has('Stop') && !three.exited() && Date.now() < end) {
+        three.checkSignedIn()
+        // Ask once the session is up: its SessionStart line, and a moment for the input box.
+        if (!asked && three.has('SessionStart')) {
+          await sleep(2000)
+          three.write(RECALL)
+          await sleep(500)
+          three.write('\r')
+          asked = true
+        }
+        await sleep(250)
+      }
+      await sleep(1000) // the reply's last frame
+    } finally {
+      seen.resumeScreen = three.screen()
+      seen.resumeHookText = three.hookText()
+      await stop()
+    }
+
     // The transcripts say which model answered.
     const projects = join(claudeDir, 'projects')
     for (const dir of existsSync(projects) ? readdirSync(projects) : []) {
@@ -340,7 +365,24 @@ describe.runIf('dir' in GATE)('real claude start', () => {
         }
       }
     }
-  }, 360_000)
+    // Launch 3's replies, from every transcript in the repo's folder: a resume may write to a new session file.
+    for (const dir of existsSync(projects) ? readdirSync(projects) : []) {
+      if (!existsSync(join(projects, dir, `${seen.sessionId}.jsonl`))) continue
+      for (const name of readdirSync(join(projects, dir)).filter((n) => n.endsWith('.jsonl'))) {
+        for (const line of readFileSync(join(projects, dir, name), 'utf8').split('\n')) {
+          let rec: { type?: string; timestamp?: string; message?: { content?: unknown } }
+          try {
+            rec = JSON.parse(line)
+          } catch {
+            continue
+          }
+          if (rec.type !== 'assistant' || !rec.timestamp || Date.parse(rec.timestamp) < three.spawnedAt) continue
+          const content = Array.isArray(rec.message?.content) ? (rec.message.content as { type: string; text?: string }[]) : []
+          for (const c of content) if (c.type === 'text' && c.text) seen.resumeReplies.push(c.text)
+        }
+      }
+    }
+  }, 540_000)
 
   afterAll(async () => {
     // One summary line, so a run on another machine shows what it saw.
@@ -413,5 +455,15 @@ describe.runIf('dir' in GATE)('real claude start', () => {
     expect(seen.ran, `${RAN_FILE} exists, so the command ran; screen:\n${seen.screen2}`).toBe(false)
     expect(lines.filter((h) => h.payload?.hook_event_name === 'PreToolUse' && h.payload?.tool_name === 'Bash')).toHaveLength(1)
     expect(seen.models.every((m) => /haiku/i.test(m)), `models: ${seen.models.join(', ')}`).toBe(true)
+  })
+
+  test('resume brings back the conversation', () => {
+    // Resume's own args: the session, the plugin, and no prompt.
+    expect(seen.resumeArgs.slice(-4)).toEqual(['--resume', seen.sessionId, '--plugin-dir', seen.cmd!.args.at(-2)])
+    expect(readHookState(seen.resumeHookText).live, `screen:\n${seen.resumeScreen}`).toMatchObject({ session: seen.sessionId, cause: 'resume' })
+    const [submit] = events('UserPromptSubmit', seen.resumeHookText)
+    expect(submit?.payload?.prompt, `screen:\n${seen.resumeScreen}`).toBe(RECALL)
+    // The word from the first turn comes back in a reply written after the resume.
+    expect(seen.resumeReplies.join('\n'), `screen:\n${seen.resumeScreen}`).toContain(PONG)
   })
 })
