@@ -1,13 +1,15 @@
-// The pty host's state: one pty and one headless terminal per session. host-entry.ts wires it to Electron's
-// parentPort. The rules are in pod-docs/sprints/host-core.md (§4).
+// The pty host's state: one pty and one session (headless terminal and attached ports) per id. host-entry.ts wires
+// it to Electron's parentPort. session.ts holds what each window sees. The rules are in
+// pod-docs/sprints/host-core.md (§4).
 
 import { isAbsolute } from 'node:path'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import { Terminal } from '@xterm/headless'
-import { PROTOCOL_VERSION, specError, type HostToMain, type StartSpec } from './protocol.ts'
+import { BEAT_MS, MAIN_ONLY, PROTOCOL_VERSION, specError, type HostToMain, type SessionInfo, type StartSpec } from './protocol.ts'
+import { createSession, linkPort, type Session as View, type SessionPty, type WindowLink, type WindowPort } from './session.ts'
+
+export { plainText } from './session.ts'
 
 export type PtySpawnOptions = { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> }
-export type PtyProcess = {
+export type PtyProcess = SessionPty & {
   readonly pid: number
   onData(fn: (data: string) => void): unknown
   onExit(fn: (e: { exitCode: number; signal?: number }) => void): unknown
@@ -27,15 +29,18 @@ export type HostDeps = {
   shutdownWaitMs?: number
 }
 
+export type PtyHost = {
+  /** A message from main. `ports` are the event's ports: `connect` takes a window's port from `ports[0]`. */
+  handle(message: unknown, ports?: readonly unknown[]): void
+}
+
 type Session = {
   id: string
   pty: PtyProcess
-  term: Terminal
-  /** For the replay a window gets on attach (a later slice). */
-  serialize: SerializeAddon
+  view: View
   startedAt: number
   exited: boolean
-  /** Whether `started` went out. Until then the session has no pid. */
+  /** Whether `started` went out. Until then the session has pid 0, and windows can't see it. */
   announced: boolean
   /** While no pid: ends the wait and frees the id. */
   abandon?(error: string): void
@@ -48,22 +53,10 @@ const PID_WAIT_MS = 10_000
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-/** The screen and the scrollback as plain lines: wrapped rows joined, each line right-trimmed, no blank lines at the end. */
-export function plainText(term: Terminal): string {
-  const buffer = term.buffer.active
-  const lines: string[] = []
-  for (let y = 0; y < buffer.length; y++) {
-    const line = buffer.getLine(y)
-    if (line === undefined) continue
-    const text = line.translateToString(true)
-    if (line.isWrapped && lines.length > 0) lines[lines.length - 1] = lines.at(-1)!.padEnd(term.cols) + text
-    else lines.push(text)
-  }
-  while (lines.length > 0 && lines.at(-1) === '') lines.pop()
-  return lines.map((l) => l.trimEnd()).join('\n')
-}
+const isPort = (p: unknown): p is WindowPort =>
+  typeof p === 'object' && p !== null && ['on', 'start', 'postMessage'].every((k) => typeof (p as Record<string, unknown>)[k] === 'function')
 
-export function startPtyHost(deps: HostDeps): { handle(message: unknown): void } {
+export function startPtyHost(deps: HostDeps): PtyHost {
   let pty: PtyModule
   try {
     pty = deps.loadPty()
@@ -77,6 +70,7 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
   const sessions = new Map<string, Session>()
   const exitWaiters = new Set<() => void>()
   let shuttingDown = false
+  const beat = setInterval(() => deps.send({ type: 'beat' }), BEAT_MS)
 
   function start(spec: unknown): void {
     const id = typeof spec === 'object' && spec !== null && typeof (spec as { id?: unknown }).id === 'string' ? (spec as { id: string }).id : ''
@@ -91,10 +85,8 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
     } catch (err) {
       return refuse(`spawn failed: ${message(err)}`)
     }
-    const term = new Terminal({ cols: s.cols, rows: s.rows, scrollback: deps.scrollback, allowProposedApi: true })
-    const serialize = new SerializeAddon()
-    term.loadAddon(serialize)
-    const session: Session = { id, pty: proc, term, serialize, startedAt: Date.now(), exited: false, announced: false }
+    const view = createSession({ id, pty: proc, cols: s.cols, rows: s.rows, scrollback: deps.scrollback })
+    const session: Session = { id, pty: proc, view, startedAt: Date.now(), exited: false, announced: false }
     sessions.set(id, session)
 
     let poll: ReturnType<typeof setTimeout> | undefined
@@ -114,19 +106,20 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
       stopWaiting()
       session.exited = true
       if (sessions.get(id) === session) sessions.delete(id)
-      term.dispose()
+      view.dispose()
       deps.send({ type: 'start-failed', id, error: `spawn failed: ${error}` })
       for (const wake of exitWaiters) wake()
     }
 
     proc.onData((data) => {
       announce()
-      if (!session.exited) term.write(data)
+      if (!session.exited) view.output(data)
     })
     proc.onExit(({ exitCode, signal }) => {
       if (session.exited) return
       if (!announce()) return session.abandon?.(`the program ended before it started (exit code ${exitCode})`)
       session.exited = true
+      view.ended(exitCode)
       deps.send(signal ? { type: 'exit', id, exitCode, signal } : { type: 'exit', id, exitCode })
       for (const wake of exitWaiters) wake()
     })
@@ -144,8 +137,12 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
   function snapshot(id: string): void {
     const session = sessions.get(id)
     if (session === undefined) return deps.send({ type: 'snapshot', id, text: null })
-    // Writes are parsed in order, so this callback runs after every chunk written before it.
-    session.term.write('', () => deps.send({ type: 'snapshot', id, text: sessions.get(id) === session ? plainText(session.term) : null }))
+    session.view.snapshot((text) => deps.send({ type: 'snapshot', id, text: sessions.get(id) === session ? text : null }))
+  }
+
+  function list(): void {
+    const infos: SessionInfo[] = [...sessions.values()].map((s) => ({ id: s.id, pid: s.announced ? s.pty.pid : 0, live: !s.exited, startedAt: s.startedAt }))
+    deps.send({ type: 'list', sessions: infos })
   }
 
   function kill(session: Session): void {
@@ -156,6 +153,12 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
     }
   }
 
+  /** The pty's own kill. A session waiting for its pid ends as `start-failed` through its exit or its 10 s limit. */
+  function killSession(id: string): void {
+    const session = sessions.get(id)
+    if (session !== undefined && !session.exited) kill(session)
+  }
+
   function dispose(id: string): void {
     const session = sessions.get(id)
     if (session === undefined) return
@@ -164,8 +167,11 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
       return session.abandon('disposed before it started')
     }
     sessions.delete(id)
-    if (!session.exited) kill(session)
-    session.term.dispose()
+    // Its exit, when it comes, goes nowhere: the session is gone.
+    const live = !session.exited
+    session.exited = true
+    if (live) kill(session)
+    session.view.dispose()
   }
 
   function shutdown(): void {
@@ -182,6 +188,7 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
       done = true
       exitWaiters.clear()
       clearTimeout(timer)
+      clearInterval(beat)
       deps.exit(0)
     }
     const timer = setTimeout(finish, deps.shutdownWaitMs ?? SHUTDOWN_WAIT_MS)
@@ -192,17 +199,69 @@ export function startPtyHost(deps: HostDeps): { handle(message: unknown): void }
     queueMicrotask(check)
   }
 
+  /** A session a window may use: listed, with its pid known. */
+  const visible = (id: string) => {
+    const session = sessions.get(id)
+    return session?.announced === true ? session : undefined
+  }
+
+  function connect(port: unknown): void {
+    if (!isPort(port)) return console.error('openaflow pty host: connect came with no port')
+    const link: WindowLink = linkPort(port, (data) => {
+      if (shuttingDown) return
+      try {
+        fromWindow(link, data)
+      } catch (err) {
+        console.error(`openaflow pty host: a window message failed: ${message(err)}`)
+      }
+    })
+  }
+
+  /** A message on a window's port. A window may only attach, detach, input, resize, and ack. */
+  function fromWindow(link: WindowLink, raw: unknown): void {
+    const m = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+    const id = typeof m.id === 'string' ? m.id : undefined
+    const fail = (error: string) => link.post(id === undefined ? { type: 'error', error } : { type: 'error', id, error })
+    if (typeof m.type === 'string' && MAIN_ONLY.has(m.type)) return fail('not allowed')
+    if (id === undefined) return fail('bad message')
+    const session = visible(id)
+    switch (m.type) {
+      case 'attach':
+        return session === undefined ? fail('no session') : session.view.attach(link)
+      case 'detach':
+        return session?.view.detach(link)
+      case 'input':
+        if (typeof m.data !== 'string') return fail('bad message')
+        return session === undefined ? fail('no session') : session.view.input(m.data)
+      case 'resize': {
+        if (typeof m.cols !== 'number' || typeof m.rows !== 'number') return fail('bad message')
+        if (session === undefined) return fail('no session')
+        const error = session.view.resize(m.cols, m.rows)
+        return error === undefined ? undefined : fail(error)
+      }
+      case 'ack':
+        if (!Number.isInteger(m.chars) || (m.chars as number) < 0) return fail('bad message')
+        return session?.view.ack(link, m.chars as number)
+      default:
+        return fail('bad message')
+    }
+  }
+
   return {
-    handle(raw) {
+    handle(raw, ports = []) {
       if (shuttingDown || typeof raw !== 'object' || raw === null) return
       const m = raw as { type?: unknown; id?: unknown; spec?: unknown }
       try {
         if (m.type === 'start') start(m.spec)
-        else if (m.type === 'snapshot' && typeof m.id === 'string') snapshot(m.id)
+        else if (m.type === 'kill' && typeof m.id === 'string') killSession(m.id)
         else if (m.type === 'dispose' && typeof m.id === 'string') dispose(m.id)
+        else if (m.type === 'list') list()
+        else if (m.type === 'snapshot' && typeof m.id === 'string') snapshot(m.id)
+        else if (m.type === 'connect') connect(ports[0])
         else if (m.type === 'shutdown') shutdown()
+        else console.error(`openaflow pty host: a message it does not know: ${JSON.stringify(m.type)}`)
       } catch (err) {
-        // The host never throws on a message. A later slice answers a window with `error`.
+        // The host never throws on a message. Main has no error answer; the log has it.
         console.error(`openaflow pty host: ${String(m.type)} failed: ${message(err)}`)
       }
     },
