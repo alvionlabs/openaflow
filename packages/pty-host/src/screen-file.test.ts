@@ -171,6 +171,36 @@ describe('screen files', () => {
     expect(h.exits).toEqual([0])
   })
 
+  test('save times: shutdown waits for the saves when no pty is live, 2 s at most', async () => {
+    vi.useFakeTimers()
+    const h = host({ hold: true })
+    h.service.handle({ type: 'start', spec: spec() })
+    h.spawned[0]!.emit('done\r\n')
+    h.spawned[0]!.end(0)
+    await vi.advanceTimersByTimeAsync(10)
+    h.release()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(h.saved()).toEqual(['done'])
+    h.service.handle({ type: 'shutdown' })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(h.exits).toEqual([])
+    h.release()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(h.saved()).toEqual(['done', 'done'])
+    expect(h.exits).toEqual([0])
+
+    // A save that never ends: the host still exits at 2 s.
+    const g = host({ hold: true })
+    g.service.handle({ type: 'start', spec: spec() })
+    g.spawned[0]!.end(0)
+    await vi.advanceTimersByTimeAsync(10)
+    g.service.handle({ type: 'shutdown' })
+    await vi.advanceTimersByTimeAsync(1_980)
+    expect(g.exits).toEqual([])
+    await vi.advanceTimersByTimeAsync(20)
+    expect(g.exits).toEqual([0])
+  })
+
   test('atomic write', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'openaflow-screen-'))
     try {

@@ -240,8 +240,12 @@ export function startPtyHost(deps: HostDeps): PtyHost {
     // Each screen file is saved before its pty is killed, 2 s at most. The 3 s wait below counts from now.
     for (const session of sessions.values()) session.screen?.stop()
     const saves = [...sessions.values()].flatMap((s) => (s.screen === undefined ? [] : [s.screen.save()]))
+    /** Set once the saves ended and the ptys got their kill: only then may the host exit. */
+    let killedAll = false
     const killAll = () => {
+      killedAll = true
       for (const session of live()) kill(session)
+      queueMicrotask(check)
     }
     if (saves.length === 0) killAll()
     else {
@@ -265,11 +269,10 @@ export function startPtyHost(deps: HostDeps): PtyHost {
       deps.exit(0)
     }
     const timer = setTimeout(finish, deps.shutdownWaitMs ?? SHUTDOWN_WAIT_MS)
-    const check = () => {
-      if (live().length === 0) finish()
+    function check() {
+      if (killedAll && live().length === 0) finish()
     }
     exitWaiters.add(check)
-    queueMicrotask(check)
   }
 
   /** A session a window may use: listed, with its pid known. */
