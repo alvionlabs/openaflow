@@ -136,6 +136,25 @@ describe('parentChannel', () => {
     expect(() => linkParent({ env: {}, stops: createStopPath(), proc: {} }).ready(1)).not.toThrow()
   })
 
+  test('the terminal channel needs OPENAFLOW_TERMINALS=1 and a real parentPort', () => {
+    const f = fakePort()
+    const on = linkParent({ env: { OPENAFLOW_TERMINALS: '1' }, stops: createStopPath(), proc: { parentPort: f.port } })
+    expect(on.terminals).toBeDefined()
+    const seen: unknown[] = []
+    on.terminals!.onMessage((m) => seen.push(m))
+    f.deliver({ type: 'openaflow:terminal', op: 'lost', ids: [] })
+    expect(seen).toEqual([{ type: 'openaflow:terminal', op: 'lost', ids: [] }])
+    on.terminals!.send({ type: 'openaflow:terminal', op: 'list', req: 1 })
+    expect(f.posted).toEqual([{ type: 'openaflow:terminal', op: 'list', req: 1 }])
+    // A resumed `claude -p` inherits OPENAFLOW_TERMINALS but has no parentPort: Node IPC or none gives no channel.
+    expect(linkParent({ env: { OPENAFLOW_TERMINALS: '1' }, stops: createStopPath(), proc: fakeIpc().proc }).terminals).toBeUndefined()
+    expect(linkParent({ env: { OPENAFLOW_TERMINALS: '1' }, stops: createStopPath(), proc: {} }).terminals).toBeUndefined()
+    // Without the value, or with another one, no channel.
+    for (const env of [{}, { OPENAFLOW_TERMINALS: '0' }, { OPENAFLOW_TERMINALS: '' }, { OPENAFLOW_TERMINALS: 'true' }]) {
+      expect(linkParent({ env, stops: createStopPath(), proc: { parentPort: fakePort().port } }).terminals).toBeUndefined()
+    }
+  })
+
   test('a bad parent value stops the link before it attaches anything', () => {
     const ipc = fakeIpc()
     const on = vi.spyOn(ipc.proc, 'on')

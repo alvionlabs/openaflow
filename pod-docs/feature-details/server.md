@@ -2,7 +2,7 @@
 
 ## What it is
 
-The API server (`packages/server`) finds the repos to show, reads their pod docs, agent transcripts and port claims, asks `gh` about live PRs, builds one `Board`, keeps it current as files change, and serves it to the web app. It writes only its own config folder (config, session token, action log, toggles, resume logs) and one line of a repo's `pod-docs/handoff-queue.md`. Covers the features.md rows API health, Board JSON, Live updates, Add repo, Request guard, Action token, and Error banners (server side). The actions are in [actions.md](actions.md) and [resume.md](resume.md).
+The API server (`packages/server`) finds the repos to show, reads their pod docs, agent transcripts and port claims, asks `gh` about live PRs, builds one `Board`, keeps it current as files change, and serves it to the web app. It writes only its own config folder (config, session token, action log, toggles, resume logs, hosted sessions) and one line of a repo's `pod-docs/handoff-queue.md`. Covers the features.md rows API health, Board JSON, Live updates, Add repo, Request guard, Action token, and Error banners (server side). The actions are in [actions.md](actions.md) and [resume.md](resume.md); New session and Dismiss in [hosted-sessions.md](hosted-sessions.md).
 
 ## How it works
 
@@ -21,7 +21,8 @@ The API server (`packages/server`) finds the repos to show, reads their pod docs
 - **Path rules** (the settings file and the route), in order: no NUL (`bad request`); not two leading separators, refused before any file system call (`not a local path`); an absolute drive path (`not absolute`); a file (`not a file`); and a base name of the tool's name plus an allowed extension (`wrong tool`). The file is read at each check. Missing, unreadable, or bad JSON reads as nothing set, and a value that isn't a string is ignored.
 - **Tool routes** (`tool-routes.ts`, only with the `tools` dep, so dev answers 404): `GET /api/tools`, behind the read guard, runs a new check and answers `{ tools }`, always in the order git, gh, claude. Calls during a running check share its result. `POST /api/actions/tool-path`, behind the action guard, takes `{ tool, path }` (`path: null` clears), saves through a temp file and a rename, and answers `{ tools }` from a new check. A refused path gets `400` with its word and saves nothing; a failed write gets `500 settings unwritable`. It isn't in the action log.
 - **Child `Path`:** `gh` and resumed `claude` get the inherited env with `Path` = inherited absolute entries, then registry entries, then the folders of found tools, with duplicates removed (case-blind on Windows). `safeChildEnv` and `childEnv` still apply on top. Both `gh` uses read the finder at each call, so a Recheck takes effect with no restart.
-- **Watching:** one watcher per folder; a rebuild after 300 ms of quiet, never later than 1.5 s after a burst starts. Clients get a Board over SSE only when its JSON changed.
+- **Hosted sessions** ([hosted-sessions.md](hosted-sessions.md)): with a terminal channel (a desktop server), `sessions.json` in the config folder, the `new-session` and `dismiss-session` routes, and a reconcile after the bind. Each repo's sessions are on the Board as `hosted`, with their hook files from `<config dir>/hooks/`.
+- **Watching:** one watcher per folder, including the config folder's `config.json` and `sessions.json` and the `hooks` folder; a rebuild after 300 ms of quiet, never later than 1.5 s after a burst starts. Clients get a Board over SSE only when its JSON changed.
 - **Guards,** in order, the first failure answers:
   - every route: a loopback `Host` on the API or web port (`403 forbidden host`), and an exact `Origin` on writes. No CORS headers; both ports bind `127.0.0.1`.
   - `/api/actions/*` (remove-repo and forget-run included) and `POST /api/repos` (`actionGuard`): Origin, a body over 64 KB (`413`), POST, `application/json`, the token, a JSON object.
@@ -87,6 +88,8 @@ All optional, set as environment variables:
 | `OPENAFLOW_CLAUDE_BIN` | The `claude` program that Continue, Go, and auto-continue start | `claude` on `PATH` |
 | `OPENAFLOW_TRANSCRIPT_DAYS` | How many days of sessions to read | `30` |
 | `OPENAFLOW_POLL` | `1` watches files by polling, for network drives | off |
+| `OPENAFLOW_TERMINALS` | `1`: the terminal channel on the `parentPort`. The desktop's main process sets it | off |
+| `OPENAFLOW_HOOKS_PLUGIN` | The hooks plugin folder a hosted session loads. The desktop's main process sets it | none: New session answers `409 no terminal host` |
 
 ## Why it's this way
 
@@ -170,3 +173,4 @@ All optional, set as environment variables:
 - 2026-11-13 · ui-rework A1 · removed: `GET /api/fs/folders`, its read guard on `/api/fs/*`, the `folders` dep, and `folder-list.ts`. Add repo uses the desktop shell's folder dialog or a typed path. Any unknown path in dev now answers JSON `404 {"error":"not found"}`, as production does.
 - 2026-11-13 · ui-rework · plan complete: the folder-listing route is gone and Forget run is a route; final PR #108 passed review at round 2 · [report](../reports/ui-rework.html)
 - 2026-11-14 · host-core C1 · changed: on Linux and macOS, the one-time config folder copy gives each copied file its source's modified time, so `pruneLogs` keeps the right resume logs. A failed time logs one line and the copy goes on.
+- 2026-11-15 · terminal-tab S1 · added: hosted sessions. `linkParent` gives the terminal channel, `startServer` takes it as `terminals`, the Board gets `hosted`, the watcher watches `sessions.json` and `hooks/`, and the action log reads `new-session` and `dismiss-session`.

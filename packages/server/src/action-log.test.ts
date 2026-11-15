@@ -129,6 +129,25 @@ describe('action log', () => {
     ])
   })
 
+  test('session entries', async () => {
+    // Appended by one log, read back by the next start's log; a result from the other kind is a bad line.
+    const log = createActionLog({ file, now: () => 7 })
+    const started: NewActionEntry = { action: 'new-session', repoId: 'id-r', repo: 'r', target: '/pod:plan · 1a2b3c4d', result: 'started' }
+    const failed: NewActionEntry = { action: 'new-session', repoId: 'id-r', repo: 'r', target: 'plain · 5e6f7a8b', result: 'failed', message: 'terminals unavailable' }
+    const dismissed: NewActionEntry = { action: 'dismiss-session', repoId: 'id-r', repo: 'r', target: '/pod:plan · 1a2b3c4d', result: 'dismissed' }
+    for (const e of [started, failed, dismissed]) expect(await log.append(e)).toBe(true)
+    const bad = [
+      { at: 8, action: 'new-session', repoId: 'id-r', repo: 'r', target: 'x', result: 'dismissed' },
+      { at: 9, action: 'dismiss-session', repoId: 'id-r', repo: 'r', target: 'x', result: 'started' },
+    ]
+    await writeFile(file, (await readFile(file, 'utf8')) + bad.map((e) => JSON.stringify(e)).join('\n') + '\n')
+    expect(createActionLog({ file, now: () => 10 }).recent()).toEqual([
+      { at: 7, ...dismissed },
+      { at: 7, ...failed },
+      { at: 7, ...started },
+    ])
+  })
+
   test('reads resume entries', async () => {
     const resume = (result: 'started' | 'failed', auto: boolean, message?: string): NewActionEntry => ({
       action: 'resume',
