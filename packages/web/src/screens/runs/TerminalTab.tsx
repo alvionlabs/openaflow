@@ -7,7 +7,7 @@ import { sessionView, sessionWord, type HostedSession } from '@openaflow/model'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ModalAlert } from '../../components/ModalAlert.tsx'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
-import { createDismissFlow, type DismissState } from './dismiss-flow.ts'
+import { barStatus, createDismissFlow, type DismissState } from './dismiss-flow.ts'
 import { createResumeFlow, resumeBusy, resumeError, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
 import { browserView, canAttach, terminalBody, type StopBar } from './terminal-tab.ts'
 import { TerminalView } from './TerminalView.tsx'
@@ -88,9 +88,7 @@ function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed
   useEffect(() => () => flow.dispose(), [flow])
   // One alert box: the error of the button pressed last.
   const [last, setLast] = useState<'resume' | 'dismiss'>('dismiss')
-  const dismissError = state.kind === 'idle' ? state.error : undefined
-  const error = last === 'resume' ? resumeError : dismissError
-  const busy = resuming ? 'resume' : state.kind === 'dismissing' ? 'dismiss' : undefined
+  const { busy, error } = barStatus({ dismiss: state, resuming, resumeError, last })
   return (
     <StopBarPanel
       bar={bar}

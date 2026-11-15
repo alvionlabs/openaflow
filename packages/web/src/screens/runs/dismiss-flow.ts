@@ -69,3 +69,13 @@ export function createDismissFlow(
     },
   }
 }
+
+/**
+ * The stop bar's busy button and its one alert box (session-life §9): busy while Resume or Dismiss runs; the error of
+ * the button pressed last.
+ */
+export function barStatus(o: { dismiss: DismissState; resuming: boolean; resumeError?: string | undefined; last: 'resume' | 'dismiss' }): { busy?: 'resume' | 'dismiss'; error?: string } {
+  const busy = o.resuming ? 'resume' : o.dismiss.kind === 'dismissing' ? 'dismiss' : undefined
+  const error = o.last === 'resume' ? o.resumeError : o.dismiss.kind === 'idle' ? o.dismiss.error : undefined
+  return { ...(busy ? { busy } : {}), ...(error ? { error } : {}) }
+}
