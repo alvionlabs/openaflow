@@ -34,6 +34,11 @@ export type TerminalChannel = {
 /** How long a `start` or `list` waits for main's answer. */
 export const ANSWER_MS = 30_000
 export const UNAVAILABLE = 'terminals unavailable'
+
+/** A request main never answered in time. A `start`'s reads `terminals unavailable`, as main's own refusal does. */
+export class NoAnswer extends Error {
+  override name = 'NoAnswer'
+}
 const LOG = 'openaflow: terminal channel ignored a bad message'
 
 type Pending = { resolve(v: unknown): void; reject(err: Error): void; timer: NodeJS.Timeout }
@@ -105,7 +110,7 @@ export function createTerminalChannel(o: { link: ParentChannel; log(line: string
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(req)
-        reject(new Error(timeoutWord))
+        reject(new NoAnswer(timeoutWord))
       }, answerMs)
       timer.unref()
       pending.set(req, { resolve: resolve as (v: unknown) => void, reject, timer })
