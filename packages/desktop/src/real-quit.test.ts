@@ -91,6 +91,9 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const { marker } = await lifeSession(h, w)
         const [child] = await lifeChildrenUp(w, ['detached'])
         const fake = lifeStarts(w)[0]!.pid
+        // The child runs before the quit, so a later end is the quit's.
+        await sleep(2_000)
+        expect(alive(child!.pid) && (await portOpen(child!.port)), `the child before the quit\n${await leftovers([fake, child!.pid], [child!])}\n${lifeDetails(w)}`).toBe(true)
         await testHooks(h).quitAnswer('cancel')
         await testHooks(h).quit()
         await lifeUntil('the quit answered cancel', () => desktopLog(w).includes('quit asked about 1 sessions: cancel'), 15_000, w)
@@ -99,9 +102,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         expect(h.exited()).toBe(false)
         expect(await healthy(h)).toBe(true)
         expect(await hostedOf(h, w, marker), lifeDetails(w)).toMatchObject({ state: 'live' })
-        expect(alive(fake), 'the fake').toBe(true)
-        expect(alive(child!.pid), 'the child').toBe(true)
-        expect(await portOpen(child!.port), "the child's port").toBe(true)
+        const state = `${await leftovers([fake, child!.pid], [child!])}\n${lifeDetails(w)}`
+        expect(alive(fake), `the fake\n${state}`).toBe(true)
+        expect(alive(child!.pid), `the child\n${state}`).toBe(true)
+        expect(await portOpen(child!.port), `the child's port\n${state}`).toBe(true)
       }),
     )
   }, RUN_MS)
@@ -188,7 +192,9 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
         const main = h.pid
         process.kill(main, 'SIGKILL')
-        await lifeUntil('main and the server gone', () => !alive(main) && !alive(server), 20_000, w)
+        await lifeUntil('main gone', () => !alive(main), 20_000, w)
+        // The server sees its parent gone at its next poll (2 s), then drains.
+        await lifeUntil(`the server (pid ${server}) gone after main`, () => !alive(server), 40_000, w)
       })
       // On Linux the detached child outlives the crash: the next start must end it. (On Windows main's job handle
       // may take it down with the app.)
