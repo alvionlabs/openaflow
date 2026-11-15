@@ -35,7 +35,8 @@ jobs:
       - run: pnpm verify
 
   # The real Electron app, unpackaged, then a `pnpm package --test-hooks` build of it, which never leaves the runner.
-  # One test file a step: vitest runs files side by side. real-start runs Electron's own binary on dist/main.cjs, so it
+  # One test file a step: vitest runs files side by side. A step's name picks every file that holds it, so
+  # `real-terminal.test` leaves out real-terminal-tab. real-start runs Electron's own binary on dist/main.cjs, so it
   # has no packaged run. On Ubuntu 24.04, Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
   electron:
     name: electron (${{ matrix.os }})
@@ -67,11 +68,16 @@ jobs:
       - run: pnpm build
       - run: ${{ matrix.display }} pnpm test:electron real-start
       - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
-      - run: ${{ matrix.display }} pnpm test:electron real-terminal
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal.test
+      - run: ${{ matrix.display }} pnpm test:electron real-session
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal-tab
       - run: pnpm package --test-hooks
       - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
         env:
           OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
-      - run: ${{ matrix.display }} pnpm test:electron real-terminal
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal.test
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
+      - run: ${{ matrix.display }} pnpm test:electron real-session
         env:
           OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
