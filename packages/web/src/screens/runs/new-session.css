@@ -27,8 +27,10 @@
   color: var(--fg);
 }
 
+/* The draft's text field: Geist Mono at 13 px, as the command it becomes. */
 .ns-text {
   width: 100%;
+  font-size: var(--size-small);
 }
 
 .new-session .modal-alert {

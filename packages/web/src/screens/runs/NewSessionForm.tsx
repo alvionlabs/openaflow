@@ -91,7 +91,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props
         <input
           ref={field}
           id={textId}
-          className="input ns-text"
+          className="input mono ns-text"
           type="text"
           autoComplete="off"
           maxLength={TEXT_MAX}
