@@ -798,6 +798,25 @@ describe('hosted cards', () => {
     expect(web).not.toMatch(/<button/)
   })
 
+  it('the running card: Open terminal in the desktop app, the desktop note in the browser', () => {
+    for (const state of ['starting', 'live'] as const) {
+      const repo = bare({ hosted: [session({ state, prompted: false })] })
+      const desk = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
+      expect(desk, state).toMatch(/^<section class="card next-step"/)
+      expect(text(desk)).toContain('A session runs in this repo&#x27;s terminal')
+      expect(text(desk).replace(/\s+/g, ' ')).toMatch(/It started with \/pod:plan \./)
+      expect(desk).toContain('<code class="mono">/pod:plan</code>')
+      expect(text(desk)).toMatch(/Running/)
+      expect(text(desk)).not.toMatch(/Nothing to do|No active plan/)
+      expect(primaries(desk)).toEqual(['Open terminal'])
+
+      const web = cardOf(render({ repo, run: rowOf(repo) }).html)
+      expect(text(web)).toContain('A session runs in this repo&#x27;s terminal')
+      expect(text(web)).toMatch(/Open the desktop app to use the terminal\./)
+      expect(web).not.toMatch(/<button/)
+    }
+  })
+
   it("a hosted run's reply: the word in code and Open terminal, no Continue, Copy or Run it yourself", () => {
     const eng = { id: 'e1', session: 'sess-1', type: 'pod:engineer', tokens: 0, ended: true, plan: PLAN, sprint: 'ladder', slice: 'T1', startedAt: NOW - 3_600_000, lastAt: NOW - 2_400_000 }
     const outside = chess([onlyQueue(), manual, t1Pushed], { prs: [gh(78, 'merged')], agents: [eng] })
@@ -820,9 +839,11 @@ describe('hosted cards', () => {
   it('the line to type yourself, whole in one code span, until prompted', () => {
     const marker = '7f3c9a12-0000-4000-8000-0000000000ty'
     TYPED.remember(marker, '/pod:task fix `npm ci`')
-    const repo = bare({ hosted: [session({ marker, prompted: false })] })
+    const repo = bare({ hosted: [session({ marker, prompted: false, typeYourself: true })] })
     const card = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
     expect(card).toContain('Type <code class="mono">/pod:task fix `npm ci`</code> in the terminal.')
+    // The running card says nothing it started with: the line isn't typed yet.
+    expect(text(card)).not.toMatch(/It started with/)
     // Prompted: gone.
     const done = bare({ hosted: [session({ marker, prompted: true })] })
     expect(text(cardOf(inDesktop(() => render({ repo: done, run: rowOf(done) }).html)))).not.toMatch(/in the terminal\./)
