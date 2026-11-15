@@ -288,13 +288,19 @@ describe.runIf(process.platform === 'linux')('endAppImage', () => {
   test('processesUnder finds a process by its executable path, and only by it', async () => {
     const bin = join(dir, 'bin')
     mkdirSync(bin)
-    const copy = join(bin, 'sleep-copy')
-    // A copy of sleep inside the folder stands in for the unpacked Electron.
-    writeFileSync(copy, readFileSync('/usr/bin/sleep'), { mode: 0o755 })
-    const child = spawn(copy, ['30'], { stdio: 'ignore', windowsHide: true })
+    const copy = join(bin, 'node-copy')
+    // A copy of Node inside the folder stands in for the unpacked Electron. (A copy of sleep can be a multi-call binary
+    // that ends at once under another name.)
+    writeFileSync(copy, readFileSync(process.execPath), { mode: 0o755 })
+    const child = spawn(copy, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore', windowsHide: true })
     await new Promise<void>((resolve) => child.once('spawn', resolve))
     try {
-      expect(await processesUnder(`${dir}/`)).toEqual([child.pid])
+      let found: number[] = []
+      for (let i = 0; i < 50 && found.length === 0; i++) {
+        found = await processesUnder(`${dir}/`)
+        if (found.length === 0) await sleep(50)
+      }
+      expect(found).toEqual([child.pid])
       expect(await processesUnder(`${join(dir, 'other')}/`)).toEqual([])
     } finally {
       child.kill('SIGKILL')
