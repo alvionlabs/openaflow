@@ -94,7 +94,7 @@ export function startPtyHost(deps: HostDeps): PtyHost {
     } catch (err) {
       return refuse(`spawn failed: ${message(err)}`)
     }
-    const view = createSession({ id, pty: proc, cols: s.cols, rows: s.rows, scrollback: deps.scrollback })
+    const view = createSession({ id, pty: proc, cols: s.cols, rows: s.rows, scrollback: s.scrollback ?? deps.scrollback })
     const session: Session = { id, pty: proc, view, startedAt: Date.now(), exited: false, announced: false }
     sessions.set(id, session)
 
