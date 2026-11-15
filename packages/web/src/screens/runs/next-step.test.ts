@@ -629,6 +629,11 @@ describe('hosted sessions', () => {
       })
       expect(s.rest).toEqual([])
     }
+    // The start line went to you to type and you haven't yet: no "It started with", the card's Type line says what to do.
+    const toType = rowSteps(bare({ hosted: [session({ typeYourself: true, prompted: false })] })).card
+    expect(toType.key).toBe('running:mark-1')
+    expect(toType.detail).toBeUndefined()
+    expect(rowSteps(bare({ hosted: [session({ typeYourself: true, prompted: true })] })).card.detail).toBe('It started with `/pod:plan`.')
     // Each skill names its command; a plain session has none.
     const detail = (skill: HostedSession['skill']) => rowSteps(bare({ hosted: [session({ skill })] })).card.detail
     expect(detail('ship')).toBe('It started with `/pod:ship`.')

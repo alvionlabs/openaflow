@@ -839,12 +839,14 @@ describe('hosted cards', () => {
   it('the line to type yourself, whole in one code span, until prompted', () => {
     const marker = '7f3c9a12-0000-4000-8000-0000000000ty'
     TYPED.remember(marker, '/pod:task fix `npm ci`')
-    const repo = bare({ hosted: [session({ marker, prompted: false })] })
+    const repo = bare({ hosted: [session({ marker, prompted: false, typeYourself: true })] })
     const card = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
     expect(card).toContain('Type <code class="mono">/pod:task fix `npm ci`</code> in the terminal.')
+    // The running card says nothing it started with: the line isn't typed yet.
+    expect(text(card)).not.toMatch(/It started with/)
     // Prompted: gone.
     const done = bare({ hosted: [session({ marker, prompted: true })] })
-    expect(text(cardOf(inDesktop(() => render({ repo: done, run: rowOf(done) }).html)))).not.toMatch(/Type .* in the terminal\./)
+    expect(text(cardOf(inDesktop(() => render({ repo: done, run: rowOf(done) }).html)))).not.toMatch(/in the terminal\./)
   })
 })
 

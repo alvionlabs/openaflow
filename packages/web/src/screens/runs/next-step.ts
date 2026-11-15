@@ -188,14 +188,16 @@ function canStart(run: RunSummary, shown: HostedSession | undefined): boolean {
 }
 
 /** A repo row whose shown session is starting or live (not yet waiting): the sidebar reads Running, and so does this card. */
+/** A start line still for you to type has no "It started with": the card's Type line says what to do. */
 const runningCard = (s: HostedSession, run: RunSummary): NextItem => {
   const command = skillCommand(s.skill)
+  const started = command === undefined ? 'It started with no prompt.' : `It started with \`${command}\`.`
   return {
     key: `running:${s.marker}`,
     tier: 'nothing',
     status: runStatus(run),
     title: RUNNING_TITLE,
-    detail: command === undefined ? 'It started with no prompt.' : `It started with \`${command}\`.`,
+    ...(s.typeYourself && !s.prompted ? {} : { detail: started }),
     action: { kind: 'open-terminal' },
   }
 }
