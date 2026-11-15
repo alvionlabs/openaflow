@@ -7,11 +7,12 @@ import { hideWindows } from './hide-windows.ts'
 import { forkServer } from './host-main.ts'
 import { startNotifier } from './notifier-main.ts'
 import { ptyHostEntry } from './pty-host-launch.ts'
-import { forkPtyHost, type PtyHost } from './pty-host-main.ts'
+import { createPtyHost } from './pty-host-main.ts'
 import { createQuitFlow } from './quit-flow.ts'
 import { createServerHost, type ServerHost } from './server-host.ts'
 import { serverEntry, serverEnv } from './server-launch.ts'
 import { createShellBus, type ShellBus } from './shell-bus.ts'
+import { startTerminalLink } from './terminal-port-main.ts'
 import { APP_ID, APP_NAME, dataDirOverride } from './shell-config.ts'
 import { createLogFile, LOG_FILE, nodeLogFs, teeConsole } from './shell-log.ts'
 import { installTestHooks } from './test-hooks-main.ts'
@@ -19,6 +20,7 @@ import { applyTestEnv, TEST_ENV_FILE } from './update-feed.ts'
 import { failureText, relaunchArgs } from './update-flow.ts'
 import { startUpdater } from './updater-main.ts'
 import { startWindow } from './window-main.ts'
+import { originOf } from './window-rules.ts'
 
 /** `pnpm package --test-feed` sets this. In every other build the test feed's code is removed. */
 declare const __OPENAFLOW_TEST_FEED__: boolean
@@ -86,9 +88,20 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
     },
   }
   const ctx: ShellContext = { host, bus, env: o.env, activatorAtStart: o.activatorAtStart ?? app.isPackaged }
+  // The terminal host forks after the server's first ready; until then, terminal calls wait. Its failure leaves the
+  // board running.
+  const ptyHost = createPtyHost({ entry: ptyHostEntry(place), env: o.env })
+  if (__OPENAFLOW_TEST_HOOKS__) installTestHooks(ptyHost)
+  startTerminalLink({
+    starter: ptyHost,
+    origin: () => {
+      const port = host.port()
+      return port === undefined ? undefined : originOf(port)
+    },
+  })
 
   const flow = createQuitFlow({
-    stops: [() => host.stop()],
+    stops: [() => host.stop(), () => ptyHost.stop()],
     hide: () => hideWindows(BrowserWindow.getAllWindows()),
     quit: () => app.quit(),
   })
@@ -96,13 +109,8 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   // `session-end` is a window's event, so each window reports it.
   app.on('browser-window-created', (_e, win) => win.on('session-end', () => flow.sessionEnd()))
   app.on('second-instance', () => bus.showWindow())
-  // The terminal host starts once, after the server's first ready. Its failure leaves the board running.
-  let ptyHost: PtyHost | undefined
-  host.onReady(() => {
-    if (ptyHost !== undefined) return
-    ptyHost = forkPtyHost({ entry: ptyHostEntry(place), env: o.env })
-    if (__OPENAFLOW_TEST_HOOKS__) installTestHooks(ptyHost)
-  })
+  // Once: a later ready, after a server restart, does nothing.
+  host.onReady(() => ptyHost.start())
   host.onFailed((error) => {
     ;(o.onFailed ?? showFailure)(error, updater?.willCheck() ?? false)
     // The page has no server. The tray stays, so Quit still works while the update check runs.

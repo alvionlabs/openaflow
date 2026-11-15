@@ -3,21 +3,26 @@
 // pod-docs/sprints/host-core.md (§6).
 
 import type { StartSpec } from '@openaflow/pty-host/protocol'
-import type { PtyHost } from './pty-host-main.ts'
+import type { PtyHostStarter, SessionInfo } from './pty-host-starter.ts'
 
 export type TestTerminals = {
   start(spec: StartSpec): Promise<{ pid: number }>
   snapshot(id: string): Promise<string | null>
+  list(): Promise<SessionInfo[]>
+  kill(id: string): Promise<void>
+  /** The current host's process ID; it changes after a restart. */
   hostPid(): number | undefined
 }
 
 /** Sets `globalThis.__openaflowTest.terminals`, which a Playwright test reaches with `app.evaluate`. */
-export function installTestHooks(host: PtyHost): void {
+export function installTestHooks(starter: PtyHostStarter): void {
   const g = globalThis as { __openaflowTest?: { terminals?: TestTerminals } }
   g.__openaflowTest ??= {}
   g.__openaflowTest.terminals = {
-    start: (spec) => host.client.start(spec),
-    snapshot: (id) => host.client.snapshot(id),
-    hostPid: () => host.pid(),
+    start: (spec) => starter.startSession(spec),
+    snapshot: (id) => starter.snapshot(id),
+    list: () => starter.list(),
+    kill: (id) => starter.kill(id),
+    hostPid: () => starter.pid(),
   }
 }

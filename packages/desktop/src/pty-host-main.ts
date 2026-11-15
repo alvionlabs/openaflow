@@ -1,25 +1,18 @@
-// Glue: the pty host in a second `utilityProcess`. The logic is in pty-host-launch.ts. A host that fails leaves the
-// board running: the failure is one log line, and terminals answer `terminals unavailable`.
+// Glue: the pty host in a second `utilityProcess`, run by the starter. The logic is in pty-host-starter.ts and
+// pty-host-launch.ts. A host that fails for good leaves the board running: terminals answer `terminals unavailable`.
 
 import { dirname } from 'node:path'
-import { utilityProcess } from 'electron'
-import { createPtyHostClient, hostLogLine, ptyHostEnv, type PtyHostClient } from './pty-host-launch.ts'
+import { utilityProcess, type MessagePortMain } from 'electron'
+import { ptyHostEnv } from './pty-host-launch.ts'
+import { createPtyHostStarter, type HostProcess, type PtyHostStarter } from './pty-host-starter.ts'
 import { PTY_HOST_SERVICE_NAME } from './shell-config.ts'
 
-export type PtyHost = { client: PtyHostClient; pid(): number | undefined }
-
-export function forkPtyHost(o: { entry: string; env: NodeJS.ProcessEnv }): PtyHost {
-  const child = utilityProcess.fork(o.entry, [], {
+function forkHost(entry: string, env: NodeJS.ProcessEnv): HostProcess {
+  const child = utilityProcess.fork(entry, [], {
     stdio: 'pipe',
-    cwd: dirname(o.entry),
-    env: ptyHostEnv(o.env),
+    cwd: dirname(entry),
+    env: ptyHostEnv(env),
     serviceName: PTY_HOST_SERVICE_NAME,
-  })
-  const client = createPtyHostClient((m) => child.postMessage(m))
-  child.on('message', (m: unknown) => {
-    const line = hostLogLine(m)
-    if (line !== undefined) console.log(line)
-    client.onMessage(m)
   })
   for (const stream of [child.stdout, child.stderr]) {
     stream?.setEncoding('utf8')
@@ -27,9 +20,18 @@ export function forkPtyHost(o: { entry: string; env: NodeJS.ProcessEnv }): PtyHo
   }
   // An `exit` always follows, and an `error` with no listener would throw in the main process.
   child.on('error', () => {})
-  child.on('exit', (code) => {
-    console.log(`openaflow desktop: terminal host exited with code ${code}`)
-    client.fail('terminal host exited')
-  })
-  return { client, pid: () => child.pid }
+  return {
+    get pid() {
+      return child.pid
+    },
+    postMessage: (m, transfer) => child.postMessage(m, transfer as MessagePortMain[] | undefined),
+    kill: () => child.kill(),
+    onMessage: (fn) => void child.on('message', fn),
+    onExit: (fn) => void child.on('exit', fn),
+  }
+}
+
+/** Made at the start; `start()` forks the first host. */
+export function createPtyHost(o: { entry: string; env: NodeJS.ProcessEnv }): PtyHostStarter {
+  return createPtyHostStarter({ fork: () => forkHost(o.entry, o.env), log: (line) => console.log(line) })
 }

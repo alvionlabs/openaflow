@@ -13,9 +13,16 @@
 - **Port and token.** The shell sets no port and never holds the token. It reads the port from the server's ready message, and the page gets the token from the server.
 - **Server host.** One restart after a failure. A failure is an exit outside a stop, a `fork` that throws, or no ready in 60 s. A second failure shows a native error box that names the Releases page, hides the window, checks once for an update, and then quits (see [installer-and-updates.md](installer-and-updates.md)). The box says the app checks only when a check runs. One helper, `hideWindows`, hides the windows for the quit, the failure, and a Restart now, and skips a destroyed window. 60 s of ready earns the restart back. A new port fires `onReady` again, and the window and notifier move.
 - **Window.** The normal Windows frame, no app menu, the page isolated and sandboxed, with no Node. Close hides it. Off-origin `http` and `https` links open in the system browser, and anything else opens nothing. A `--hidden` start shows only the tray.
-- **Folder bridge.** The window's one preload, `dist/preload.cjs`, gives the page only `window.openaflow.pickFolder()`. It asks the main process on the IPC channel `openaflow:pick-folder`. Only the app window's main frame on the server's current origin may ask. Any other caller (another port or origin, `file:`, `about:blank`, a subframe, a call before the server is ready) gets a rejection with `forbidden`, and no dialog opens. The answer is the first path from the system folder dialog (`dialog.showOpenDialog`, owned by the app window), or `null` for a cancel. The page puts it in the Add repo field and posts nothing. A call while the dialog is open gets `null`. A dialog error rejects with `dialog failed` and is logged.
-- **Terminal host.** After the server's first ready, the main process forks the pty host (`packages/pty-host`) in a second `utilityProcess`, `OpenAFlow terminal host`. Its env is the shell's, without `ELECTRON_RUN_AS_NODE`; `SystemRoot` stays. `desktop.log` gets `openaflow desktop: terminal host ready`, or `openaflow desktop: terminal host could not load node-pty: <error>`, then `terminal host exited with code <n>`. A failed host leaves the board running, and terminal calls answer `terminals unavailable`. Unpackaged, the bundle is `packages/pty-host/dist/pty-host.cjs`; packaged, `<resources>/pty-host/pty-host.cjs`, with node-pty beside it in `node_modules`. The protocol is in `pod-docs/sprints/host-core.md` (§4). For now the host answers `start`, `snapshot`, `dispose`, and `shutdown`; nothing starts a session but the test hook, no restart follows a crash, and the quit doesn't send `shutdown` (Electron ends the process).
-- **Test hooks.** A bundle built with `__OPENAFLOW_TEST_HOOKS__` sets `globalThis.__openaflowTest.terminals` (`start(spec)`, `snapshot(id)`, `hostPid()`). Only the Electron harness (`test/electron-harness.ts`) and `pnpm package --test-hooks` build it; every other bundle drops the code, and `release:check` refuses a `main.cjs` that names it.
+- **Folder bridge.** The window's one preload, `dist/preload.cjs`, gives the page `window.openaflow.pickFolder()` and the terminal link's two calls (below). It asks the main process on the IPC channel `openaflow:pick-folder`. Only the app window's main frame on the server's current origin may ask. Any other caller (another port or origin, `file:`, `about:blank`, a subframe, a call before the server is ready) gets a rejection with `forbidden`, and no dialog opens. The answer is the first path from the system folder dialog (`dialog.showOpenDialog`, owned by the app window), or `null` for a cancel. The page puts it in the Add repo field and posts nothing. A call while the dialog is open gets `null`. A dialog error rejects with `dialog failed` and is logged. The sender rule is one exported function, `senderAllowed`, which the terminal link uses too.
+- **Terminal host.** After the server's first ready, the starter (`pty-host-starter.ts`) forks the pty host (`packages/pty-host`) in a second `utilityProcess`, `OpenAFlow terminal host`. Its env is the shell's, without `ELECTRON_RUN_AS_NODE`; `SystemRoot` stays. The protocol is in `pod-docs/sprints/host-core.md` (§4). Unpackaged, the bundle is `packages/pty-host/dist/pty-host.cjs`; packaged, `<resources>/pty-host/pty-host.cjs`, with node-pty beside it in `node_modules`. The starter:
+  - Waits 20 s for `ready`. No ready in time: it kills the host and counts a crash. A start, snapshot, list, or kill before ready waits for it, across restarts too.
+  - Keeps the live set from `started` and `exit`.
+  - Watches the beat: 6 s without one logs `terminal host sent no beat for 6 s`; 11 s makes it `unresponsive`, once per spell, and the next beat makes it responsive. Unresponsive is only a report: requests still go out, and nothing kills the host.
+  - Restarts a host that exits outside a stop (or whose `fork` throws) at once, up to 5 times in the app's life; a healthy run gives none back. Each crash reports the ids that were live, and rejects the requests the host will never answer with `terminal host exited`. After the fifth restart's host ends, it is `failed`: every later request rejects with `terminals unavailable`, and the board keeps running.
+  - `stop()` sends `shutdown`, kills after 3 s, and never restarts.
+  - `desktop.log` gets `openaflow desktop: terminal host ready`, `… could not load node-pty: <error>`, `… exited with code <n>`, `… restarting (<n> restarts left)`, and `… failed for good: terminals are unavailable until the app restarts`.
+- **Terminal link.** The preload adds `window.openaflow.connectTerminals(): Promise<void>` and `window.openaflow.onTerminalHost(fn)`, which returns a function that stops the calls. `connectTerminals` asks on `openaflow:terminal-connect`. The folder bridge's sender rule applies; any other caller gets `forbidden`. Main makes a `MessageChannelMain`, posts one end to the host with `connect`, and sends the other to the caller's main frame. The preload posts it to the page as a `window` message `{ type: 'openaflow:terminal-port', request }` with the port in `ports[0]`, and the promise resolves once that message has reached the page. Before the host is ready, the request waits up to 20 s, then rejects `terminals unavailable`; after `failed`, or during the quit, it rejects at once. An unresponsive host still gets the port. Every window hears `ready` (the first ready, and a beat after `unresponsive`), `unresponsive`, `restarted` (a restarted host is ready: old ports are dead, so connect again), and `failed`. The app window is the newest `BrowserWindow`, tracked in `terminal-port-main.ts` as window-main.ts makes it.
+- **Test hooks.** A bundle built with `__OPENAFLOW_TEST_HOOKS__` sets `globalThis.__openaflowTest.terminals` (`start(spec)`, `snapshot(id)`, `list()`, `kill(id)`, `hostPid()`, the current host's process ID). Only the Electron harness (`test/electron-harness.ts`) and `pnpm package --test-hooks` build it; every other bundle drops the code, and `release:check` refuses a `main.cjs` that names it.
 - **Tray.** Open and Quit. After the server failed for good, Open starts a fresh copy, as a second launch does. The dot comes from `bus.onAttention`.
 - **Login item.** No part of the app turns it on today: it moves to a settings page ([decision](../decisions.md#2026-11-04--start-at-login-leaves-the-tray-menu-human-decision)). `createLoginItem` stays for that page. A login item from an earlier version still starts the app with `--hidden`, in the tray with no window. Uninstall still removes it.
 
@@ -24,16 +31,23 @@ sequenceDiagram
   actor Human
   participant Main as Main process
   participant Server as Server (utilityProcess)
+  participant Host as Terminal host (utilityProcess)
   participant Run as Detached claude run
   Main->>Server: fork, with OPENAFLOW_PARENT_PID
   Server-->>Main: ready, port
   Human->>Main: Quit in the tray
   Main->>Main: prevent the quit, hide windows
-  Main->>Server: openaflow:stop
-  Server->>Server: drain, up to 70 s, release owner file
-  Server-->>Main: exit
-  Main->>Main: quit
+  par
+    Main->>Server: openaflow:stop
+    Server->>Server: drain, up to 70 s, release owner file
+    Server-->>Main: exit
+  and
+    Main->>Host: shutdown
+    Host-->>Main: exit, after its ptys end (at most 3 s)
+  end
+  Main->>Main: quit, after both
   Note over Main,Server: No exit in 80 s: kill() on this one process only
+  Note over Main,Host: No exit in 3 s: kill() on the host only
   Note over Run: Keeps running in every case
 ```
 
@@ -43,7 +57,7 @@ sequenceDiagram
 - `taskkill /F` on the main process: the server dies with it before its parent watch runs, and the owner file stays for the next start. The fake lives.
 - `taskkill /F` on the server: a new one is ready within seconds. A second kill within 60 s ends in `failed`, with no third start. The fake lives.
 
-**Logic lives in:** `packages/desktop/src/server-host.ts`, `quit-flow.ts`, `window-rules.ts`, `folder-bridge.ts`, and `shell-main.ts`.
+**Logic lives in:** `packages/desktop/src/server-host.ts`, `pty-host-starter.ts`, `terminal-port.ts`, `quit-flow.ts`, `window-rules.ts`, `folder-bridge.ts`, and `shell-main.ts`.
 
 ## Why it's this way
 
@@ -89,3 +103,4 @@ sequenceDiagram
 - 2026-11-11 · task-fix-updater-last-chance · a second launch or the tray's Open after the server failed for good starts a fresh copy. The error box names the update check only when one runs. One helper hides the windows.
 - 2026-11-12 · ui-rework D1: the folder bridge. The window gets a preload, `window.openaflow.pickFolder()`, and the main process opens the folder dialog for the app's own page only.
 - 2026-11-14 · host-core N1: the pty host starts after the server; node-pty proved in Electron, unpackaged and packaged, on Linux, and on Windows by the CI job `pty proof (windows-latest)`; test hooks and the Electron harness.
+- 2026-11-14 · host-core S1: the terminal host's starter (ready wait, heartbeat, 5 restarts, stop), the window link (`connectTerminals`, `onTerminalHost`), the quit stops the server and the host together, and the `list` and `kill` test hooks.
