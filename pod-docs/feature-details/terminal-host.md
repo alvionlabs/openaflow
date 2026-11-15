@@ -42,7 +42,8 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 - **A kill right after the start:** node-pty holds `kill()` on Windows until the program's first output, so a kill while a session waits for its pid may let the program run for a moment. `real-terminal` › `a kill right after the start ends the session` sends `start`, `list`, and `kill` in a row, and checks that the session ends and its program stops. Its log line, `a kill right after the start answered …`, shows the pid the start gave (or `spawn failed: …`) and the session as `list` saw it at the kill (`pid: 0` means it still waited for its pid). On Linux the pid comes at once, so the kill always lands on a started session.
 - **The human's Windows commands**, on a real Windows machine from the repo root:
   - `pnpm build`, `pnpm package --test-hooks`, then `$env:OPENAFLOW_REAL_ELECTRON='1'; $env:OPENAFLOW_PACKAGED_APP='<repo>\packages\desktop\release\win-unpacked\OpenAFlow.exe'; pnpm test:electron real-terminal`.
-  - `$env:OPENAFLOW_REAL_CLAUDE='1'; pnpm vitest run packages/pty-host/test/real-claude-start.test.ts` (Haiku, at most 4 turns).
+  - Sign in once in a separate Claude Code config folder: `$env:CLAUDE_CONFIG_DIR="$HOME\.openaflow-test-claude"; claude`, then `/login`, then `/exit`, then `Remove-Item Env:CLAUDE_CONFIG_DIR`.
+  - `$env:OPENAFLOW_REAL_CLAUDE='1'; $env:OPENAFLOW_REAL_CLAUDE_CONFIG_DIR="$HOME\.openaflow-test-claude"; pnpm vitest run packages/pty-host/test/real-claude-start.test.ts` (Haiku, 2 turns).
 
 ## The Electron checks
 
@@ -67,6 +68,8 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 
 ## Watch out
 
+- `real-claude-start` never touches `~/.claude` or `~/.claude.json` now. Its runs leave a folder-trust entry for each temp folder in the test config folder's `.claude.json`; the test deletes its own transcript folders, never that file. Runs before terminal-tab X1 left transcripts and trust entries in the real config (5 runs, nothing deleted).
+
 - On Windows, ConPTY lets about 300,000 characters through after an ack resumes the pty, before the pause holds again. Flow control limits memory, not the exact count.
 - A kill on Windows while the session waits for its pid may let the program run for a moment (see Proved where).
 - After a host crash, the sessions' programs are no longer the host's. In the spike, real `claude` ended in about 1 s from the closed pty's SIGHUP ([terminal-host-spike.md](../research/terminal-host-spike.md)). The session ender that ends leftovers comes with the session-life work in the plan. The test fixture ends itself after 5 minutes for this reason.
@@ -83,3 +86,4 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 - 2026-11-14 · host-core P1: the Linux AppImage, the release workflow's Linux build, and `verify (ubuntu-latest)`.
 - 2026-11-14 · host-core A1: the start command and the skill list, proved with real `claude` on Linux.
 - 2026-11-14 · host-core E1: `real-terminal`, the `electron` CI jobs on both systems, and this page.
+- 2026-11-15 · terminal-tab X1: `real-claude-start` runs only with `OPENAFLOW_REAL_CLAUDE_CONFIG_DIR`, a separate signed-in Claude Code config folder it gives `claude` as `CLAUDE_CONFIG_DIR`. It refuses `~/.claude`, the home folder, and the caller's own `CLAUDE_CONFIG_DIR`, and says why it skips.
