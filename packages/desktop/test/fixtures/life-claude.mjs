@@ -26,7 +26,11 @@ else fake()
 
 function child(kind, here) {
   setTimeout(() => process.exit(0), LIFE_MS)
-  const server = createServer((socket) => socket.end('life-child\n'))
+  // A probe may close at once: the reset must not end the child.
+  const server = createServer((socket) => {
+    socket.on('error', () => {})
+    socket.end()
+  })
   server.listen(0, '127.0.0.1', () => {
     appendFileSync(join(here, 'children.jsonl'), JSON.stringify({ kind, pid: process.pid, port: server.address().port }) + '\n')
   })
