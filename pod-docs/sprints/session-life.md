@@ -1,7 +1,7 @@
 # Sprint: Session life
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: active · Generated: 2026-11-15_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=2 waves=8 -->
+<!-- autopilot-run: started=2026-11-15T09:51:09Z sprints=0 waves=1 -->
 
 ## Status board
 
@@ -12,10 +12,10 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: act
 | 1 | J1 | Windows Job Object helper | session-life-J1 | merged | done | medium | — |
 | 1 | M2 | Model: resume check, resume action, session label | session-life-M2 | merged | done | medium | — |
 | 1 | C2 | Resume command and the Linux run wrapper | session-life-C2 | merged | done | medium | — |
-| 2 | S3 | Server: Resume route, saved screens, sweep and labels, 504 | session-life-S3 | — | pending | — | M2, C2, H2 |
-| 2 | D2 | Main: quit dialog, ending sessions, leftovers, window events | session-life-D2 | — | pending | — | H2, E1, J1 |
-| 2 | W2 | Terminal tab: Resume, can't resume, saved screen, untested paths | session-life-W2 | — | pending | — | M2 |
-| 2 | W3 | Host banner, Ending overlay, hosted Waiting rows, reply card | session-life-W3 | — | pending | — | M2 |
+| 2 | S3 | Server: Resume route, saved screens, sweep and labels, 504 | session-life-S3 | https://github.com/alvionlabs/openaflow/pull/141 | pushed | medium | M2, C2, H2 |
+| 2 | D2 | Main: quit dialog, ending sessions, leftovers, window events | session-life-D2 | https://github.com/alvionlabs/openaflow/pull/141 | pushed | medium | H2, E1, J1 |
+| 2 | W2 | Terminal tab: Resume, can't resume, saved screen, untested paths | session-life-W2 | https://github.com/alvionlabs/openaflow/pull/141 | pushed | medium | M2 |
+| 2 | W3 | Host banner, Ending overlay, hosted Waiting rows, reply card | session-life-W3 | https://github.com/alvionlabs/openaflow/pull/141 | pushed | medium | M2 |
 | 3 | U2 | Restart now asks the quit question | session-life-U2 | — | pending | — | D2 |
 | 3 | X2 | Electron checks for quit, crashes, and Resume; CI; docs | session-life-X2 | — | pending | — | H2, C2, S3, D2, W2, W3 |
 
