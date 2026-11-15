@@ -276,9 +276,25 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
       expect(await bar.locator('.status').innerText()).toBe('Ended · Claude exited')
       expect(await page.locator('.terminal-panel').innerText()).not.toContain("Can't resume")
       expect([['Dismiss'], ['Resume', 'Dismiss']]).toContainEqual(await bar.getByRole('button').allInnerTexts())
+
+      // With Resume (after session-life S3): the same Claude session starts again in a new terminal, the bar leaves,
+      // and focus goes into the new terminal. Then it ends again, for Dismiss below.
+      if ((await bar.getByRole('button', { name: 'Resume' }).count()) === 1) {
+        await bar.getByRole('button', { name: 'Resume' }).click()
+        await until('the resumed fake in xterm', async () => (await screen(page)).includes('"--resume"'), h)
+        await until('the stop bar gone', async () => (await page.locator('.stop-bar').count()) === 0, h)
+        await until('focus in xterm after Resume', () => inTerminal(page), h)
+        await page.keyboard.type('resumed')
+        await page.keyboard.press('Enter')
+        await until('the echo after Resume', async () => (await screen(page)).includes('got:resumed'), h)
+        await page.keyboard.type('bye')
+        await page.keyboard.press('Enter')
+        await until('the stop bar again', async () => (await bar.count()) === 1 && (await bar.isVisible()), h)
+        expect(await bar.locator('.status').innerText()).toBe('Ended · Claude exited')
+      }
       expect(await terminalTab(page).locator('.status').count()).toBe(0)
       // The last screen stays under the bar, faded, while the host holds it.
-      await until('the faded last screen', async () => (await screen(page)).includes('got:again'), h)
+      await until('the faded last screen', async () => /got:(again|resumed)/.test(await screen(page)), h)
       expect(await page.locator('.term.faded').isVisible()).toBe(true)
 
       await bar.getByRole('button', { name: 'Dismiss' }).click()

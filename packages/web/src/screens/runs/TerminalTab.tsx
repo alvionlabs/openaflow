@@ -48,7 +48,8 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
     <div className="terminal-panel">
       {body.kind === 'stopped' && (
         <StopBarView
-          key={session.marker}
+          // Not the view's key: two siblings with one key leave the old bar on the page when Resume moves to a new marker.
+          key={`bar:${session.marker}`}
           bar={body.bar}
           target={{ repoId, marker: session.marker }}
           resuming={resumeBusy(resume, session.marker)}

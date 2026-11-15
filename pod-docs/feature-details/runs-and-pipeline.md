@@ -96,6 +96,7 @@ flowchart LR
 - A wave PR still reads handed back once its engineer is quiet past 30 min (`waveHandedPr` keeps `isRunning`), not after `ENGINEER_QUIET_MS`: a PR waiting on you reads first.
 - The urgent banner's `.urgent-slot` needs `min-width: 0`: it is a grid item of `.main`, and without it a long title widens the column and the page scrolls sideways instead of ending in an ellipsis.
 - A Terminal focus request must never outlive its moment: a request left pending fires later, when a replay brings the host back or another run's live terminal shows, and sends your keys to Claude. Don't clear it on every run change either: the ⋯ New session changes the hash before the screen shows the row, so `focusRun` reads the hash at request time.
+- In `TerminalTab.tsx`, the stop bar and the terminal view are siblings: never give them the same key. With one key (the marker), Resume's move to a new marker left the old bar on the page, stuck on "Resuming…", with no warning in a production build. `real-terminal-tab` › ended and dismissed checks the bar leaves after Resume.
 
 ## History
 
@@ -195,3 +196,4 @@ flowchart LR
 - 2026-11-15 · terminal-tab T1 · the Terminal tab after Waiting and Log (desktop app, rows with a hosted session): xterm on the terminal link, the stop bar with Dismiss over the faded last screen, and the browser build's status line in its place.
 - 2026-11-15 · terminal-tab W3-fix · fixed: the Terminal tab's dot was the blue run dot on a `waiting` session, while the sidebar and the Next step card showed the needs-you colour. It now uses `s-you` for `waiting`.
 - 2026-11-15 · terminal-tab W3-fix · fixed: after Open terminal, or the move to the Terminal tab after a New session, focus stayed off the terminal, so you had to click into it before typing. Focus now goes into xterm once it is attached.
+- 2026-11-15 · session-life W2 · the stop bar offers **Resume** when the record's `resume` is `ok`, or says why it can't resume; the saved screen shows under the bar once the host lacks the session; tests for the host paths (`starting` holds the attach, `failed`, `restarted`) and Dismiss's 409 alert.
