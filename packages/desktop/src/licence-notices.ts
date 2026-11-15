@@ -16,7 +16,8 @@ const MODULES = 'node_modules/'
 const LICENCE_FILE = /^(licen[cs]e|copying)(\.|-|$)/i
 const RULE = '='.repeat(80)
 
-// The LICENSE file of github.com/xtermjs/xterm.js. The npm packages say `"license": "MIT"` and ship no licence file.
+// The LICENSE file of github.com/xtermjs/xterm.js. @xterm/headless and @xterm/addon-serialize say `"license": "MIT"`
+// and ship no licence file. The web build's @xterm/xterm and @xterm/addon-fit ship their own, so they need no override.
 const XTERM_LICENCE = `Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com)
 Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)
