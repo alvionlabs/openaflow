@@ -47,7 +47,7 @@ import { SideHandle } from './SideHandle.tsx'
 import { UrgentBanner } from './UrgentBanner.tsx'
 import { readWidth, saveWidth } from './sidebar-width.ts'
 import { readTab, saveTab, shownTab, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
-import { hasTerminalTab, tabDot } from './terminal-tab.ts'
+import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
 import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
@@ -91,6 +91,9 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [bridge] = useState(() => terminalBridge())
   const repoButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
+  // The run (its `hashFor`) whose live terminal Open terminal or a started New session asked focus for. The Terminal
+  // tab clears it once taken or dropped; a tab press or another run showing drops it.
+  const [focusAsk, setFocusAsk] = useState<string | undefined>(undefined)
   // The hash the urgent banner's Open run went to, so focus lands on that run's title.
   const focusFor = useRef<string | undefined>(undefined)
 
@@ -104,6 +107,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const rowSession = repo && selected ? shownSession(rowSessions(repo, selected.plan, now)) : undefined
   const terminal = hasTerminalTab(bridge !== undefined, rowSession)
   const tabs = tabsFor({ terminal })
+  const dot = tabDot(rowSession, now)
   const shown = shownTab(stored, { view, terminal })
   // The browser build shows the session under the card; the card may already say to open the desktop app.
   const cardNote = steps !== undefined && cardTerminal(steps.card, false).note !== undefined
@@ -128,6 +132,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [removeState, setRemoveState] = useState<RemoveState>(REMOVE_IDLE)
   const latest = useRef({ planFallback, navigate, selected, view, agent })
   latest.current = { planFallback, navigate, selected, view, agent }
+  const shownKey = useRef(runKey)
+  shownKey.current = runKey
   // Open terminal and a started New session ask for the Terminal tab. It is stored, not applied to this row only: the
   // ⋯ New session moves the page in the same tick, and each row reads the stored tab as it can (`shownTab`).
   useEffect(
@@ -138,9 +144,11 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
         // An engineer's view always shows Log: go to its run, unless the page already moved on.
         const { view: v, selected: run, agent: id } = latest.current
         if (v === 'agent' && run && window.location.hash === hashFor(run, 'agent', id)) window.location.hash = hashFor(run)
+        setFocusAsk(focusRun(window.location.hash, shownKey.current))
       }),
     [],
   )
+  useEffect(() => setFocusAsk((ask) => (keepFocusAsk(ask, runKey) ? ask : undefined)), [runKey])
   const removeFlow = useMemo(
     () =>
       createRemoveFlow(setRemoveState, (target, after) => {
@@ -216,8 +224,11 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     if (shownRun.current === key) runTitle.current?.focus()
   }
 
+  const focusDone = useMemo(() => () => setFocusAsk(undefined), [])
   const press = (t: Tab) => {
     const next = tabPress(shown, t, view)
+    // A tab press is the user's own move: a focus request not yet taken is dropped.
+    setFocusAsk(undefined)
     saveTab(store.current, next.save)
     setStored(next.save)
     if (next.leave && selected) window.location.hash = hashFor(selected)
@@ -336,7 +347,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                     aria-controls={shown === t ? `tab-${t}` : undefined}
                     onClick={() => press(t)}
                   >
-                    {t === 'terminal' && tabDot(rowSession, now) && <span className="status s-run tab-dot" aria-hidden="true" />}
+                    {t === 'terminal' && dot && <span className={`status ${dot} tab-dot`} aria-hidden="true" />}
                     {TAB_LABELS[t]}
                     {t === 'waiting' && <span className="n">{steps?.rest.length ?? 0}</span>}
                   </button>
@@ -365,6 +376,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                       now={now}
                       bridge={bridge}
                       onDismissed={dismissedOn(runKey)}
+                      focus={focusAsk === runKey}
+                      onFocusDone={focusDone}
                     />
                   )}
                 </div>

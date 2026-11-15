@@ -22,16 +22,27 @@ type Props = {
    * Called with the callback given when Dismiss was pressed, so the screen can tell the run has changed since.
    */
   onDismissed?: () => void
+  /** Open terminal (or a started New session) asked for focus in the live terminal; `onFocusDone` once taken or dropped. */
+  focus?: boolean
+  onFocusDone?: () => void
 }
 
-export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismissed }: Props) {
+export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismissed, focus = false, onFocusDone }: Props) {
   const body = terminalBody(session, now)
   const ended = body.kind === 'stopped'
   const view = sessionView(session, now)
   return (
     <div className="terminal-panel">
       {body.kind === 'stopped' && <StopBarView key={session.marker} bar={body.bar} target={{ repoId, marker: session.marker }} {...(onDismissed ? { onDismissed } : {})} />}
-      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={view !== 'starting'} ended={ended} />
+      <TerminalView
+        key={session.marker}
+        id={session.marker}
+        bridge={bridge}
+        attach={view !== 'starting'}
+        ended={ended}
+        focus={focus}
+        {...(onFocusDone ? { onFocusDone } : {})}
+      />
       {!ended && (
         <p className="term-foot">
           <span className={`status ${view === 'waiting' ? 's-you' : 's-run'}`}>{sessionWord(session, now)}</span>
