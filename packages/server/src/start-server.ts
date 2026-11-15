@@ -182,6 +182,8 @@ export async function startServer(
             claude: () => tools?.path('claude'),
             pluginDir: envValue(env, 'OPENAFLOW_HOOKS_PLUGIN'),
             configDir,
+            hooks: hosted.hooks,
+            claudeDir: settings.claudeDir,
             env: () => (tools ? tools.env() : env),
             platform,
             now: Date.now,
