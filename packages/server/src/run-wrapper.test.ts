@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { SCOPE_PROBE_MS, scopeProbe, wrapStart, type ScopeProbe } from './run-wrapper.ts'
+import { commandTextError, fillWords, resolveProgram, SCOPE_PROBE_MS, scopeProbe, splitCommand, wrapStart, type ScopeProbe } from './run-wrapper.ts'
 
 const WIN = process.platform === 'win32'
 const MARKER = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d'
@@ -263,6 +263,79 @@ describe.runIf(process.platform === 'linux')('real scope', () => {
     } finally {
       spawnSync(probe.systemctl, ['--user', 'stop', unit], { timeout: 6000, windowsHide: true })
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }
+  })
+})
+
+describe('command text', () => {
+  test('splits command text', () => {
+    // Only a space separates words; quotes group and go, with no escapes; touching parts make one word.
+    expect(splitCommand('systemd-run --user  --scope')).toEqual({ words: ['systemd-run', '--user', '--scope'] })
+    expect(splitCommand(`a "b c" 'd "e' f\\g`)).toEqual({ words: ['a', 'b c', 'd "e', 'f\\g'] })
+    expect(splitCommand('a"b c"')).toEqual({ words: ['ab c'] })
+    expect(splitCommand(`x'y'"z" w`)).toEqual({ words: ['xyz', 'w'] })
+    expect(splitCommand('run ""')).toEqual({ words: ['run', ''] })
+    // Empty or all-space text is none.
+    expect(splitCommand('')).toEqual({ words: [] })
+    expect(splitCommand('    ')).toEqual({ words: [] })
+    expect(splitCommand('  lead trail  ')).toEqual({ words: ['lead', 'trail'] })
+    // The errors.
+    expect(splitCommand('a "b c')).toEqual({ error: 'unclosed quote' })
+    expect(splitCommand("a 'b")).toEqual({ error: 'unclosed quote' })
+    expect(splitCommand(Array.from({ length: 33 }, (_, i) => `w${i}`).join(' '))).toEqual({ error: 'too many words' })
+    expect(splitCommand(Array.from({ length: 32 }, (_, i) => `w${i}`).join(' '))).toHaveProperty('words')
+    expect(splitCommand('a'.repeat(1025))).toEqual({ error: 'too long' })
+    expect(splitCommand('a'.repeat(1024))).toEqual({ words: ['a'.repeat(1024)] })
+    for (const c of ['\u0000', '\t', '\n', '\u001f', '\u007f']) expect(splitCommand(`a${c}b`), JSON.stringify(c)).toEqual({ error: 'bad text' })
+    expect(splitCommand('run {nope}')).toEqual({ error: 'unknown placeholder {nope}' })
+    expect(splitCommand('run "x{RunId}"')).toEqual({ error: 'unknown placeholder {RunId}' })
+    expect(splitCommand('"" --x')).toEqual({ error: 'no program' })
+    // Other braces are literal.
+    expect(splitCommand('run {} {1} {a-b} {{runId}} {unit}')).toEqual({ words: ['run', '{}', '{1}', '{a-b}', '{{runId}}', '{unit}'] })
+  })
+
+  test('fills placeholders per word', () => {
+    const { words } = splitCommand('run --unit={unit} --id {runId} "{runId}-{runId}"') as { words: string[] }
+    // A filled value never makes a new word, even one with a space.
+    expect(fillWords(words, 'a b')).toEqual(['run', '--unit=openaflow-run-a b.scope', '--id', 'a b', 'a b-a b'])
+    expect(fillWords(words, MARKER)).toEqual(['run', `--unit=openaflow-run-${MARKER}.scope`, '--id', MARKER, `${MARKER}-${MARKER}`])
+    expect(words[1]).toBe('--unit={unit}') // the input is left alone
+    // A filled word over 1,024 characters is too long, checked with a sample run id.
+    expect(commandTextError(`run ${'{unit}'.repeat(20)}`)).toBe('too long')
+    expect(commandTextError(`run ${'{runId}'.repeat(28)}`)).toBe(undefined) // 28 × 36 = 1,008
+    expect(commandTextError(`run ${'{runId}'.repeat(29)}`)).toBe('too long')
+    expect(commandTextError('run "x')).toBe('unclosed quote')
+    expect(commandTextError('')).toBe(undefined)
+  })
+
+  test.skipIf(WIN)('resolves the program', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'oaf-program-')))
+    try {
+      writeFileSync(join(dir, 'wrap'), '#!/bin/sh\nexec "$@"\n')
+      chmodSync(join(dir, 'wrap'), 0o755)
+      mkdirSync(join(dir, 'a'))
+      writeFileSync(join(dir, 'a', 'b'), '#!/bin/sh\n')
+      chmodSync(join(dir, 'a', 'b'), 0o755)
+      const env = { PATH: `rel:${dir}` }
+      // A bare name is found on PATH; an absolute file is itself.
+      expect(resolveProgram('wrap', env, 'linux')).toEqual({ program: join(dir, 'wrap') })
+      expect(resolveProgram(join(dir, 'wrap'), env, 'linux')).toEqual({ program: join(dir, 'wrap') })
+      // A missing absolute file, a bare name not on PATH, and a relative path with a folder are not found,
+      // even when the relative one exists under the server's own folder.
+      expect(resolveProgram(join(dir, 'gone'), env, 'linux')).toEqual({ error: `${join(dir, 'gone')} not found` })
+      expect(resolveProgram('nowhere', env, 'linux')).toEqual({ error: 'nowhere not found' })
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        expect(resolveProgram('a/b', env, 'linux')).toEqual({ error: 'a/b not found' })
+        expect(resolveProgram('./wrap', env, 'linux')).toEqual({ error: './wrap not found' })
+      } finally {
+        process.chdir(cwd)
+      }
+      // A folder is not a program.
+      expect(resolveProgram(dir, env, 'linux')).toEqual({ error: `${dir} not found` })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

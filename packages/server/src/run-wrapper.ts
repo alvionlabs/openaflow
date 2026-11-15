@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { resolveBin } from './bin-path.ts'
+import { isAbsoluteFor, resolveBin } from './bin-path.ts'
 import { sessionBaseEnv, UUID_V4 } from './session-command.ts'
 
 /** How long the probe's `systemd-run` may take before the probe reads it as off. */
@@ -105,4 +105,74 @@ export function wrapStart(cmd: { program: string; args: string[] }, marker: stri
     args: ['--user', '--scope', '--quiet', `--unit=${unit}`, cmd.program, ...cmd.args],
     stop: [probe.systemctl, '--user', 'stop', unit],
   }
+}
+
+/** Command text limits (sprint settings §3): characters in the text and in each filled word, and words. */
+export const COMMAND_TEXT = { maxChars: 1024, maxWords: 32 } as const
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/
+const PLACEHOLDER = /\{([A-Za-z]+)\}/g
+const KNOWN = new Set(['runId', 'unit'])
+/** A run id that fills placeholders when a text is checked at save. */
+const SAMPLE_RUN_ID = '00000000-0000-4000-8000-000000000000'
+
+/** A command text's words, placeholders still in them (none for empty or all-space text); or why it breaks §3. */
+export type SplitCommand = { words: string[] } | { error: string }
+
+/**
+ * Splits a run wrapper or stop command text. Only a space separates words. `"…"` and `'…'` group, the quotes go,
+ * and nothing escapes inside them; quoted and plain parts that touch make one word.
+ */
+export function splitCommand(text: string): SplitCommand {
+  if (CONTROL.test(text)) return { error: 'bad text' }
+  if (text.length > COMMAND_TEXT.maxChars) return { error: 'too long' }
+  const words: string[] = []
+  let word: string | undefined
+  let quote: string | undefined
+  for (const ch of text) {
+    if (quote !== undefined) {
+      if (ch === quote) quote = undefined
+      else word += ch
+    } else if (ch === ' ') {
+      if (word !== undefined) words.push(word)
+      word = undefined
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+      word ??= ''
+    } else {
+      word = (word ?? '') + ch
+    }
+  }
+  if (quote !== undefined) return { error: 'unclosed quote' }
+  if (word !== undefined) words.push(word)
+  if (words.length > COMMAND_TEXT.maxWords) return { error: 'too many words' }
+  for (const w of words) for (const m of w.matchAll(PLACEHOLDER)) if (!KNOWN.has(m[1]!)) return { error: `unknown placeholder {${m[1]}}` }
+  if (words.length > 0 && words[0] === '') return { error: 'no program' }
+  return { words }
+}
+
+/** Each word with `{runId}` as the run id and `{unit}` as its scope unit. A filled value never makes a new word. */
+export function fillWords(words: readonly string[], runId: string): string[] {
+  return words.map((w) => w.replace(PLACEHOLDER, (all, name: string) => (name === 'runId' ? runId : name === 'unit' ? unitOf(runId) : all)))
+}
+
+/** The scope unit a run id names. */
+export const unitOf = (runId: string) => `openaflow-run-${runId}.scope`
+
+/** Why a text breaks §3, also a filled word over the limit (with a sample run id); `undefined` for a good one. */
+export function commandTextError(text: string): string | undefined {
+  const split = splitCommand(text)
+  if ('error' in split) return split.error
+  return fillWords(split.words, SAMPLE_RUN_ID).some((w) => w.length > COMMAND_TEXT.maxChars) ? 'too long' : undefined
+}
+
+/**
+ * A command's first word as an absolute program: an absolute path to a program file, or a bare name found on the
+ * env's PATH. A relative path with a folder (`a/b`) is never looked up: it would resolve against the server's folder.
+ */
+export function resolveProgram(word: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): { program: string } | { error: string } {
+  const win = platform === 'win32'
+  const bare = !word.includes('/') && !(win && word.includes('\\'))
+  const found = bare || isAbsoluteFor(word, win) ? resolveBin(word, env, platform) : undefined
+  return found === undefined ? { error: `${word} not found` } : { program: found }
 }
