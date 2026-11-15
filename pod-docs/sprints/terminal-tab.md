@@ -9,9 +9,9 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: act
 |------|-------|-------|--------|----|--------|------------|------------|
 | 1 | M1 | Model: hosted sessions on the Board, the join, row states, skill labels | terminal-tab-M1 | — | pending | — | — |
 | 1 | D1 | Main ↔ server terminal link, per-session exit, starter clean-up | terminal-tab-D1 | — | pending | — | — |
-| 1 | X1 | Real `claude` proofs in a separate signed-in config folder | terminal-tab-X1 | — | pending | — | — |
+| 1 | X1 | Real `claude` proofs in a separate signed-in config folder | terminal-tab-X1 | — | pushed | medium | — |
 | 1 | L1 | Look: terminal theme from tokens, the Start with listbox, xterm deps | terminal-tab-L1 | — | pending | — | — |
-| 1 | F1 | Web terminal link: bridge, port client, open-tab request | terminal-tab-F1 | — | pending | — | — |
+| 1 | F1 | Web terminal link: bridge, port client, open-tab request | terminal-tab-F1 | — | pushed | medium | — |
 | 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | — | pending | — | M1, D1 |
 | 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | — | pending | — | M1 |
 | 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | — | pending | — | M1, L1, F1 |
