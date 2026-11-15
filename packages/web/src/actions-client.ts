@@ -3,6 +3,8 @@
 // it on every /api/actions/ route. Every failure comes back as words a person
 // can act on, never as a throw.
 
+import type { ResumeSessionResult } from '@openaflow/model'
+
 export type ActionReply<T> = { ok: true; data: T } | { ok: false; status: number; message: string }
 
 export type ActionDeps = {
@@ -55,4 +57,31 @@ export async function postAction<T>(path: string, body: object, deps: ActionDeps
   if (res.status === 403 && error === 'bad token') return { ok: false, status: 403, message: RESTARTED }
   const message = typeof error === 'string' && error.trim() !== '' ? error : `HTTP ${res.status}`
   return { ok: false, status: res.status, message }
+}
+
+/** Resume (session-life §5): starts a stopped hosted session's Claude session again, in a new terminal. */
+export type ResumeSessionInput = { repoId: string; marker: string; cols?: number; rows?: number }
+
+export const resumeSession = (input: ResumeSessionInput, deps: ActionDeps = {}): Promise<ActionReply<ResumeSessionResult>> =>
+  postAction<ResumeSessionResult>('resume-session', input, deps)
+
+/** A record's marker: a UUID. Nothing else goes into the screen route's path. */
+const MARKER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A stopped session's saved screen (session-life §5): `GET /api/sessions/<marker>/screen` with the page's token. The
+ * text, or undefined for anything else (no screen, no token, no such route, the network down): the bar then stands
+ * alone, with no error. The text is never logged.
+ */
+export async function savedScreen(marker: string, deps: ActionDeps = {}): Promise<string | undefined> {
+  const token = (deps.token ?? pageToken)()
+  if (!token || !MARKER.test(marker)) return undefined
+  try {
+    const res = await (deps.fetch ?? fetch)(`/api/sessions/${marker}/screen`, { method: 'GET', headers: { 'X-OpenAFlow-Token': token } })
+    if (res.status !== 200) return undefined
+    const data = (await res.json()) as { text?: unknown } | null
+    return typeof data?.text === 'string' ? data.text : undefined
+  } catch {
+    return undefined
+  }
 }

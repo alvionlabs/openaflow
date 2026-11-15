@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { WAITING_AFTER_MS, type HostedSession } from '@openaflow/model'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DESKTOP_TERMINAL } from './next-step.ts'
 import { runChip } from './view.ts'
-import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
-import { browserView, clock, ENDED_NO_TIME, focusMove, focusRun, keepFocusAsk, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
+import type { TerminalBridge } from '../../desktop-bridge.ts'
+import { createTerminalLink } from '../../terminal-link.ts'
+import { StopBarPanel, TerminalNote, TerminalTab } from './TerminalTab.tsx'
+import { SavedScreen } from './TerminalView.tsx'
+import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
 // Local times, so the HH:MM checks hold in any time zone.
 const START = new Date(2026, 10, 15, 13, 40).getTime()
@@ -35,8 +38,15 @@ const RESTARTED = session({ state: 'stopped', stopReason: 'terminals restarted',
 const APP_CLOSED = session({ state: 'stopped', stopReason: 'app closed' })
 const ENDED_UNTIMED = session({ state: 'ended' })
 
-const tab = (s: HostedSession) => renderToStaticMarkup(createElement(TerminalTab, { repoId: 'notes', repoPath: '/notes', session: s, now: NOW, bridge: undefined }))
+// The desktop app's bridge; the view's effects never run in a static render, so it is never called.
+const BRIDGE: TerminalBridge = { connect: async () => {}, onHostState: () => () => {} }
+const tab = (s: HostedSession, bridge: TerminalBridge | undefined = undefined) =>
+  renderToStaticMarkup(createElement(TerminalTab, { repoId: 'notes', repoPath: '/notes', session: s, now: NOW, bridge }))
 const buttons = (html: string) => [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1]!.replace(/<[^>]+>/g, ''))
+/** The buttons with `disabled`, in order. */
+const disabled = (html: string) => [...html.matchAll(/<button([^>]*)>/g)].map((m) => /\sdisabled=""/.test(m[1]!))
+/** React escapes the apostrophe in text. */
+const text = (s: string) => s.replaceAll("'", '&#x27;')
 
 describe('terminal tab', () => {
   it('clock', () => {
@@ -62,14 +72,14 @@ describe('terminal tab', () => {
 
   it('stop bar', () => {
     // Starting, live, and waiting give the terminal.
-    for (const s of [STARTING, LIVE, WAITING]) expect(terminalBody(s, START + WAITING_AFTER_MS).kind).toBe('terminal')
+    for (const s of [STARTING, LIVE, WAITING]) expect(terminalBody(s, START + WAITING_AFTER_MS, true).kind).toBe('terminal')
     // Ended and stopped give the stop bar: the session's idle dot, its word, when it ended.
-    expect(terminalBody(ENDED, NOW)).toEqual({ kind: 'stopped', bar: { dot: 's-idle', word: 'Ended · Claude exited', line: 'The terminal ended at 14:02.' } })
-    expect(stopBar(ENDED_CODE, NOW)).toEqual({ dot: 's-idle', word: 'Ended · Claude exited with code 3', line: 'The terminal ended at 14:02.' })
-    expect(stopBar(RESTARTED, NOW)).toEqual({ dot: 's-idle', word: 'Stopped · terminals restarted', line: 'The terminal ended at 14:02.' })
+    expect(terminalBody(ENDED, NOW, true)).toEqual({ kind: 'stopped', bar: { dot: 's-idle', word: 'Ended · Claude exited', line: 'The terminal ended at 14:02.', resume: false } })
+    expect(stopBar(ENDED_CODE, NOW, true)).toEqual({ dot: 's-idle', word: 'Ended · Claude exited with code 3', line: 'The terminal ended at 14:02.', resume: false })
+    expect(stopBar(RESTARTED, NOW, true)).toEqual({ dot: 's-idle', word: 'Stopped · terminals restarted', line: 'The terminal ended at 14:02.', resume: false })
     // No end time: the line says it ended, with no time.
-    expect(stopBar(APP_CLOSED, NOW)).toEqual({ dot: 's-idle', word: 'Stopped · app closed', line: ENDED_NO_TIME })
-    expect(stopBar(ENDED_UNTIMED, NOW).line).toBe(ENDED_NO_TIME)
+    expect(stopBar(APP_CLOSED, NOW, true)).toEqual({ dot: 's-idle', word: 'Stopped · app closed', line: ENDED_NO_TIME, resume: false })
+    expect(stopBar(ENDED_UNTIMED, NOW, true).line).toBe(ENDED_NO_TIME)
 
     // Drawn: the bar has Dismiss and nothing else (no Resume in this sprint), over the faded last screen.
     for (const s of [ENDED, ENDED_CODE, RESTARTED, APP_CLOSED]) {
@@ -78,8 +88,8 @@ describe('terminal tab', () => {
       expect(html).not.toContain('Resume')
       expect(html).toContain('class="stop-bar"')
       expect(html).toContain('class="status s-idle"')
-      expect(html).toContain(stopBar(s, NOW).word)
-      expect(html).toContain(stopBar(s, NOW).line)
+      expect(html).toContain(stopBar(s, NOW, false).word)
+      expect(html).toContain(stopBar(s, NOW, false).line)
       expect(html).toMatch(/class="term[^"]*\bfaded\b/)
     }
     // A live session draws the terminal: no stop bar, no button, input on.
@@ -92,6 +102,60 @@ describe('terminal tab', () => {
     }
     // With no link (it can't connect), a live session says the terminal is not available only once the link says so.
     expect(tab(LIVE)).not.toContain(UNAVAILABLE)
+
+    // resume `ok`: today's dot and word, the end line and the Resume line, then Resume (primary) and Dismiss.
+    for (const s of [ENDED, ENDED_CODE, RESTARTED, APP_CLOSED].map((x) => ({ ...x, resume: 'ok' as const }))) {
+      const today = stopBar({ ...s, resume: undefined }, NOW, true)
+      const bar = stopBar(s, NOW, true)
+      expect(bar).toEqual({ dot: 's-idle', word: today.word, line: `${today.line} ${RESUME_LINE}`, resume: true })
+      const html = tab(s, BRIDGE)
+      expect(buttons(html)).toEqual(['Resume', 'Dismiss'])
+      expect(html).toMatch(/<button class="btn primary"[^>]*>Resume<\/button>/)
+      expect(html).toMatch(/<button class="btn"[^>]*>Dismiss<\/button>/)
+      expect(html).toContain('class="status s-idle"')
+      expect(html).toContain(text(bar.line))
+    }
+    expect(RESUME_LINE).toBe('Resume starts the same Claude session again.')
+    expect(stopBar({ ...APP_CLOSED, resume: 'ok' }, NOW, true).line).toBe('The terminal has ended. Resume starts the same Claude session again.')
+
+    // Each can't resume reason: the blocked dot, the word Can't resume, the reason's line, and Dismiss only.
+    expect(RESUME_BLOCKED).toEqual({ 'no folder': 'The repo folder is gone.', 'no conversation': 'The session file is gone.', 'in use': 'Another terminal holds this session.' })
+    for (const reason of ['no folder', 'no conversation', 'in use'] as const) {
+      for (const s of [ENDED, APP_CLOSED].map((x) => ({ ...x, resume: reason }))) {
+        expect(stopBar(s, NOW, true)).toEqual({ dot: 's-bad', word: CANT_RESUME, line: RESUME_BLOCKED[reason], resume: false })
+        const html = tab(s, BRIDGE)
+        expect(buttons(html)).toEqual(['Dismiss'])
+        expect(html).toContain('class="status s-bad"')
+        expect(html).toContain(text("Can't resume"))
+        expect(html).toContain(RESUME_BLOCKED[reason])
+        expect(html).not.toContain(stopBar({ ...s, resume: undefined }, NOW, true).word)
+      }
+    }
+    // A word this page doesn't know (a newer server): today's bar, Dismiss only.
+    expect(stopBar({ ...ENDED, resume: 'later' as never }, NOW, true)).toEqual(stopBar(ENDED, NOW, true))
+    // No resume field (a server before Resume): today's bar, Dismiss only.
+    for (const s of [ENDED, APP_CLOSED]) {
+      expect(stopBar(s, NOW, true)).toEqual({ ...stopBar(s, NOW, false), resume: false })
+      expect(buttons(tab(s, BRIDGE))).toEqual(['Dismiss'])
+      expect(tab(s, BRIDGE)).not.toContain(RESUME_LINE)
+    }
+
+    // While Resume runs: Resuming…, both buttons off. While Dismiss runs: both off too. The error box under the bar.
+    const bar = stopBar({ ...ENDED, resume: 'ok' }, NOW, true)
+    const panel = (o: { busy?: 'resume' | 'dismiss'; error?: string }) =>
+      renderToStaticMarkup(createElement(StopBarPanel, { bar, ...o, onResume: () => {}, onDismiss: () => {} }))
+    expect(buttons(panel({}))).toEqual(['Resume', 'Dismiss'])
+    expect(disabled(panel({}))).toEqual([false, false])
+    expect(buttons(panel({ busy: 'resume' }))).toEqual(['Resuming…', 'Dismiss'])
+    expect(disabled(panel({ busy: 'resume' }))).toEqual([true, true])
+    expect(panel({ busy: 'resume' })).toContain('aria-busy="true"')
+    expect(buttons(panel({ busy: 'dismiss' }))).toEqual(['Resume', 'Dismiss'])
+    expect(disabled(panel({ busy: 'dismiss' }))).toEqual([true, true])
+    const failed = panel({ error: 'Ten sessions are open. End one, then try again' })
+    expect(failed).toContain('role="alert"')
+    expect(failed).toContain('Ten sessions are open. End one, then try again')
+    expect(failed.indexOf('stop-bar')).toBeLessThan(failed.indexOf('role="alert"'))
+    expect(disabled(failed)).toEqual([false, false])
   })
 
   it('focus request', () => {
@@ -142,5 +206,122 @@ describe('terminal tab', () => {
       expect(html).not.toContain('Dismiss')
       expect(html).not.toContain('Resume')
     }
+
+    // Never Resume in the browser: not in the note, not in its line, whatever the record's resume says.
+    for (const s of [ENDED, APP_CLOSED, RESTARTED]) {
+      for (const resume of ['ok', 'no folder', 'no conversation', 'in use'] as const) {
+        const v = browserView({ ...s, resume }, NOW)
+        expect(v).toEqual(browserView(s, NOW))
+        expect(JSON.stringify(v)).not.toContain('Resume')
+        expect(renderToStaticMarkup(createElement(TerminalNote, { session: { ...s, resume }, now: NOW }))).not.toContain('Resume')
+      }
+      // The tab with no bridge (it never draws there, but if it did): no Resume, no Resume line.
+      const html = tab({ ...s, resume: 'ok' })
+      expect(buttons(html)).toEqual(['Dismiss'])
+      expect(html).not.toContain('Resume')
+      expect(stopBar({ ...s, resume: 'ok' }, NOW, false).resume).toBe(false)
+    }
+  })
+
+  it('screen under the bar', () => {
+    // The host holds it: its replay, in xterm, faded. Else the saved screen, faded. Else the bar alone.
+    expect(screenUnder({ ended: true, lost: undefined, saved: 'old text' })).toEqual({ show: 'terminal' })
+    expect(screenUnder({ ended: true, lost: undefined, saved: undefined })).toEqual({ show: 'terminal' })
+    for (const lost of ['gone', 'unavailable'] as const) {
+      expect(screenUnder({ ended: true, lost, saved: 'old text' })).toEqual({ show: 'saved' })
+      // An empty file is a screen too.
+      expect(screenUnder({ ended: true, lost, saved: '' })).toEqual({ show: 'saved' })
+      expect(screenUnder({ ended: true, lost, saved: undefined })).toEqual({ show: 'none' })
+    }
+    // A live session the host lacks: the unavailable line, never a saved screen.
+    expect(screenUnder({ ended: false, lost: 'gone', saved: 'old text' })).toEqual({ show: 'none', line: UNAVAILABLE })
+    expect(screenUnder({ ended: false, lost: undefined, saved: undefined })).toEqual({ show: 'terminal' })
+    // The saved screen is asked for only once the host lacks an ended session.
+    expect(wantSaved({ ended: true, lost: 'gone' })).toBe(true)
+    expect(wantSaved({ ended: true, lost: 'unavailable' })).toBe(true)
+    expect(wantSaved({ ended: true, lost: undefined })).toBe(false)
+    expect(wantSaved({ ended: false, lost: 'gone' })).toBe(false)
+
+    // Drawn: the text as text (never HTML), faded, hidden from screen readers like the faded terminal.
+    const html = renderToStaticMarkup(createElement(SavedScreen, { text: 'line 1\n<b>2</b> & more' }))
+    expect(html).toMatch(/class="term faded saved"/)
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).toContain('<pre class="term-saved">line 1\n&lt;b&gt;2&lt;/b&gt; &amp; more</pre>')
+  })
+
+  it('host paths', async () => {
+    // The page's link to a fake host: each connect gives a new port, as the preload does.
+    type Sent = { type: string; id?: string }
+    const target = new EventTarget()
+    const win = target as unknown as Window
+    const ports: { sent: Sent[]; onmessage: ((e: { data: unknown }) => void) | null; postMessage(m: Sent): void }[] = []
+    let hostState: ((s: 'ready' | 'unresponsive' | 'restarted' | 'failed') => void) | undefined
+    const bridge: TerminalBridge = {
+      connect: vi.fn(async () => {
+        const port = { sent: [] as Sent[], onmessage: null as ((e: { data: unknown }) => void) | null, postMessage(m: Sent) { this.sent.push(m) } }
+        ports.push(port)
+        const e = new Event('message') as Event & { data: unknown; source: unknown; ports: unknown[] }
+        e.data = { type: 'openaflow:terminal-port' }
+        e.source = win
+        e.ports = [port]
+        target.dispatchEvent(e)
+      }),
+      onHostState: (fn) => ((hostState = fn), () => {}),
+    }
+    const link = createTerminalLink(bridge, win)
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+    }
+    // The view, as TerminalView runs it: attach when `canAttach`, with `screenHandlers`; draw what `screenUnder` says.
+    const drawn: string[] = []
+    let lost: 'gone' | 'unavailable' | undefined
+    const term = { reset: () => drawn.splice(0), write: (d: string) => void drawn.push(d) }
+    const handlers = screenHandlers(term, (l) => (lost = l))
+    let opened = false
+    const render = async (s: HostedSession) => {
+      if (!opened && canAttach(s, NOW)) {
+        opened = true
+        await link.open(s.marker, { cols: 80, rows: 24 }, handlers)
+      }
+      await flush()
+      return screenUnder({ ended: terminalBody(s, NOW, true).kind === 'stopped', lost, saved: undefined })
+    }
+
+    // Starting: no attach (not even a connect), while the host may not hold it yet.
+    expect(canAttach(STARTING, NOW)).toBe(false)
+    expect(await render(STARTING)).toEqual({ show: 'terminal' })
+    expect(bridge.connect).not.toHaveBeenCalled()
+    // Live: resize, then attach; the replay draws.
+    expect(canAttach(LIVE, NOW)).toBe(true)
+    expect(canAttach(WAITING, START + WAITING_AFTER_MS)).toBe(true)
+    await render(LIVE)
+    expect(ports[0]!.sent.map((m) => m.type)).toEqual(['resize', 'attach'])
+    ports[0]!.onmessage!({ data: { type: 'replay', id: LIVE.marker, data: 'screen 1' } })
+    expect(drawn).toEqual(['screen 1'])
+
+    // The host failed for good: the unavailable line in place of the terminal.
+    hostState!('failed')
+    expect(lost).toBe('unavailable')
+    expect(await render(LIVE)).toEqual({ show: 'none', line: UNAVAILABLE })
+
+    // The host restarted: the page connects again and attaches again; the replay brings the terminal back.
+    hostState!('restarted')
+    await flush()
+    expect(ports).toHaveLength(2)
+    expect(ports[1]!.sent.map((m) => m.type)).toEqual(['resize', 'attach'])
+    ports[1]!.onmessage!({ data: { type: 'replay', id: LIVE.marker, data: 'screen 2' } })
+    expect(lost).toBeUndefined()
+    expect(drawn).toEqual(['screen 2'])
+    expect(await render(LIVE)).toEqual({ show: 'terminal' })
+    // Live data after it, acked once written.
+    ports[1]!.onmessage!({ data: { type: 'data', id: LIVE.marker, data: 'more' } })
+    expect(drawn).toEqual(['screen 2', 'more'])
+
+    // A restart the host lost the session in: gone, and a live session reads unavailable.
+    hostState!('restarted')
+    await flush()
+    ports[2]!.onmessage!({ data: { type: 'error', id: LIVE.marker, error: 'no session' } })
+    expect(lost).toBe('gone')
+    expect(await render(LIVE)).toEqual({ show: 'none', line: UNAVAILABLE })
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { postAction, type ActionDeps } from './actions-client.ts'
+import { postAction, resumeSession, savedScreen, type ActionDeps } from './actions-client.ts'
 
 const TOKEN = 'k'.repeat(43)
 
@@ -93,5 +93,56 @@ describe('action client', () => {
   it('a success whose body is not JSON is an error, not data', async () => {
     const f = fakeFetch(() => new Response('<html></html>', { status: 200 }))
     expect(await postAction('merge', {}, deps(f.fn))).toEqual({ ok: false, status: 200, message: 'HTTP 200' })
+  })
+})
+
+describe('session calls', () => {
+  const MARKER = '7f3c9a12-0000-4000-8000-000000000001'
+  const NEW = '0b1c2d3e-0000-4000-8000-000000000002'
+
+  it('session calls', async () => {
+    // resumeSession posts the route with the token, the repo, the marker, and the size, and reads the new marker.
+    const ok = fakeFetch(() => json(200, { outcome: 'started', marker: NEW, logged: true }))
+    expect(await resumeSession({ repoId: 'notes', marker: MARKER, cols: 100, rows: 30 }, deps(ok.fn))).toEqual({ ok: true, data: { outcome: 'started', marker: NEW, logged: true } })
+    expect(ok.calls).toHaveLength(1)
+    expect(ok.calls[0]!.url).toBe('/api/actions/resume-session')
+    expect(ok.calls[0]!.init.method).toBe('POST')
+    expect(new Headers(ok.calls[0]!.init.headers).get('x-openaflow-token')).toBe(TOKEN)
+    expect(JSON.parse(String(ok.calls[0]!.init.body))).toEqual({ repoId: 'notes', marker: MARKER, cols: 100, rows: 30 })
+    // No size: none is sent.
+    const bare = fakeFetch(() => json(200, { outcome: 'started', marker: NEW, logged: false }))
+    await resumeSession({ repoId: 'notes', marker: MARKER }, deps(bare.fn))
+    expect(JSON.parse(String(bare.calls[0]!.init.body))).toEqual({ repoId: 'notes', marker: MARKER })
+    // A refusal reads as any action's.
+    const refused = fakeFetch(() => json(409, { error: "can't resume: no folder" }))
+    expect(await resumeSession({ repoId: 'notes', marker: MARKER }, deps(refused.fn))).toEqual({ ok: false, status: 409, message: "can't resume: no folder" })
+
+    // savedScreen: a GET with the token; the text on 200.
+    const screen = fakeFetch(() => json(200, { text: 'line 1\nline 2' }))
+    expect(await savedScreen(MARKER, deps(screen.fn))).toBe('line 1\nline 2')
+    expect(screen.calls[0]!.url).toBe(`/api/sessions/${MARKER}/screen`)
+    expect(screen.calls[0]!.init.method ?? 'GET').toBe('GET')
+    expect(new Headers(screen.calls[0]!.init.headers).get('x-openaflow-token')).toBe(TOKEN)
+    // An empty screen is still a screen.
+    expect(await savedScreen(MARKER, deps(fakeFetch(() => json(200, { text: '' })).fn))).toBe('')
+    // Nothing to show: 404 no screen, 403, a server with no such route, HTML, a body with no text, the network down.
+    const none: (() => Response | Promise<Response>)[] = [
+      () => json(404, { error: 'no screen' }),
+      () => json(403, { error: 'bad token' }),
+      () => json(404, { error: 'not found' }),
+      () => new Response('<html></html>', { status: 200 }),
+      () => json(200, { text: 3 }),
+      () => json(200, null),
+      () => Promise.reject(new TypeError('Failed to fetch')),
+    ]
+    for (const reply of none) expect(await savedScreen(MARKER, deps(fakeFetch(reply).fn))).toBeUndefined()
+    // No token: no request.
+    const noToken = fakeFetch(() => json(200, { text: 'x' }))
+    expect(await savedScreen(MARKER, deps(noToken.fn, null))).toBeUndefined()
+    expect(noToken.calls).toEqual([])
+    // A marker that is not a UUID is never put in a path.
+    const odd = fakeFetch(() => json(200, { text: 'x' }))
+    expect(await savedScreen('../board', deps(odd.fn))).toBeUndefined()
+    expect(odd.calls).toEqual([])
   })
 })
