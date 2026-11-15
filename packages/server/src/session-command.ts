@@ -60,11 +60,26 @@ export function sessionCommand(o: SessionCommandInput): SessionCommand | Session
   return build(o, ['--session-id', o.sessionId, '--plugin-dir', o.pluginDir], prompt)
 }
 
+/** What `resumeCommand` takes: `sessionId` is the session to resume, `runMarker` the new record's marker. */
+export type ResumeCommandInput = CommandBase
+
+export type ResumeCommandError = Exclude<SessionCommandError, 'bad skill' | 'bad text'>
+
+/**
+ * The command that resumes `sessionId` in a hosted `claude`: as `sessionCommand`, with the args
+ * `--resume <id> --plugin-dir <dir>` and no prompt, so a Windows shim never needs `typeYourself`.
+ */
+export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCommandError {
+  const bad = badInput(o)
+  if (bad !== undefined) return bad
+  return build(o, ['--resume', o.sessionId, '--plugin-dir', o.pluginDir], undefined)
+}
+
 /**
  * The command for `flags` and an optional prompt, last. A Windows shim only cmd.exe can read gets no prompt:
  * `typeYourself` holds it instead.
  */
-function build(o: CommandBase, flags: string[], prompt: string | undefined): SessionCommand | SessionCommandError {
+function build(o: CommandBase, flags: string[], prompt: string | undefined): SessionCommand | ResumeCommandError {
   const win = o.platform === 'win32'
   const env = sessionEnv(o)
   const withPrompt = prompt === undefined ? flags : [...flags, prompt]

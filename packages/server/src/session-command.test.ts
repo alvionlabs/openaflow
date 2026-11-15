@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { sessionCommand, type SessionCommand, type SessionCommandInput, type ShimRead } from './session-command.ts'
+import { resumeCommand, sessionCommand, type SessionCommand, type SessionCommandInput, type ShimRead } from './session-command.ts'
 
 const WIN = process.platform === 'win32'
 const SESSION = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b'
@@ -73,6 +73,35 @@ describe('args', () => {
   test('an unknown skill is refused', () => {
     expect(sessionCommand(linux({ skill: 'teach' as never }))).toBe('bad skill')
     expect(sessionCommand(linux({ skill: 'toString' as never }))).toBe('bad skill')
+  })
+})
+
+describe('resume args', () => {
+  const resume = (over: Partial<SessionCommandInput> = {}) => {
+    const { skill: _skill, text: _text, ...rest } = linux(over)
+    return resumeCommand(rest)
+  }
+
+  test('exactly --resume <id> --plugin-dir <dir>, in the repo folder, with no prompt and no --session-id', () => {
+    const r = ok(resume())
+    expect(r.program).toBe('/home/me/.local/bin/claude')
+    expect(r.cwd).toBe('/home/me/repo')
+    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', '/opt/openaflow/resources/hooks-plugin'])
+    expect(r.typeYourself).toBeUndefined()
+  })
+
+  test('bad ids are refused, and the new marker is never the resumed session', () => {
+    for (const id of ['', 'abc', SESSION.toUpperCase(), `${SESSION}0`, ` ${SESSION}`, `-${SESSION.slice(1)}`, '--print']) {
+      expect(resume({ sessionId: id }), id).toBe('bad id')
+      expect(resume({ runMarker: id }), id).toBe('bad id')
+    }
+    expect(resume({ runMarker: SESSION })).toBe('bad id')
+  })
+
+  test('relative paths are refused', () => {
+    for (const p of ['', 'repo', './repo', '~/repo']) {
+      for (const key of ['claude', 'repo', 'pluginDir', 'configDir'] as const) expect(resume({ [key]: p }), `${key} ${p}`).toBe('bad path')
+    }
   })
 })
 
@@ -186,6 +215,16 @@ describe('the session env', () => {
     expect(board.OPENAFLOW_RUN).toBe('not-this-one') // the board's own env is left alone
   })
 
+  test('the resume env is the session env with its own marker', () => {
+    const NEW = '1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d'
+    const started = ok(sessionCommand(linux({ env: board, runMarker: NEW })))
+    const { skill: _skill, text: _text, ...rest } = linux({ env: board, runMarker: NEW })
+    const resumed = ok(resumeCommand(rest))
+    expect(resumed.env).toEqual(started.env)
+    expect(resumed.env.OPENAFLOW_RUN).toBe(NEW)
+    expect(resumed.env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
   test('on Windows names match in any case and the hooks folder is a Windows path', () => {
     const r = ok(
       sessionCommand(
@@ -292,6 +331,30 @@ describe('windows shims', () => {
       expect(sessionCommand(win({ pluginDir: bad }, fakeWindows({ read: 'unreadable' }))), bad).toBe('unsafe claude path')
     }
     expect(sessionCommand(win({}, fakeWindows({ read: 'unreadable', cmd: undefined })))).toBe('cmd.exe not found')
+  })
+
+  test('resume through an npm shim runs node plus its script', () => {
+    const { skill: _skill, text: _text, ...rest } = win({}, fakeWindows({ read: { file: 'C:\\nodejs\\node.exe', pre: [CLI] } }))
+    const r = ok(resumeCommand(rest))
+    expect(r.program).toBe('C:\\nodejs\\node.exe')
+    expect(r.args).toEqual([CLI, '--resume', SESSION, '--plugin-dir', WIN_PLUGIN])
+    expect(r.typeYourself).toBeUndefined()
+    expect(r.env.OPENAFLOW_HOOKS_DIR).toBe('C:\\Users\\me\\AppData\\Roaming\\openaflow-server\\hooks')
+  })
+
+  test('resume through an unreadable shim runs cmd.exe with no typeYourself; its refusals hold', () => {
+    const resume = (over: Partial<SessionCommandInput>, fake: ReturnType<typeof fakeWindows>) => {
+      const { skill: _skill, text: _text, ...rest } = win(over, fake)
+      return resumeCommand(rest)
+    }
+    const shim = 'C:\\Users\\me\\AppData\\Local\\pnpm\\claude.bat'
+    const r = ok(resume({ claude: shim }, fakeWindows({ read: 'unreadable' })))
+    expect(r.program).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(r.args).toEqual(['/d', '/c', 'call', shim, '--resume', SESSION, '--plugin-dir', WIN_PLUGIN])
+    expect('typeYourself' in r).toBe(false)
+    expect(resume({}, fakeWindows({ read: 'no node' }))).toBe('node not found')
+    expect(resume({ claude: 'C:\\a&b\\claude.cmd' }, fakeWindows({ read: 'unreadable' }))).toBe('unsafe claude path')
+    expect(resume({}, fakeWindows({ read: 'unreadable', cmd: undefined }))).toBe('cmd.exe not found')
   })
 
   test('a shim on Linux is only a file name', () => {
