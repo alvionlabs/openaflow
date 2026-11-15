@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { bundleDesktop } from '../src/bundle-desktop.ts'
 
-const DESKTOP = join(dirname(fileURLToPath(import.meta.url)), '..')
+/** The desktop package folder. */
+export const DESKTOP = join(dirname(fileURLToPath(import.meta.url)), '..')
 const LAUNCH_MS = 60_000
 const CLOSE_MS = 15_000
 
