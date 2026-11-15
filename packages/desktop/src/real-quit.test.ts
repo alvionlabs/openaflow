@@ -192,7 +192,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const owner = join(w.cfg, 'auto-continue-owner.json')
         await lifeUntil('the owner file', () => existsSync(owner), 15_000, w)
         const server = (JSON.parse(readFileSync(owner, 'utf8')) as { pid: number }).pid
-        const main = h.pid
+        // Main's own pid: on Windows the process Playwright started is not the main process that forks the server.
+        const main = await h.app.evaluate(() => process.pid)
         const at = Date.now()
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
