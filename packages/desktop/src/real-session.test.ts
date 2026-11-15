@@ -237,7 +237,9 @@ async function productPathCheck(h: Harness, w: World): Promise<void> {
   expect(first, await details(h, w)).toMatchObject({ marker, skill: 'task', state: 'live', hooked: false })
   const sessionId = first!.sessionId
 
-  // The spec's args: the session id, the plugin folder, and the prompt last, whole.
+  // The spec's args: the session id, the plugin folder, and the prompt last, whole. The pid comes at the spawn,
+  // so the fake may not have written its line yet.
+  await until('the fake to start', () => starts(w).length > 0, 15_000, h, w)
   expect(starts(w)).toHaveLength(1)
   expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), PROMPT])
   await until('the args on the screen', async () => ((await hooks(h).snapshot(marker)) ?? '').includes(`arg 4: ${PROMPT}`), 15_000, h, w)
@@ -273,6 +275,7 @@ async function windowsShimsCheck(h: Harness, w: World): Promise<void> {
   expect(npm.answer.body.typeYourself).toBeUndefined()
   const npmMarker = npm.answer.body.marker as string
   await until('the npm shim session live', async () => (await hosted(h, w, npmMarker))?.state === 'live', 15_000, h, w)
+  await until('the npm shim to start the fake', () => starts(w).length > 0, 15_000, h, w)
   const viaNode = starts(w)[0]!
   expect(viaNode.execPath.toLowerCase()).toBe(join(w.bin, 'node.exe').toLowerCase())
   expect(viaNode.args).toEqual(['--session-id', (await hosted(h, w, npmMarker))!.sessionId, '--plugin-dir', await pluginDir(h), PROMPT])
