@@ -91,6 +91,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [bridge] = useState(() => terminalBridge())
   const repoButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
+  // Open terminal or a started New session asked for focus in the live terminal; the Terminal tab clears it once taken.
+  const [termFocus, setTermFocus] = useState(false)
   // The hash the urgent banner's Open run went to, so focus lands on that run's title.
   const focusFor = useRef<string | undefined>(undefined)
 
@@ -136,6 +138,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
       onTabRequest((t) => {
         saveTab(store.current, t)
         setStored(t)
+        setTermFocus(true)
         // An engineer's view always shows Log: go to its run, unless the page already moved on.
         const { view: v, selected: run, agent: id } = latest.current
         if (v === 'agent' && run && window.location.hash === hashFor(run, 'agent', id)) window.location.hash = hashFor(run)
@@ -217,8 +220,11 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     if (shownRun.current === key) runTitle.current?.focus()
   }
 
+  const focusTaken = useMemo(() => () => setTermFocus(false), [])
   const press = (t: Tab) => {
     const next = tabPress(shown, t, view)
+    // A tab press is the user's own move: a focus request not yet taken is dropped.
+    setTermFocus(false)
     saveTab(store.current, next.save)
     setStored(next.save)
     if (next.leave && selected) window.location.hash = hashFor(selected)
@@ -366,6 +372,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                       now={now}
                       bridge={bridge}
                       onDismissed={dismissedOn(runKey)}
+                      focus={termFocus}
+                      onFocused={focusTaken}
                     />
                   )}
                 </div>

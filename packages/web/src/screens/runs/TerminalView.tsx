@@ -34,14 +34,22 @@ type Props = {
   attach: boolean
   /** The session ended or stopped: the last screen, faded, with no input. Nothing at all once the host lacks it. */
   ended: boolean
+  /**
+   * Open terminal (or the move after a start) asked for focus: put it in xterm once the view is attached, then call
+   * `onFocused`. Never on a faded screen or a terminal that is not available.
+   */
+  focus?: boolean
+  onFocused?: () => void
 }
 
-export function TerminalView({ id, bridge, attach, ended }: Props) {
+export function TerminalView({ id, bridge, attach, ended, focus = false, onFocused }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const term = useRef<import('@xterm/xterm').Terminal | undefined>(undefined)
   const [ready, setReady] = useState(false)
   // `gone`: the host has no such session; `unavailable`: the host can't be used (a later replay brings it back).
   const [lost, setLost] = useState<'gone' | 'unavailable' | undefined>(undefined)
+  // The attach was sent: keys typed from now on reach the session.
+  const [attached, setAttached] = useState(false)
   const endedNow = useRef(ended)
   endedNow.current = ended
 
@@ -105,7 +113,9 @@ export function TerminalView({ id, bridge, attach, ended }: Props) {
     const t = term.current
     if (!bridge || !ready || !attach || !t) return
     const link = linkFor(bridge)
-    void link.open(id, sizeOf(t.cols, t.rows), {
+    let stopped = false
+    void link
+      .open(id, sizeOf(t.cols, t.rows), {
       replay(data) {
         // A replay after the host restarted draws the whole screen again.
         t.reset()
@@ -121,8 +131,20 @@ export function TerminalView({ id, bridge, attach, ended }: Props) {
       gone: () => setLost('gone'),
       unavailable: () => setLost('unavailable'),
     })
+      .then(() => {
+        if (!stopped) setAttached(true)
+      })
     // The unmount effect above detaches.
+    return () => {
+      stopped = true
+    }
   }, [id, bridge, ready, attach])
+
+  useEffect(() => {
+    if (!focus || !attached || ended || lost !== undefined) return
+    term.current?.focus()
+    onFocused?.()
+  }, [focus, attached, ended, lost, onFocused])
 
   useEffect(() => {
     const t = term.current

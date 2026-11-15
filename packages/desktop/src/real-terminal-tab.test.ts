@@ -77,6 +77,9 @@ const fitGap = (page: Page) =>
     return { right, bottom }
   })
 
+/** Keyboard focus is in the live xterm's input (its helper textarea). */
+const inTerminal = (page: Page) => page.evaluate(() => document.activeElement?.matches('.term:not(.faded) textarea.xterm-helper-textarea') === true)
+
 const terminalTab = (page: Page) => page.locator('.main > .tabs button.tab', { hasText: 'Terminal' })
 const count = (text: string, part: string) => text.split(part).length - 1
 
@@ -175,8 +178,9 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
       // The Board reads it live, then hooked.
       await until('Live under the terminal', async () => (await page.locator('.term-foot').innerText()).includes('Live'), h)
 
-      // Typed text goes to the session, and its answer shows in xterm.
-      await page.locator('.term').click()
+      // The move to the tab after the start puts focus in xterm: typed text goes to the session with no click, and its
+      // answer shows in xterm.
+      await until('focus in xterm after the start', () => inTerminal(page), h)
       await page.keyboard.type('hello')
       await page.keyboard.press('Enter')
       await until('the echo', async () => (await screen(page)).includes('got:hello'), h)
@@ -188,11 +192,50 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
       await sleep(1_000)
       expect(count(await screen(page), 'got:hello')).toBe(1)
       expect(count(await screen(page), 'tab-claude args:')).toBe(1)
+      // A page load with the stored tab open takes no focus.
+      expect(await inTerminal(page)).toBe(false)
       // Input still reaches it after the reload.
       await page.locator('.term').click()
       await page.keyboard.type('again')
       await page.keyboard.press('Enter')
       await until('the echo after the reload', async () => (await screen(page)).includes('got:again'), h)
+    },
+    RUN_MS,
+  )
+
+  test(
+    'Open terminal focuses the terminal',
+    async () => {
+      const { page } = h
+      const open = page.locator('section.next-step').getByRole('button', { name: 'Open terminal' })
+      // The tab already open: focus elsewhere, then Open terminal moves it into xterm, and keys reach the session.
+      await page.locator('h1.run-name').focus()
+      expect(await inTerminal(page)).toBe(false)
+      await open.click()
+      await until('focus in xterm (tab open)', () => inTerminal(page), h)
+      await page.keyboard.type('focus1')
+      await page.keyboard.press('Enter')
+      await until('the echo of focus1', async () => (await screen(page)).includes('got:focus1'), h)
+
+      // The tab closed: Open terminal opens it, and focus goes into the new xterm once it is attached.
+      await terminalTab(page).click()
+      await until('the Terminal tab, closed', async () => (await terminalTab(page).getAttribute('aria-expanded')) === 'false', h)
+      await open.click()
+      await until('the Terminal tab, open again', async () => (await terminalTab(page).getAttribute('aria-expanded')) === 'true', h)
+      await until('focus in xterm (tab reopened)', () => inTerminal(page), h)
+      await until('the replay', async () => (await screen(page)).includes('got:focus1'), h)
+      await page.keyboard.type('focus2')
+      await page.keyboard.press('Enter')
+      await until('the echo of focus2', async () => (await screen(page)).includes('got:focus2'), h)
+
+      // Pressing the tab itself is not Open terminal: it takes no focus.
+      await terminalTab(page).click()
+      await until('the Terminal tab, closed', async () => (await terminalTab(page).getAttribute('aria-expanded')) === 'false', h)
+      await terminalTab(page).click()
+      await until('the Terminal tab, open', async () => (await terminalTab(page).getAttribute('aria-expanded')) === 'true', h)
+      await until('the replay after the tab press', async () => (await screen(page)).includes('got:focus2'), h)
+      await sleep(500)
+      expect(await inTerminal(page)).toBe(false)
     },
     RUN_MS,
   )
