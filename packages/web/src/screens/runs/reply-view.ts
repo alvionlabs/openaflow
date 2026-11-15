@@ -1,9 +1,11 @@
 // The Reply panel's rows and words: which reply pod waits for, and the chat to paste it in.
 // Session ids and commands only, never prompt text.
 
-import { replySession, runReplies, sendableReply, type BoardRepo, type ReplyWord, type RunSummary } from '@openaflow/model'
+import { replySession, rowSessions, runReplies, sendableReply, sessionView, shownSession, type BoardRepo, type ReplyWord, type RunSummary } from '@openaflow/model'
 
 export const NO_SESSION = 'No pod session found for this run. Paste it in the chat that runs it.'
+/** A hosted run's chat is the app's own terminal: no `claude --resume` to copy (sprint terminal-tab §6). */
+export const HOSTED_CHAT = "This run's session is in the Terminal tab. Type the reply there."
 
 /**
  * A session id the runner resumes: `^[A-Za-z0-9-]{1,64}$` with no leading `-`, the same rule as
@@ -18,7 +20,17 @@ const SENDABLE_SESSION = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/
 export type ReplyRowView = { key: string; word: ReplyWord; why: string; send?: 'continue' | 'go' }
 /** `cd`: absent for a Windows path no one quoting keeps safe (see `cdCommand`); the panel then shows `path` alone. */
 export type ReplySessionView = { line: string; time?: string; path: string; cd?: string; resume?: string }
-export type ReplyPanelView = { target: { repoId: string; run: string }; rows: ReplyRowView[]; session?: ReplySessionView; noSession?: string }
+/**
+ * `hosted`: the run's session is one the app hosts (`isHostedSession`), so no row sends (the server refuses it) and the
+ * card says to type `word` in the terminal; `stopped` when the row's shown session ended or stopped.
+ */
+export type ReplyPanelView = {
+  target: { repoId: string; run: string }
+  rows: ReplyRowView[]
+  session?: ReplySessionView
+  noSession?: string
+  hosted?: { word: ReplyWord; stopped: boolean }
+}
 
 /** Local `HH:MM`. */
 const clock = (ms: number) => {
@@ -58,6 +70,13 @@ export function replyPanel(run: RunSummary | undefined, repo: BoardRepo | undefi
     return row
   })
   const target = { repoId: repo.id, run: plan }
+  const holder = s && (repo.hosted ?? []).find((h) => h.sessions.includes(s.id))
+  if (holder) {
+    const view = sessionView(shownSession(rowSessions(repo, plan, now)) ?? holder, now)
+    const word = (rows.find((r) => r.send !== undefined) ?? rows[0]!).word
+    const copyOnly = rows.map(({ send: _send, ...r }): ReplyRowView => r)
+    return { target, rows: copyOnly, noSession: HOSTED_CHAT, hosted: { word, stopped: view === 'ended' || view === 'stopped' } }
+  }
   if (!s) return { target, rows, noSession: NO_SESSION }
   const session: ReplySessionView = { line: `Session ${s.id}`, path: s.repoPath }
   const cd = cdCommand(s.repoPath)

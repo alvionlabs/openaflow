@@ -18,6 +18,7 @@ import {
   type BoardRepo,
   type Claim,
   type GhRead,
+  type HostedSession,
   type PrStatus,
   type RepoModel,
   repoPathKey,
@@ -26,6 +27,7 @@ import { readClaims } from './claims.ts'
 import type { GhReader } from './gh.ts'
 import { ignoresCase as probeIgnoresCase, normalizeRepoPath, repoIds, sameRepoPath } from './guard.ts'
 import { readRepoFiles } from './repo-files.ts'
+import { hostedSession, type HookReader, type StoredSession } from './session-store.ts'
 import { loadRepos } from './repos-config.ts'
 import { agentOfRepo, createAgentFileCache, createSessionCwdCache, listAgentFiles, sessionFileOf, type AgentFile } from './transcript-files.ts'
 
@@ -42,6 +44,8 @@ export type BoardServiceDeps = {
   actions?: () => ActionEntry[]
   /** The auto-continue toggles, read on every build. No dep, no `autoContinue` on the Board. */
   autoContinue?: () => AutoToggle[]
+  /** The session store's records and their hook files, read on every build. No dep, no `hosted` on any repo. */
+  hosted?: { list(): StoredSession[]; hooks: Pick<HookReader, 'read'> }
 }
 
 export type BoardService = {
@@ -138,7 +142,16 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
     ]
   }
 
-  async function buildRepo(entry: RepoEntry, id: string, listed: AgentFile[], sessionFiles: string[]): Promise<BoardRepo> {
+  /** The repo's hosted sessions, oldest first, with their hook state; `{}` when it has none. */
+  async function hostedOf(entry: RepoEntry, records: readonly StoredSession[]): Promise<{ hosted?: HostedSession[] }> {
+    const mine = records.filter((r) => sameRepoPath(entry.path, normalizeRepoPath(r.repoPath, deps.platform), deps.platform, entry.caseless))
+    if (mine.length === 0 || !deps.hosted) return {}
+    const hooks = deps.hosted.hooks
+    const hosted = await Promise.all(mine.map(async (r) => hostedSession(r, await hooks.read(r.marker))))
+    return { hosted: hosted.sort((a, b) => a.startedAt - b.startedAt) }
+  }
+
+  async function buildRepo(entry: RepoEntry, id: string, listed: AgentFile[], sessionFiles: string[], records: readonly StoredSession[]): Promise<BoardRepo> {
     const base = {
       id,
       name: pathFor(deps.platform).basename(entry.path) || entry.path,
@@ -146,6 +159,7 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       ...(entry.caseless ? { caseless: true as const } : {}),
       source: entry.registered ? (entry.claims.length > 0 ? 'both' : 'registered') : 'claim',
       claims: entry.claims,
+      ...(await hostedOf(entry, records)),
     } as const
     let model: RepoModel
     try {
@@ -182,7 +196,8 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       const listed: AgentFile[] = []
       const sessionFiles: string[] = []
       const { ids } = repoIds(entries, deps.platform)
-      const repos = await Promise.all(entries.map((e, i) => buildRepo(e, ids[i]!, listed, sessionFiles)))
+      const records = deps.hosted?.list() ?? []
+      const repos = await Promise.all(entries.map((e, i) => buildRepo(e, ids[i]!, listed, sessionFiles, records)))
       // Forget transcripts no repo listed this time: out of the day window, deleted, or their repo gone.
       agentRuns.retain(listed)
       sessionCwds.retain(sessionFiles)

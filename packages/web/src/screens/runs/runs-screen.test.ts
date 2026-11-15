@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { buildRepoModel, listRuns, type Board, type BoardRepo, type Claim, type PrStatus, type RunSummary } from '@openaflow/model'
+import { buildRepoModel, listRuns, type Board, type BoardRepo, type Claim, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
@@ -13,6 +13,7 @@ import { confirmView, moreButtonId, removeTarget } from './remove-flow.ts'
 import { createToggleFlow, toggleView, type Post, type ToggleState, type ToggleView } from './resume-flow.ts'
 import { RunsList } from './RunsList.tsx'
 import { RunsScreen } from './RunsScreen.tsx'
+import { TYPED } from './new-session-flow.ts'
 import type { TabStorage } from './tab-memory.ts'
 
 // chess-web as in next-step.test.ts: plan sparring-ladder on wave 3 of sprint ladder, three PENDING entries for you.
@@ -731,3 +732,121 @@ describe('Open the wave board in the progress row', () => {
     expect(headerOf(render({ repo: chess(), view: 'board' }).html)).not.toMatch(/Open the wave board/)
   })
 })
+
+// Hosted sessions (terminal-tab N1): what the card draws in the desktop app (a terminal bridge on the page) and in the
+// browser build (none).
+describe('hosted cards', () => {
+  /** Renders with `window.openaflow.connectTerminals` on the page, as the desktop app's preload puts it. */
+  function inDesktop<T>(fn: () => T): T {
+    const g = globalThis as { window?: unknown }
+    const had = 'window' in g
+    const before = g.window
+    g.window = { openaflow: { connectTerminals: () => Promise.resolve() } }
+    try {
+      return fn()
+    } finally {
+      if (had) g.window = before
+      else delete g.window
+    }
+  }
+  const session = (over: Partial<HostedSession> = {}): HostedSession => ({
+    marker: '7f3c9a12-0000-4000-8000-00000000abcd',
+    sessionId: 'sess-x',
+    liveSession: 'sess-x',
+    sessions: ['sess-x'],
+    skill: 'plan',
+    startedAt: NOW - 120_000,
+    state: 'live',
+    hooked: true,
+    prompted: true,
+    ...over,
+  })
+  const files = { 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': '' }
+  const bare = (extra: Partial<BoardRepo> = {}): BoardRepo => ({ id: 'notes', name: 'notes-app', path: '/n', source: 'registered', model: buildRepoModel(files), agents: [], prs: [], claims: [], ...extra })
+  const rowOf = (repo: BoardRepo) => listRuns(boardOf(repo), NOW).find((r) => r.plan === undefined)!
+  const primaries = (html: string) => [...html.matchAll(/<button[^>]*class="btn primary"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1])
+
+  it('the start card: the form in the desktop app, the desktop note in the browser', () => {
+    const repo = bare()
+    const desk = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
+    expect(desk).toMatch(/^<section class="card next-step"/)
+    expect(text(desk)).toMatch(/No active plan/)
+    expect(text(desk)).toMatch(/Pick what to start, then describe it\./)
+    expect(desk).toMatch(/<form class="new-session"/)
+    expect(desk).toMatch(/role="combobox"/)
+    expect(text(desk)).toMatch(/Start with/)
+    expect(text(desk)).toMatch(/What to build/)
+    expect(desk).toMatch(/maxLength="2000"/)
+    expect(desk).not.toMatch(/autofocus/i)
+    expect(primaries(desk)).toEqual(['New session'])
+
+    const web = cardOf(render({ repo, run: rowOf(repo) }).html)
+    expect(text(web)).toMatch(/Open the desktop app to start a session\./)
+    expect(web).not.toMatch(/<form|<button/)
+  })
+
+  it('the waiting card: Open terminal in the desktop app, the desktop note in the browser', () => {
+    const repo = bare({ hosted: [session({ hooked: false, prompted: false })] })
+    const desk = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
+    expect(text(desk)).toMatch(/Claude waits for you in the terminal/)
+    expect(text(desk)).toMatch(/It may ask you to trust this folder or to sign in\. The app never answers for you\./)
+    expect(text(desk)).toMatch(/Needs you/)
+    expect(primaries(desk)).toEqual(['Open terminal'])
+
+    const web = cardOf(render({ repo, run: rowOf(repo) }).html)
+    expect(text(web)).toMatch(/Open the desktop app to use the terminal\./)
+    expect(web).not.toMatch(/<button/)
+  })
+
+  it('the running card: Open terminal in the desktop app, the desktop note in the browser', () => {
+    for (const state of ['starting', 'live'] as const) {
+      const repo = bare({ hosted: [session({ state, prompted: false })] })
+      const desk = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
+      expect(desk, state).toMatch(/^<section class="card next-step"/)
+      expect(text(desk)).toContain('A session runs in this repo&#x27;s terminal')
+      expect(text(desk).replace(/\s+/g, ' ')).toMatch(/It started with \/pod:plan \./)
+      expect(desk).toContain('<code class="mono">/pod:plan</code>')
+      expect(text(desk)).toMatch(/Running/)
+      expect(text(desk)).not.toMatch(/Nothing to do|No active plan/)
+      expect(primaries(desk)).toEqual(['Open terminal'])
+
+      const web = cardOf(render({ repo, run: rowOf(repo) }).html)
+      expect(text(web)).toContain('A session runs in this repo&#x27;s terminal')
+      expect(text(web)).toMatch(/Open the desktop app to use the terminal\./)
+      expect(web).not.toMatch(/<button/)
+    }
+  })
+
+  it("a hosted run's reply: the word in code and Open terminal, no Continue, Copy or Run it yourself", () => {
+    const eng = { id: 'e1', session: 'sess-1', type: 'pod:engineer', tokens: 0, ended: true, plan: PLAN, sprint: 'ladder', slice: 'T1', startedAt: NOW - 3_600_000, lastAt: NOW - 2_400_000 }
+    const outside = chess([onlyQueue(), manual, t1Pushed], { prs: [gh(78, 'merged')], agents: [eng] })
+    // Outside the app: today's Continue.
+    expect(primaries(cardOf(inDesktop(() => render({ repo: outside }).html)))).toEqual(['Continue'])
+
+    const hosted = { ...outside, hosted: [session({ sessionId: 'sess-1', liveSession: 'sess-1', sessions: ['sess-1'] })] }
+    const desk = cardOf(inDesktop(() => render({ repo: hosted }).html))
+    expect(text(desk)).toMatch(/Send continue/)
+    expect(text(desk).replace(/\s+/g, ' ')).toMatch(/Open the terminal and type continue \./)
+    expect(desk).toContain('<code class="mono">continue</code>')
+    expect(primaries(desk)).toEqual(['Open terminal'])
+    expect(text(desk)).not.toMatch(/\bCopy\b|Run it yourself|Continue\b/)
+
+    const web = cardOf(render({ repo: hosted }).html)
+    expect(text(web)).toMatch(/Open the desktop app to use the terminal\./)
+    expect(web).not.toMatch(/<button/)
+  })
+
+  it('the line to type yourself, whole in one code span, until prompted', () => {
+    const marker = '7f3c9a12-0000-4000-8000-0000000000ty'
+    TYPED.remember(marker, '/pod:task fix `npm ci`')
+    const repo = bare({ hosted: [session({ marker, prompted: false, typeYourself: true })] })
+    const card = cardOf(inDesktop(() => render({ repo, run: rowOf(repo) }).html))
+    expect(card).toContain('Type <code class="mono">/pod:task fix `npm ci`</code> in the terminal.')
+    // The running card says nothing it started with: the line isn't typed yet.
+    expect(text(card)).not.toMatch(/It started with/)
+    // Prompted: gone.
+    const done = bare({ hosted: [session({ marker, prompted: true })] })
+    expect(text(cardOf(inDesktop(() => render({ repo: done, run: rowOf(done) }).html)))).not.toMatch(/in the terminal\./)
+  })
+})
+

@@ -1,0 +1,74 @@
+/*
+ * The New session form (sprint terminal-tab N1, draft terminal-host-look.html section 2), in the Next step card and in
+ * the ⋯ menu's modal. Tokens only. DESIGN.md "Forms and errors": a label and its field (or error) 8 px apart, groups
+ * 16 px apart, the actions at least 24 px below the last group. The listbox is 320 px wide at most (listbox.css); the
+ * text field takes the text width, 72ch at most.
+ */
+.new-session {
+  display: grid;
+  gap: 16px;
+  max-width: 72ch;
+  min-width: 0;
+}
+
+.next-step .new-session {
+  margin-top: 24px;
+}
+
+.ns-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ns-label {
+  font-size: var(--size-dense);
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/* The draft's text field: Geist Mono at 13 px, as the command it becomes. */
+.ns-text {
+  width: 100%;
+  font-size: var(--size-small);
+}
+
+.new-session .modal-alert {
+  margin-top: 0;
+}
+
+/* The live region stays in the page for its first status; while empty it leaves the grid, so it adds no gap. */
+.ns-note:empty {
+  position: absolute;
+}
+
+.ns-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* In the modal, the actions sit at the right end, as in every other modal. */
+.new-session-modal .ns-actions {
+  justify-content: flex-end;
+}
+
+.new-session-modal .modal-panel {
+  gap: 8px;
+}
+
+.new-session-modal .new-session {
+  margin-top: 8px;
+}
+
+/* Phone: the card's spacing is tighter, as .next-acts is (runs.css); the actions then sit 16 px below the last group. */
+@media (max-width: 480px) {
+  .next-step .new-session {
+    margin-top: 16px;
+  }
+
+  .next-step .ns-actions {
+    margin-top: 0;
+  }
+}

@@ -1,10 +1,21 @@
-// The action log: one JSON line per merge, answer, resolve, resume, remove-repo, or forget-run request in `<config dir>/actions.jsonl`, and the newest
+// The action log: one JSON line per merge, answer, resolve, resume, remove-repo, forget-run, new-session, or dismiss-session request in `<config dir>/actions.jsonl`, and the newest
 // 50 in memory for the Board. Read once at start; bad lines are skipped. The rules and why are in
 // pod-docs/feature-details/actions.md.
 
 import { readFileSync } from 'node:fs'
 import { appendFile } from 'node:fs/promises'
-import type { ActionEntry, AnswerOutcome, ForgetRunOutcome, MergeOutcome, NewActionEntry, RemoveRepoOutcome, ResolveOutcome, ResumeOutcome } from '@openaflow/model'
+import type {
+  ActionEntry,
+  AnswerOutcome,
+  DismissSessionOutcome,
+  ForgetRunOutcome,
+  MergeOutcome,
+  NewActionEntry,
+  NewSessionOutcome,
+  RemoveRepoOutcome,
+  ResolveOutcome,
+  ResumeOutcome,
+} from '@openaflow/model'
 
 export const ACTION_LOG_MAX = 50
 const MERGE_RESULTS = new Set<string>(['merged', 'queued', 'auto-merge', 'stale', 'failed', 'unconfirmed'] satisfies MergeOutcome[])
@@ -13,6 +24,8 @@ const RESOLVE_RESULTS = new Set<string>(['closed', 'kept', 'changed', 'failed'] 
 const RESUME_RESULTS = new Set<string>(['started', 'failed'] satisfies ResumeOutcome[])
 const REMOVE_RESULTS = new Set<string>(['removed', 'failed'] satisfies RemoveRepoOutcome[])
 const FORGET_RESULTS = new Set<string>(['removed', 'failed'] satisfies ForgetRunOutcome[])
+const NEW_SESSION_RESULTS = new Set<string>(['started', 'failed'] satisfies NewSessionOutcome[])
+const DISMISS_RESULTS = new Set<string>(['dismissed', 'failed'] satisfies DismissSessionOutcome[])
 const RESUME_REPLIES = new Set<unknown>(['continue', 'go'])
 
 export type ActionLog = {
@@ -79,6 +92,9 @@ function parseEntry(line: string): ActionEntry | undefined {
   else if (e.action === 'resolve' && RESOLVE_RESULTS.has(e.result as string)) entry = { ...base, action: 'resolve', result: e.result as ResolveOutcome }
   else if (e.action === 'remove-repo' && REMOVE_RESULTS.has(e.result as string)) entry = { ...base, action: 'remove-repo', result: e.result as RemoveRepoOutcome }
   else if (e.action === 'forget-run' && FORGET_RESULTS.has(e.result as string)) entry = { ...base, action: 'forget-run', result: e.result as ForgetRunOutcome }
+  else if (e.action === 'new-session' && NEW_SESSION_RESULTS.has(e.result as string)) entry = { ...base, action: 'new-session', result: e.result as NewSessionOutcome }
+  else if (e.action === 'dismiss-session' && DISMISS_RESULTS.has(e.result as string))
+    entry = { ...base, action: 'dismiss-session', result: e.result as DismissSessionOutcome }
   else if (e.action === 'resume' && RESUME_RESULTS.has(e.result as string) && RESUME_REPLIES.has(e.reply) && typeof e.auto === 'boolean')
     entry = { ...base, action: 'resume', result: e.result as ResumeOutcome, reply: e.reply as 'continue' | 'go', auto: e.auto }
   else return undefined

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { liveConfigDir } from './config.ts'
+import type { ParentChannel } from './parent-link.ts'
 import { readSessionToken } from './session-token.ts'
 import { startServer, type Production, type Started } from './start-server.ts'
 
@@ -176,10 +177,10 @@ const envFor = (over: Record<string, string> = {}): Record<string, string> => ({
 })
 
 /** Starts a server with a fake exit, and keeps it for teardown. */
-const start = async (env: Record<string, string>, production?: Production) => {
+const start = async (env: Record<string, string>, production?: Production, terminals?: ParentChannel) => {
   let exit = (_code: number) => {}
   const exited = new Promise<number>((resolve) => (exit = resolve))
-  const started = await startServer(env, { exit: (code) => exit(code), ...(production ? { production } : {}) })
+  const started = await startServer(env, { exit: (code) => exit(code), ...(production ? { production } : {}), ...(terminals ? { terminals } : {}) })
   const entry = { started, exited }
   running.push(entry)
   return entry
@@ -467,6 +468,59 @@ describe('production', () => {
     expect((await send(started.port, '/some/page')).text).toContain('page body')
     expect((await send(started.port, '/sw.js')).status).toBe(404)
     expect(JSON.parse((await send(started.port, '/api/nope')).text)).toEqual({ error: 'not found' })
+  })
+})
+
+describe('hosted sessions', () => {
+  const M = '11111111-1111-4111-8111-111111111111'
+  const S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+
+  /** Main's side of the parent channel: what the server sent, and a way to answer. */
+  const fakeMain = () => {
+    const sent: Record<string, unknown>[] = []
+    let deliver: (m: unknown) => void = () => {}
+    const link: ParentChannel = { onMessage: (fn) => void (deliver = fn), send: (m) => void sent.push(m as Record<string, unknown>) }
+    return { link, sent, answer: (m: Record<string, unknown>) => deliver({ type: 'openaflow:terminal', ...m }) }
+  }
+  const until = async (check: () => boolean | Promise<boolean>) => {
+    for (const end = Date.now() + 10_000; !(await check()); ) {
+      if (Date.now() > end) throw new Error('timed out waiting')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+  }
+
+  test('reconcile never blocks the start', async () => {
+    const repo = join(tmp, 'repo')
+    await mkdir(repo)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    await writeFile(join(cfg, 'sessions.json'), JSON.stringify({ v: 1, sessions: [{ marker: M, repoPath: repo, sessionId: S, skill: 'plan', startedAt: 1, state: 'live', pid: 5 }] }))
+    const main = fakeMain()
+    const port = await freePort()
+    // Main never answers the list: the server still listens and serves the Board, with the record as stored.
+    const { started } = await start(envFor({ OPENAFLOW_API_PORT: String(port), OPENAFLOW_HOOKS_PLUGIN: join(tmp, 'plugin') }), { webDir }, main.link)
+    expect((await send(started.port, '/api/health')).status).toBe(200)
+    const hosted = async () => (JSON.parse((await send(started.port, '/api/board')).text) as { repos: { hosted?: { state: string; stopReason?: string }[] }[] }).repos[0]!.hosted
+    expect(await hosted()).toEqual([expect.objectContaining({ state: 'live' })])
+    await until(() => main.sent.some((m) => m.op === 'list'))
+    // The answer settles the record, and the Board follows.
+    const list = main.sent.find((m) => m.op === 'list')!
+    main.answer({ op: 'list', req: list.req, sessions: [] })
+    await until(async () => (await hosted())?.[0]?.state === 'stopped')
+    expect((await hosted())![0]!.stopReason).toBe('app closed')
+  })
+
+  test('a server with no channel answers no terminal host and writes no store', async () => {
+    const { started } = await startProduction()
+    const token = await pageToken(started.port)
+    const res = await send(started.port, '/api/actions/new-session', {
+      method: 'POST',
+      headers: { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+      body: JSON.stringify({ repoId: 'x', skill: 'plan', text: '' }),
+    })
+    expect(res.status).toBe(409)
+    expect(JSON.parse(res.text)).toEqual({ error: 'no terminal host' })
+    expect(existsSync(join(cfg, 'sessions.json'))).toBe(false)
   })
 })
 

@@ -17,6 +17,8 @@ export type ProcessLike = {
 }
 
 const PARENT_PID = 'OPENAFLOW_PARENT_PID'
+/** Set to `1` by the desktop's main process on the server it starts: main relays terminal messages on the parentPort. */
+const TERMINALS = 'OPENAFLOW_TERMINALS'
 /** How often the parent is checked. */
 const PARENT_POLL_MS = 2000
 /** The largest process ID `process.kill` takes. */
@@ -141,17 +143,22 @@ export function guardOutput(stream: { on(event: 'error', fn: (err: Error) => voi
 
 /**
  * Production's link to whatever started it, made before `startServer`. Throws on a bad
- * `OPENAFLOW_PARENT_PID`, before it attaches anything. `ready` sends once.
+ * `OPENAFLOW_PARENT_PID`, before it attaches anything. `ready` sends once. `terminals`: the channel for the terminal
+ * link, only with `OPENAFLOW_TERMINALS=1` and a real `parentPort`. Every `OPENAFLOW_*` reaches a resumed `claude -p`
+ * too, and that process has no `parentPort`.
  */
-export function linkParent(o: { env: Env; stops: StopPath; proc?: ProcessLike }): { ready(port: number): void } {
+export function linkParent(o: { env: Env; stops: StopPath; proc?: ProcessLike }): { ready(port: number): void; terminals?: ParentChannel } {
   const pid = parentPid(o.env)
-  const channel = parentChannel(o.proc)
+  const proc = o.proc ?? (process as unknown as ProcessLike)
+  const channel = parentChannel(proc)
+  const terminals = channel && proc.parentPort && envValue(o.env, TERMINALS) === '1' ? channel : undefined
   channel?.onMessage((m) => {
     if (isStopMessage(m)) o.stops.request()
   })
   if (pid !== undefined) watchParent({ pid, onGone: () => o.stops.request() })
   let sent = false
   return {
+    ...(terminals ? { terminals } : {}),
     ready: (port) => {
       if (sent) return
       sent = true

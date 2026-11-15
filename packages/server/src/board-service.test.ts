@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createBoardService, finalPrBranches, livePrNumbers, type BoardServiceDeps } from './board-service.ts'
 import { createGhReader, PR_CACHE_MS, type GhExec, type GhReader, type GhStatus, type PrStatus } from './gh.ts'
 import { normalizeRepoPath, repoId } from './guard.ts'
+import { createHookReader, createSessionStore, type StoredSession } from './session-store.ts'
 import { projectDirName } from './transcript-files.ts'
 import { boardSignature, createBoardWatcher } from './watcher.ts'
 
@@ -168,6 +169,64 @@ describe('board service', () => {
       { repoId: id, run: 'fix-scroll', lastKey: 'fix-merged:36', lastFailed: true },
     ])
     expect(await createBoardService(deps()).build()).not.toHaveProperty('autoContinue')
+  })
+
+  test('hosted sessions', async () => {
+    const a = copyFixture('a')
+    const b = copyFixture('b')
+    const missing = join(root, 'repos', 'gone')
+    await register(a, b, missing)
+    const hooks = join(root, 'config', 'hooks')
+    await mkdir(hooks, { recursive: true })
+    const M1 = '11111111-1111-4111-8111-111111111111'
+    const M2 = '22222222-2222-4222-8222-222222222222'
+    const M3 = '33333333-3333-4333-8333-333333333333'
+    const M4 = '44444444-4444-4444-8444-444444444444'
+    const S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const B2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const rec = (marker: string, repoPath: string, over: Partial<StoredSession> = {}): StoredSession => ({
+      marker,
+      repoPath: normalizeRepoPath(repoPath, platform),
+      sessionId: S,
+      skill: 'plan',
+      startedAt: 1000,
+      state: 'live',
+      pid: 5,
+      ...over,
+    })
+    // Stored newest first here, to show the Board lists them oldest first.
+    const sessionsFile = join(root, 'config', 'sessions.json')
+    const records = [rec(M1, a, { startedAt: 3000 }), rec(M2, a, { startedAt: 2000, state: 'ended', exitCode: 1, endedAt: 2500 }), rec(M3, '/not/on/the/board'), rec(M4, missing)]
+    await writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: records }))
+    const row = (at: number, payload: Record<string, unknown>) => JSON.stringify({ v: 1, at, payload })
+    await writeFile(
+      join(hooks, `${M1}.jsonl`),
+      [
+        row(1, { hook_event_name: 'SessionStart', session_id: S, source: 'startup' }),
+        row(2, { hook_event_name: 'UserPromptSubmit', session_id: S, prompt: 'build the zq-hidden-prompt ladder' }),
+        row(3, { hook_event_name: 'SessionStart', session_id: B2, source: 'clear' }),
+      ].join('\n') + '\n',
+    )
+    const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
+    const service = createBoardService({ ...deps(), hosted: { list: store.list, hooks: createHookReader(hooks) } })
+    const board = await service.build()
+    const byName = (n: string) => board.repos.find((r) => r.name === n)!
+    expect(byName('a').hosted).toEqual([
+      { marker: M2, sessionId: S, liveSession: S, sessions: [S], skill: 'plan', startedAt: 2000, state: 'ended', exitCode: 1, endedAt: 2500, hooked: false, prompted: false },
+      { marker: M1, sessionId: S, liveSession: B2, sessions: [S, B2], skill: 'plan', startedAt: 3000, state: 'live', hooked: true, prompted: true },
+    ])
+    // A repo with none has no field; a repo whose folder is gone still lists its sessions, so they can be dismissed.
+    expect(byName('b')).not.toHaveProperty('hosted')
+    expect(byName('gone').error).toBe('repo folder not found')
+    expect(byName('gone').hosted?.map((h) => h.marker)).toEqual([M4])
+    expect(JSON.stringify(board)).not.toContain('zq-hidden-prompt')
+    // No pid on the Board: it is the store's, not the page's.
+    expect(JSON.stringify(board)).not.toContain('"pid"')
+    // A new hook line is on the next build.
+    await appendFile(join(hooks, `${M2}.jsonl`), row(4, { hook_event_name: 'SessionStart', session_id: S, source: 'startup' }) + '\n')
+    expect((await service.build()).repos.find((r) => r.name === 'a')!.hosted![0]!.hooked).toBe(true)
+    // With no store, no repo has the field.
+    expect((await createBoardService(deps()).build()).repos.every((r) => !('hosted' in r))).toBe(true)
   })
 
   test('serves no agent description, so a secret in the meta file appears nowhere on the Board', async () => {

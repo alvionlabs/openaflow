@@ -2,7 +2,7 @@
 // comes from the current Board by id, never a path. The rules and why are in
 // pod-docs/feature-details/resume.md.
 
-import { listRuns, replySession, repoPathKey, sendableReply } from '@openaflow/model'
+import { isHostedSession, listRuns, replySession, repoPathKey, sendableReply } from '@openaflow/model'
 import { Hono } from 'hono'
 import { isResuming, runResume, type ResumeDeps } from './auto-continue.ts'
 
@@ -23,6 +23,8 @@ export function createResumeRoutes(deps: ResumeDeps): Hono {
     if (!repo || !sendable) return c.json({ error: 'not waiting on you' }, 404)
     const session = replySession(repo, run, now())
     if (!session?.resume) return c.json({ error: 'no session' }, 404)
+    // A session in the app's terminal host takes no `-p` send, in any state: you type there.
+    if (isHostedSession(repo, session.id)) return c.json({ error: 'hosted session' }, 409)
     if (!idle(repo, session.id)) return c.json({ error: 'session is busy' }, 409)
     if (isResuming(deps, session.id)) return c.json({ error: 'resume in progress' }, 409)
 

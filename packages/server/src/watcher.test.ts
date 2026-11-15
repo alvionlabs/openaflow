@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { cpSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,7 @@ import type { FSWatcher } from 'chokidar'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createBoardService, type BoardService } from './board-service.ts'
 import type { GhReader } from './gh.ts'
+import { createHookReader, createSessionStore } from './session-store.ts'
 import { createBoardWatcher, DEBOUNCE_MS, MAX_WAIT_MS, type BoardWatcher } from './watcher.ts'
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'model', 'fixtures', 'chess-web')
@@ -513,6 +514,44 @@ describe('board watcher', () => {
     const claimed = edited.repos.find((r) => r.name === 'claimed')!
     expect(t1Status({ ...edited, repos: [claimed] })).toBe('pushed')
   })
+
+  test('hook files', async () => {
+    const repo = copyFixture('chess-web')
+    await register(repo)
+    const configDir = dirname(configFile)
+    const hooks = join(configDir, 'hooks')
+    const M = '11111111-1111-4111-8111-111111111111'
+    const S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const record = { marker: M, repoPath: repo, sessionId: S, skill: 'plan', startedAt: 1, state: 'live', pid: 5 }
+    await writeFile(join(configDir, 'sessions.json'), JSON.stringify({ v: 1, sessions: [record] }))
+    const store = createSessionStore({ file: join(configDir, 'sessions.json'), writable: false, now: Date.now, log: () => {} })
+    const { service: svc, quiet } = tracked(createBoardService({
+      configFile,
+      portsDir,
+      claudeDir,
+      transcriptDays: 30,
+      platform: process.platform,
+      gh,
+      hosted: { list: store.list, hooks: createHookReader(hooks) },
+    }))
+    watcher = createBoardWatcher({ service: svc, configFile, portsDir, claudeDir })
+    const first = await watcher.start()
+    expect(first.repos[0]!.hosted).toMatchObject([{ marker: M, hooked: false, prompted: false }])
+    const { next } = collect(watcher)
+    await quiet(800)
+    const shown = (b: Board) => b.repos[0]?.hosted?.[0]
+    // The hooks folder doesn't exist until the plugin's first line makes it.
+    const row = (at: number, payload: Record<string, unknown>) => JSON.stringify({ v: 1, at, payload }) + '\n'
+    await mkdir(hooks)
+    await writeFile(join(hooks, `${M}.jsonl`), row(1, { hook_event_name: 'SessionStart', session_id: S, source: 'startup' }))
+    await next((b) => shown(b)?.hooked === true)
+    // A new line in the same file.
+    await appendFile(join(hooks, `${M}.jsonl`), row(2, { hook_event_name: 'UserPromptSubmit', session_id: S, prompt: 'x' }))
+    await next((b) => shown(b)?.prompted === true)
+    // The store's file, written by another server: a read-only store reads it again.
+    await writeFile(join(configDir, 'sessions.json'), JSON.stringify({ v: 1, sessions: [{ ...record, state: 'ended', exitCode: 0 }] }))
+    await next((b) => shown(b)?.state === 'ended')
+  }, 60_000)
 
   test('a repo folder made after start gets watched', async () => {
     const later = join(root, 'repos', 'later')
