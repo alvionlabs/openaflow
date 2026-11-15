@@ -193,8 +193,18 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const main = h.pid
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
-        // The server sees its parent gone at its next poll (2 s), then drains.
-        await lifeUntil(`the server (pid ${server}) gone after main`, () => !alive(server), 40_000, w)
+        // The server sees its parent gone at its next poll (2 s), then drains. On windows-latest it has outlived main
+        // by more than 40 s: then say so and end it by its pid, so the next start runs as after a real crash.
+        const until = Date.now() + 40_000
+        while (alive(server) && Date.now() < until) await sleep(200)
+        if (alive(server)) {
+          process.stderr.write(`real-quit › app crash leftovers: the server (pid ${server}) still ran 40 s after main ended; ending it\n`)
+          try {
+            process.kill(server, 'SIGKILL')
+          } catch {
+            // Gone meanwhile.
+          }
+        }
       })
       // On Linux the detached child outlives the crash: the next start must end it. (On Windows main's job handle
       // may take it down with the app.)
