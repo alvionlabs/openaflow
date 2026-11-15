@@ -129,6 +129,8 @@ export function TerminalView({ id, bridge, attach, ended }: Props) {
     if (!t) return
     t.options.disableStdin = ended
     t.options.cursorBlink = !ended
+    // The faded last screen draws no cursor, not even xterm's hollow one for an unfocused terminal.
+    t.options.cursorInactiveStyle = ended ? 'none' : 'outline'
     if (ended) t.blur()
   }, [ended, ready])
 
