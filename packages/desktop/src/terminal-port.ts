@@ -3,7 +3,7 @@
 // pod-docs/sprints/host-core.md (§5) and pod-docs/feature-details/desktop.md (Terminal host).
 
 import { senderAllowed, type BridgeCaller } from './folder-bridge.ts'
-import type { PtyHostStarter, StarterEvent } from './pty-host-starter.ts'
+import type { PtyHostStarter, StarterEvent, StarterState } from './pty-host-starter.ts'
 
 /** Page → main: asks for a port, with the preload's request number. */
 export const TERMINAL_CONNECT_CHANNEL = 'openaflow:terminal-connect'
@@ -14,11 +14,33 @@ export const TERMINAL_STATE_CHANNEL = 'openaflow:terminal-host'
 /** The `window` message that carries the port to the page, in `ports[0]`. */
 export const PAGE_PORT_MESSAGE = 'openaflow:terminal-port'
 
+/** Page → main: the host's state now, for a banner at page load. */
+export const TERMINAL_HOST_STATE_CHANNEL = 'openaflow:terminal-host-state'
+
 export const PORT_WAIT_MS = 20_000
 const UNAVAILABLE = 'terminals unavailable'
 
 export type TerminalHostState = 'ready' | 'unresponsive' | 'restarted' | 'failed'
 export type PortReply = { ok: true } | { error: 'forbidden' | 'terminals unavailable' }
+/** `terminalHostState()`'s answer: no `restarted`, which is an event, not a state. */
+export type HostStateWord = 'starting' | 'ready' | 'unresponsive' | 'failed'
+export type HostStateReply = { state: HostStateWord } | { error: 'forbidden' }
+
+const HOST_STATES: readonly unknown[] = ['starting', 'ready', 'unresponsive', 'failed'] satisfies HostStateWord[]
+
+/** Before the first ready, and during a restart, `starting`; after `failed` or the quit's stop, `failed`. */
+export function hostStateOf(s: StarterState): HostStateWord {
+  if (s === 'ready' || s === 'unresponsive') return s
+  if (s === 'failed' || s === 'stopped') return 'failed'
+  return 'starting'
+}
+
+/** The preload's side: the state, or a rejection with `forbidden` for anything else. */
+export function readHostState(reply: unknown): HostStateWord {
+  const state = typeof reply === 'object' && reply !== null ? (reply as { state?: unknown }).state : undefined
+  if (HOST_STATES.includes(state)) return state as HostStateWord
+  throw new Error('forbidden')
+}
 
 /** What a window hears. A host that beats again is `ready`; a crash says nothing until the restarted host is ready. */
 export function windowStateOf(e: StarterEvent): TerminalHostState | undefined {
@@ -41,6 +63,8 @@ export function createTerminalLink<W, P>(o: {
 }): {
   /** `give` sends the page's end to the caller's frame, before the reply goes back. */
   request(caller: BridgeCaller<W>, give: (port: P) => void): Promise<PortReply>
+  /** The host's state now, for the app window's main frame only. */
+  hostState(caller: BridgeCaller<W>): HostStateReply
 } {
   o.starter.onEvent((e) => {
     const state = windowStateOf(e)
@@ -77,6 +101,7 @@ export function createTerminalLink<W, P>(o: {
     })
 
   return {
+    hostState: (caller) => (allowed(caller) ? { state: hostStateOf(o.starter.state()) } : { error: 'forbidden' }),
     async request(caller, give) {
       if (!allowed(caller)) return { error: 'forbidden' }
       if (gone()) return { error: UNAVAILABLE }

@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { BridgeCaller } from './folder-bridge.ts'
 import type { StarterEvent, StarterState } from './pty-host-starter.ts'
-import { createDeliveries, createPortRequests, createTerminalLink, PORT_WAIT_MS, type PortReply, type TerminalHostState } from './terminal-port.ts'
+import {
+  createDeliveries,
+  createPortRequests,
+  createTerminalLink,
+  hostStateOf,
+  PORT_WAIT_MS,
+  readHostState,
+  type PortReply,
+  type TerminalHostState,
+} from './terminal-port.ts'
 import { originOf } from './window-rules.ts'
 
 type Win = { id: number }
@@ -263,5 +272,46 @@ describe('the preload side', () => {
     }
     // No handler, a closed window: Electron's own text never reaches the page.
     await expect(setupPreload(() => Promise.reject(new Error('No handler registered'))).requests.connect()).rejects.toThrow(/^terminals unavailable$/)
+  })
+
+  test('host state', async () => {
+    // Each starter state, as the page's banner reads it at load.
+    const cases: Array<[StarterState, string]> = [
+      ['idle', 'starting'],
+      ['starting', 'starting'],
+      ['ready', 'ready'],
+      ['unresponsive', 'unresponsive'],
+      ['failed', 'failed'],
+      ['stopped', 'failed'],
+    ]
+    for (const [state, word] of cases) {
+      expect(hostStateOf(state), state).toBe(word)
+      const s = setup({ state })
+      expect(s.link.hostState(caller()), state).toEqual({ state: word })
+    }
+    // It follows the starter: a beat after unresponsive reads ready again.
+    const s = setup({ state: 'ready' })
+    s.starter.emit({ type: 'unresponsive' })
+    expect(s.link.hostState(caller())).toEqual({ state: 'unresponsive' })
+    s.starter.emit({ type: 'responsive' })
+    expect(s.link.hostState(caller())).toEqual({ state: 'ready' })
+
+    // Another sender gets forbidden, as the folder bridge's rule says.
+    for (const [name, c, o] of [
+      ['another port', caller({ url: `${originOf(3131)}/` })],
+      ['a subframe', caller({ isMainFrame: false })],
+      ['another window', caller({ window: { id: 2 } })],
+      ['no origin yet', caller(), { origin: undefined }],
+    ] as Array<[string, BridgeCaller<Win>, { origin?: string | undefined }?]>) {
+      const r = setup(o)
+      expect(r.link.hostState(c), name).toEqual({ error: 'forbidden' })
+    }
+
+    // The preload's side: the state, or a rejection with forbidden for anything else.
+    expect(readHostState({ state: 'ready' })).toBe('ready')
+    expect(readHostState({ state: 'starting' })).toBe('starting')
+    for (const odd of [undefined, null, {}, { state: 'restarted' }, { state: 'other' }, { error: 'forbidden' }, 'ready']) {
+      expect(() => readHostState(odd), JSON.stringify(odd)).toThrow(/^forbidden$/)
+    }
   })
 })
