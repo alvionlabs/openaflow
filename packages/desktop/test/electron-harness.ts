@@ -39,7 +39,7 @@ const freePort = (): Promise<number> =>
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Chromium's helpers let go of the data folder a moment after the main process ends. */
-async function removeWithRetry(path: string): Promise<void> {
+export async function removeWithRetry(path: string): Promise<void> {
   for (let tries = 1; ; tries++) {
     try {
       rmSync(path, { recursive: true, force: true })
@@ -78,8 +78,16 @@ function appEnv(dir: string, port: number, extra: Record<string, string>): Recor
   }
 }
 
-export async function launchHarness(o: { env?: Record<string, string> } = {}): Promise<Harness> {
-  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'openaflow-harness-')))
+/** A new temp folder for `launchHarness({ dir })`. The caller removes it with `removeWithRetry`. */
+export const harnessDir = (): string => realpathSync.native(mkdtempSync(join(tmpdir(), 'openaflow-harness-')))
+
+/**
+ * Starts the app. With `dir`, it runs on that folder's `cfg`, `ports`, `claude`, and `shell`, which outlive `close()`:
+ * a second launch on the same `dir` is an app restart. Without it, a new temp folder that `close()` removes.
+ */
+export async function launchHarness(o: { env?: Record<string, string>; dir?: string } = {}): Promise<Harness> {
+  const owned = o.dir === undefined
+  const dir = o.dir ?? harnessDir()
   const port = await freePort()
   const packaged = packagedApp()
   let executablePath: string
@@ -104,7 +112,7 @@ export async function launchHarness(o: { env?: Record<string, string> } = {}): P
     await Promise.race([app.close().catch(() => {}), sleep(CLOSE_MS)])
     // A main process that is still there after the quit: end that one process by its ID.
     if (proc.exitCode === null && proc.signalCode === null) proc.kill()
-    await removeWithRetry(dir)
+    if (owned) await removeWithRetry(dir)
   }
   try {
     const page = await app.firstWindow({ timeout: LAUNCH_MS })
