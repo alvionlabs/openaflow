@@ -35,7 +35,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
         ? { id: 'proof-1', program: join(systemRoot, 'System32', 'cmd.exe'), args: ['/d', '/c', 'echo pty-proof-%PROOF_WORD%'], cwd: tmpdir(), env: { SystemRoot: systemRoot, PROOF_WORD: 'works' }, cols: 80, rows: 24 }
         : { id: 'proof-1', program: '/bin/sh', args: ['-c', 'echo "pty-proof-$PROOF_WORD"'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin', PROOF_WORD: 'works' }, cols: 80, rows: 24 }
       const { pid } = await h.app.evaluate((_e, s) => (globalThis as Hooked).__openaflowTest!.terminals!.start(s), spec)
-      expect(pid).toBeGreaterThan(0)
+      expect(pid, `pid of ${JSON.stringify(spec.program)}`).toBeGreaterThan(0)
 
       let text: string | null = null
       const end = Date.now() + 30_000

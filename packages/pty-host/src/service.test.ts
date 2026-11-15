@@ -9,13 +9,15 @@ type FakePty = PtyProcess & {
   options: PtySpawnOptions
   emit(data: string): void
   end(exitCode: number, signal?: number): void
+  /** With `latePid`: the process starts now, as ConPTY's does after its output pipe connects. */
+  connect(): void
   killed: string[]
 }
 
 const DIR = isAbsolute('/work') ? '/work' : 'C:\\work'
 const PROGRAM = isAbsolute('/bin/sh') ? '/bin/sh' : 'C:\\Windows\\System32\\cmd.exe'
 
-function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string } = {}) {
+function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?: boolean } = {}) {
   const spawned: FakePty[] = []
   let nextPid = 100
   const mod: PtyModule = {
@@ -23,8 +25,15 @@ function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string } = {}) {
       if (o.spawnError !== undefined) throw new Error(o.spawnError)
       const data: ((d: string) => void)[] = []
       const exits: ((e: { exitCode: number; signal?: number }) => void)[] = []
+      const pid = nextPid++
+      let connected = o.latePid !== true
       const pty: FakePty = {
-        pid: nextPid++,
+        get pid() {
+          return connected ? pid : 0
+        },
+        connect: () => {
+          connected = true
+        },
         file,
         args,
         options,
@@ -259,6 +268,111 @@ describe('pty host service', () => {
     h.service.handle({ type: 'shutdown' })
     await vi.advanceTimersByTimeAsync(3_000)
     expect(h.exits).toEqual([0])
+  })
+
+  // On Windows node-pty starts the process after spawn returns, so its pid is 0 for a moment.
+  describe('a pid that shows late', () => {
+    test('started waits for the pid', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      expect(h.of('started')).toEqual([])
+      await vi.advanceTimersByTimeAsync(50)
+      expect(h.of('started')).toEqual([])
+      h.spawned[0]!.connect()
+      await vi.advanceTimersByTimeAsync(10)
+      expect(h.of('started')).toEqual([{ type: 'started', id: 'run-1', pid: 100 }])
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(h.of('started')).toHaveLength(1)
+    })
+
+    test('the first data announces it without waiting for the poll', () => {
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.spawned[0]!.connect()
+      h.spawned[0]!.emit('hi')
+      expect(h.of('started')).toEqual([{ type: 'started', id: 'run-1', pid: 100 }])
+    })
+
+    test('an exit that beats the poll comes after started, each once', () => {
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.spawned[0]!.connect()
+      h.spawned[0]!.end(7)
+      h.spawned[0]!.end(7)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([
+        { type: 'started', id: 'run-1', pid: 100 },
+        { type: 'exit', id: 'run-1', exitCode: 7 },
+      ])
+    })
+
+    test('an exit with no pid answers spawn failed, frees the id, and reports no exit', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.spawned[0]!.end(-1)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the program ended before it started (exit code -1)' }])
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      h.service.handle({ type: 'snapshot', id: 'run-1' })
+      await vi.advanceTimersByTimeAsync(10)
+      expect(h.of('snapshot')).toEqual([{ type: 'snapshot', id: 'run-1', text: null }])
+      h.service.handle({ type: 'start', spec: spec() })
+      expect(h.of('start-failed')).toHaveLength(1)
+      expect(h.spawned).toHaveLength(2)
+    })
+
+    test('no pid within 10 s answers spawn failed and kills the pty', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      await vi.advanceTimersByTimeAsync(9_990)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([])
+      await vi.advanceTimersByTimeAsync(20)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: no process ID after 10 s' }])
+      expect(h.spawned[0]!.killed).toHaveLength(1)
+      // A pid or exit that comes later sends nothing.
+      h.spawned[0]!.connect()
+      h.spawned[0]!.end(0)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+      h.service.handle({ type: 'start', spec: spec() })
+      expect(h.spawned).toHaveLength(2)
+    })
+
+    test('a second start with the same id while waiting is refused', () => {
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.service.handle({ type: 'start', spec: spec() })
+      expect(h.of('start-failed')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'id in use' }])
+      expect(h.spawned).toHaveLength(1)
+    })
+
+    test('dispose while waiting answers spawn failed and kills the pty', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.service.handle({ type: 'dispose', id: 'run-1' })
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: disposed before it started' }])
+      expect(h.spawned[0]!.killed).toHaveLength(1)
+      h.spawned[0]!.connect()
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+    })
+
+    test('shutdown while waiting answers spawn failed and the host still exits', async () => {
+      vi.useFakeTimers()
+      const h = host({ pty: fakePtyModule({ latePid: true, exitOnKill: false }) })
+      h.service.handle({ type: 'start', spec: spec() })
+      h.service.handle({ type: 'shutdown' })
+      expect(h.sent.filter((m) => m.type !== 'ready')).toEqual([{ type: 'start-failed', id: 'run-1', error: 'spawn failed: the host is shutting down' }])
+      expect(h.spawned[0]!.killed).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.exits).toEqual([0])
+      h.spawned[0]!.connect()
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(h.sent.filter((m) => m.type !== 'ready')).toHaveLength(1)
+    })
   })
 
   test('a message it does not know never throws', () => {
