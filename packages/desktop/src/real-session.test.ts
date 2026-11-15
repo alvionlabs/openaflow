@@ -375,6 +375,11 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       } finally {
         await first.close()
       }
+      // The quit asked about the live session; the test-hooks build answers end with no native box, so the close
+      // quits. The session's program is gone before the next start.
+      const log = readText(join(w.dir, 'shell', 'desktop.log'))
+      expect(log).toContain('openaflow desktop: quit asked about 1 sessions: end')
+      expect(starts(w).every((s) => !alive(s.pid)), log.slice(-4_000)).toBe(true)
       const second = await launch(w)
       try {
         await until('the repo on the Board', async () => (await repoOf(second, w)) !== undefined, 60_000, second, w)
