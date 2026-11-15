@@ -143,7 +143,10 @@ export function TerminalView({ id, bridge, attach, ended }: Props) {
           {UNAVAILABLE}
         </p>
       )}
-      <div ref={box} className={ended ? 'term faded' : 'term'} hidden={hidden} aria-hidden={ended ? true : undefined} />
+      {/* xterm opens in the inner box: fit measures its element whole, so the padding stays on the outer one. */}
+      <div className={ended ? 'term faded' : 'term'} hidden={hidden} aria-hidden={ended ? true : undefined}>
+        <div ref={box} className="term-fit" />
+      </div>
     </>
   )
 }

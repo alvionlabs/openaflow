@@ -26,6 +26,17 @@
   display: none;
 }
 
+.term {
+  display: flex;
+}
+
+/* xterm's own element: no padding or border, so the fit addon reads the space it really has. */
+.term-fit {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .term .xterm {
   height: 100%;
 }

@@ -63,6 +63,20 @@ async function until(what: string, ok: () => boolean | Promise<boolean>, h: Harn
   }
 }
 
+/** How far xterm's screen stays inside the terminal box's content area (inside its padding), right and bottom. */
+const fitGap = (page: Page) =>
+  page.evaluate(() => {
+    const box = document.querySelector('.term')
+    const screen = document.querySelector('.term .xterm-screen')
+    if (!box || !screen) return undefined
+    const b = box.getBoundingClientRect()
+    const s = screen.getBoundingClientRect()
+    const cs = getComputedStyle(box)
+    const right = b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight) - s.right
+    const bottom = b.bottom - parseFloat(cs.borderBottomWidth) - parseFloat(cs.paddingBottom) - s.bottom
+    return { right, bottom }
+  })
+
 const terminalTab = (page: Page) => page.locator('.main > .tabs button.tab', { hasText: 'Terminal' })
 const count = (text: string, part: string) => text.split(part).length - 1
 
@@ -142,6 +156,20 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
       const shown = await screen(page)
       expect(shown).toContain('--session-id')
       expect(shown).toContain('/pod:plan add a clock')
+      // xterm fits inside the box's padding, at desktop width and at 375 px.
+      for (const width of [1280, 375]) {
+        await h.app.evaluate(({ BrowserWindow }, w) => {
+          const win = BrowserWindow.getAllWindows()[0]!
+          win.setMinimumSize(300, 300)
+          win.setContentSize(w, 860)
+        }, width)
+        await until(`a fit at ${width} px`, async () => (await fitGap(page)) !== undefined, h)
+        await sleep(500)
+        const gap = (await fitGap(page))!
+        expect(gap.right, `right gap at ${width} px`).toBeGreaterThanOrEqual(-0.5)
+        expect(gap.bottom, `bottom gap at ${width} px`).toBeGreaterThanOrEqual(-0.5)
+      }
+      await h.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1280, 900))
       // The tab's run dot while it runs.
       expect(await terminalTab(page).locator('.status.s-run').count()).toBe(1)
       // The Board reads it live, then hooked.
