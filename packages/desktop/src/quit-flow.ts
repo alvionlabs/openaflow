@@ -57,6 +57,13 @@ export type QuitFlow = {
    * the ends, then true, and the quit after it asks nothing.
    */
   endSessions(): Promise<boolean>
+  /**
+   * The quit goes through: a quit with no live session, a confirm, a quit after the server failed, or a Windows
+   * shutdown. Once, before the ends and the stops; never on Cancel or for `endSessions()` alone. A listener added
+   * after it runs at once. The window, notifier, and updater listen here, not on `before-quit`, which also fires for
+   * a quit that Cancel keeps from happening.
+   */
+  onThrough(fn: () => void): void
 }
 
 /** Runs a stop; a throw counts as a stop that ended. */
@@ -76,8 +83,25 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
   let state: 'running' | 'asking' | 'stopping' | 'through' = 'running'
   /** The question or the ends under way, from a quit or from endSessions. Every caller shares it. */
   let pending: Promise<boolean> | undefined
+  const listeners: Array<() => void> = []
+  let wentThrough = false
+
+  const hear = (fn: () => void) => {
+    try {
+      fn()
+    } catch (err) {
+      sessions?.log(`openaflow desktop: a quit listener failed: ${reason(err)}`)
+    }
+  }
+  /** Fires the signal once. Every path to 'stopping' or 'through' comes here first. */
+  const through = () => {
+    if (wentThrough) return
+    wentThrough = true
+    for (const fn of listeners.splice(0)) hear(fn)
+  }
 
   const stopThenQuit = async () => {
+    through()
     state = 'stopping'
     try {
       o.hide()
@@ -91,8 +115,11 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
     o.quit()
   }
 
-  /** Asks (unless the server failed), then ends every session. True when they ended, false on Cancel. */
-  const askThenEnd = async (s: QuitSessions, live: Array<{ label?: string }>): Promise<boolean> => {
+  /**
+   * Asks (unless the server failed), then ends every session. True when they ended, false on Cancel. `byQuit`: a quit
+   * asked, so a confirm lets it through.
+   */
+  const askThenEnd = async (s: QuitSessions, live: Array<{ label?: string }>, byQuit: boolean): Promise<boolean> => {
     if (!s.serverFailed()) {
       let answer: QuitAnswer
       try {
@@ -105,6 +132,8 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
       // A Windows shutdown while the dialog was open: its own ends are under way.
       if (answer !== 'end' || state === 'through') return false
     }
+    // A quit goes through now, before the ends. A Restart now's `endSessions` waits for its own quit.
+    if (byQuit) through()
     s.confirmed(live.length)
     try {
       await s.endAll()
@@ -115,11 +144,11 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
   }
 
   /** The shared question and ends, or undefined when no session is live. */
-  const endLive = (): Promise<boolean> | undefined => {
+  const endLive = (byQuit: boolean): Promise<boolean> | undefined => {
     if (pending) return pending
     const live = sessions?.live() ?? []
     if (!sessions || live.length === 0) return undefined
-    const p = askThenEnd(sessions, live).finally(() => {
+    const p = askThenEnd(sessions, live, byQuit).finally(() => {
       if (pending === p) pending = undefined
     })
     pending = p
@@ -132,7 +161,7 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
       e.preventDefault()
       // A quit while a question is open, or while the ends run, is ignored.
       if (state !== 'running' || pending) return
-      const asking = endLive()
+      const asking = endLive(true)
       if (!asking) {
         void stopThenQuit()
         return
@@ -145,15 +174,20 @@ export function createQuitFlow(o: { stops: Array<() => Promise<unknown>>; hide()
       })
     },
     sessionEnd() {
+      through()
       state = 'through'
       if (!sessions) return
       sessions.silence()
       void sessions.endAll().catch(() => {})
     },
+    onThrough(fn) {
+      if (wentThrough) hear(fn)
+      else listeners.push(fn)
+    },
     async endSessions() {
       // A quit already under way decides; it ends the sessions or there are none.
       if (state === 'stopping' || state === 'through') return true
-      return (await endLive()) ?? true
+      return (await endLive(false)) ?? true
     },
   }
 }

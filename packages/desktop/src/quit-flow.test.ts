@@ -410,3 +410,167 @@ describe('quit', () => {
     expect(t.quit).not.toHaveBeenCalled()
   })
 })
+
+/** The modules that close at a quit (the window flow, the notifier, the updater) hear only a quit that goes through. */
+describe('the quit goes through', () => {
+  const heard = (s: { flow: { onThrough(fn: () => void): void }; order: string[] }) => s.flow.onThrough(() => void s.order.push('through'))
+
+  test('a quit with no live session: once, before the hide and the stops', async () => {
+    const s = withSessions({ live: [] })
+    heard(s)
+    s.flow.beforeQuit(s.event())
+    expect(s.order).toEqual(['through', 'hide', 'stop'])
+    s.finishStops()
+    await settle()
+    expect(s.quit).toHaveBeenCalledOnce()
+    // The quit's own second `before-quit` is not a second signal.
+    s.flow.beforeQuit(s.event())
+    expect(s.order.filter((x) => x === 'through')).toHaveLength(1)
+
+    // No sessions part at all: the same.
+    const t = setup(async () => 'stopped')
+    const order: string[] = []
+    t.flow.onThrough(() => void order.push('through'))
+    t.hide.mockImplementation(() => void order.push('hide'))
+    t.flow.beforeQuit(t.event())
+    expect(order).toEqual(['through', 'hide'])
+  })
+
+  test('cancel: never', async () => {
+    const s = withSessions()
+    heard(s)
+    s.flow.beforeQuit(s.event())
+    await settle()
+    // A quit while the question is open is ignored.
+    s.flow.beforeQuit(s.event())
+    s.answer('cancel')
+    await settle()
+    expect(s.order).toEqual(['ask'])
+
+    // A box that fails reads as Cancel.
+    s.sessions.ask.mockImplementationOnce(() => Promise.reject(new Error('no display')))
+    s.flow.beforeQuit(s.event())
+    await settle()
+    expect(s.sessions.ask).toHaveBeenCalledTimes(2)
+    expect(s.order).toEqual(['ask'])
+
+    // The next quit asks again, and a confirm goes through: once.
+    s.flow.beforeQuit(s.event())
+    await settle()
+    s.answer('end')
+    await settle()
+    expect(s.order).toEqual(['ask', 'ask', 'through', 'confirmed 1', 'endAll'])
+    s.endAll()
+    await settle()
+    s.finishStops()
+    await settle()
+    expect(s.quit).toHaveBeenCalledOnce()
+    expect(s.order.filter((x) => x === 'through')).toHaveLength(1)
+  })
+
+  test('a confirm: at the confirm, before the ends, so no toast or update box opens during them', async () => {
+    const s = withSessions()
+    heard(s)
+    s.flow.beforeQuit(s.event())
+    await settle()
+    expect(s.order).toEqual(['ask'])
+    s.answer('end')
+    await settle()
+    expect(s.order).toEqual(['ask', 'through', 'confirmed 1', 'endAll'])
+    s.endAll()
+    await settle()
+    expect(s.order).toEqual(['ask', 'through', 'confirmed 1', 'endAll', 'hide', 'stop'])
+  })
+
+  test('server failed: no question, and through before the ends', async () => {
+    const s = withSessions({ failed: true })
+    heard(s)
+    s.flow.beforeQuit(s.event())
+    await settle()
+    expect(s.order).toEqual(['through', 'confirmed 1', 'endAll'])
+  })
+
+  test('a Windows shutdown: at once, also during the question, and only once', async () => {
+    const s = withSessions()
+    heard(s)
+    s.flow.sessionEnd()
+    expect(s.order).toEqual(['through', 'silence', 'endAll'])
+    s.flow.beforeQuit(s.event())
+    s.flow.sessionEnd()
+    expect(s.order.filter((x) => x === 'through')).toHaveLength(1)
+
+    const t = withSessions()
+    heard(t)
+    t.flow.beforeQuit(t.event())
+    await settle()
+    t.flow.sessionEnd()
+    t.answer('end')
+    await settle()
+    expect(t.order).toEqual(['ask', 'through', 'silence', 'endAll'])
+
+    // During the stops: no second signal.
+    const u = withSessions({ live: [] })
+    heard(u)
+    u.flow.beforeQuit(u.event())
+    u.flow.sessionEnd()
+    expect(u.order.filter((x) => x === 'through')).toHaveLength(1)
+  })
+
+  test('Restart now: endSessions alone is not a quit; the quit after it goes through', async () => {
+    const s = withSessions()
+    heard(s)
+    const cancelled = s.flow.endSessions()
+    await settle()
+    s.answer('cancel')
+    expect(await cancelled).toBe(false)
+    const ended = s.flow.endSessions()
+    await settle()
+    s.answer('end')
+    await settle()
+    s.endAll()
+    expect(await ended).toBe(true)
+    expect(s.order).toEqual(['ask', 'ask', 'confirmed 1', 'endAll'])
+
+    // The updater's quit: no live session now, so it goes through.
+    s.flow.beforeQuit(s.event())
+    expect(s.order).toEqual(['ask', 'ask', 'confirmed 1', 'endAll', 'through', 'hide', 'stop'])
+
+    // No live session: true at once, and nothing goes through until the quit.
+    const t = withSessions({ live: [] })
+    heard(t)
+    expect(await t.flow.endSessions()).toBe(true)
+    expect(t.order).toEqual([])
+  })
+
+  test('a quit during the Restart now question is ignored, so its confirm is not a quit', async () => {
+    const s = withSessions()
+    heard(s)
+    const ended = s.flow.endSessions()
+    await settle()
+    s.flow.beforeQuit(s.event())
+    s.answer('end')
+    await settle()
+    s.endAll()
+    expect(await ended).toBe(true)
+    expect(s.order).toEqual(['ask', 'confirmed 1', 'endAll'])
+  })
+
+  test('a listener added after the quit went through hears it at once', () => {
+    const s = withSessions({ live: [] })
+    s.flow.beforeQuit(s.event())
+    const late = vi.fn()
+    s.flow.onThrough(late)
+    expect(late).toHaveBeenCalledOnce()
+  })
+
+  test('a listener that throws does not stop the quit or the others', async () => {
+    const s = withSessions({ live: [] })
+    s.flow.onThrough(() => {
+      throw new Error('boom')
+    })
+    heard(s)
+    s.flow.beforeQuit(s.event())
+    expect(s.order).toEqual(['through', 'hide', 'stop'])
+    expect(s.log).toHaveBeenCalledWith('openaflow desktop: a quit listener failed: boom')
+  })
+})
