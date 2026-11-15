@@ -159,4 +159,15 @@ describe('licence notices', () => {
     expect(text).toContain('Microsoft Corporation')
     expect(countOf(text, 'The xterm.js authors')).toBe(2)
   }, 60_000)
+
+  test('the notices name the web terminal', () => {
+    const web = fileURLToPath(new URL('../../web', import.meta.url))
+    const text = renderNotices({ roots: productionClosure(web), overrides: LICENCE_OVERRIDES, extras: [] })
+    expect(text).toContain('@xterm/xterm 6.0.0')
+    expect(text).toContain('@xterm/addon-fit 0.11.0')
+    // Both ship their own LICENSE file, so each is the package's text, with no override.
+    expect(LICENCE_OVERRIDES['@xterm/xterm']).toBeUndefined()
+    expect(LICENCE_OVERRIDES['@xterm/addon-fit']).toBeUndefined()
+    expect(text).toContain('Copyright (c) 2019, The xterm.js authors')
+  })
 })
