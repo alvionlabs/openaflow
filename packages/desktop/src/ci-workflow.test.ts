@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
@@ -77,12 +77,20 @@ describe('pod-ci.yml', () => {
     expect(sysctl?.if).toBe("runner.os == 'Linux'")
 
     // One file a step: vitest runs files side by side, and three Electron apps at once make the timings flaky.
-    // real-start runs Electron's own binary on dist/main.cjs, so it has no packaged run.
-    const unpackaged = ['real-start', 'real-pty-proof', 'real-terminal'].map((name) => at(new RegExp(`test:electron ${name}$`), false))
-    const packaged = ['real-pty-proof', 'real-terminal'].map((name) => at(new RegExp(`test:electron ${name}$`), true))
+    // real-start runs Electron's own binary on dist/main.cjs, so it has no packaged run. `real-terminal.test`, since
+    // `pnpm test:electron` runs every file whose name holds the word, and `real-terminal` is in `real-terminal-tab`.
+    const unpackaged = ['real-start', 'real-pty-proof', 'real-terminal.test', 'real-session', 'real-terminal-tab'].map((name) => at(new RegExp(`test:electron ${name}$`), false))
+    const packaged = ['real-pty-proof', 'real-terminal.test', 'real-session'].map((name) => at(new RegExp(`test:electron ${name}$`), true))
     expect([...unpackaged, ...packaged].every((i) => i >= 0), JSON.stringify({ unpackaged, packaged })).toBe(true)
     expect(at(/test:electron real-start/, true)).toBe(-1)
-    for (const i of [...unpackaged, ...packaged]) expect(steps[i]?.run).toMatch(/^\$\{\{ matrix\.display \}\} pnpm test:electron real-[a-z-]+$/)
+    expect(at(/test:electron real-terminal-tab/, true)).toBe(-1)
+    for (const i of [...unpackaged, ...packaged]) expect(steps[i]?.run).toMatch(/^\$\{\{ matrix\.display \}\} pnpm test:electron real-[a-z-]+(\.test)?$/)
+    // Each step's name picks exactly one file: today's, and the Terminal tab's, which comes in the same wave.
+    const files = new Set([...readdirSync(join(ROOT, 'packages', 'desktop', 'src')).filter((f) => /^real-.*\.test\.ts$/.test(f)), 'real-terminal-tab.test.ts'])
+    for (const s of steps) {
+      const name = /test:electron (\S+)$/.exec(s.run ?? '')?.[1]
+      if (name !== undefined) expect([...files].filter((f) => f.includes(name)), s.run).toHaveLength(1)
+    }
     for (const i of packaged) expect(steps[i]?.env?.OPENAFLOW_PACKAGED_APP).toBe('${{ github.workspace }}/${{ matrix.app }}')
     // Only the named files: `pnpm test:electron` with no name would also run the Windows-only proofs.
     expect(steps.filter((s) => /test:electron\s*$/.test(s.run ?? ''))).toEqual([])
