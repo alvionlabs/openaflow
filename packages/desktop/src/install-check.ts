@@ -521,7 +521,7 @@ async function childrenOf(pid: number): Promise<number[]> {
  * Electron quits and ends its own children; then the runtime removes its unpack and exits. Answers each process that
  * still ran END_MS later, from the group or from the root, then kills those. Empty means a clean end.
  */
-export async function endAppImage(pid: number, place: ProofPlace): Promise<number[]> {
+export async function endAppImage(pid: number, place: ProofPlace, o: { endMs?: number } = {}): Promise<number[]> {
   const left = async () => [...new Set([...(groupAlive(pid) ? [pid] : []), ...(await processesUnder(`${place.root}/`))])].sort((a, b) => a - b)
   const main = await childrenOf(pid)
   for (const p of main.length > 0 ? main : [pid]) signal(p, 'SIGTERM')
@@ -533,7 +533,7 @@ export async function endAppImage(pid: number, place: ProofPlace): Promise<numbe
       await sleep(100)
     }
   }
-  const stayed = await waitEmpty(END_MS)
+  const stayed = await waitEmpty(o.endMs ?? END_MS)
   if (stayed.length > 0) {
     signal(-pid, 'SIGKILL')
     for (const p of stayed) signal(p, 'SIGKILL')

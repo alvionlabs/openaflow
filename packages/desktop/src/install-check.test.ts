@@ -1,8 +1,21 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { createRealConfigReader, proofPlace, refuseRealInstall, stateDiff, withInstallLock, type MachineState } from './install-check.ts'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { spawn } from 'node:child_process'
+import {
+  APPIMAGE_ROOT_PREFIX,
+  appImagePlace,
+  createRealConfigReader,
+  endAppImage,
+  missingParts,
+  processesUnder,
+  proofPlace,
+  refuseRealInstall,
+  stateDiff,
+  withInstallLock,
+  type MachineState,
+} from './install-check.ts'
 
 let dir: string
 
@@ -187,5 +200,104 @@ describe('withInstallLock', () => {
     await expect(withInstallLock(async () => 'x', { ...opts(), waitMs: 60 })).rejects.toThrow(/lock/)
     utimesSync(opts().path, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000))
     await expect(withInstallLock(async () => 'old', opts())).resolves.toBe('old')
+  })
+})
+
+// Linux only: the place is the Linux release check's.
+describe.runIf(process.platform === 'linux')('appImagePlace', () => {
+  test('a temp home, temp folders, the system PATH, and no FUSE', () => {
+    vi.stubEnv('HOME', '/home/real')
+    vi.stubEnv('XDG_CONFIG_HOME', '/home/real/.config')
+    vi.stubEnv('APPIMAGE', '/home/real/Apps/other.AppImage')
+    vi.stubEnv('OPENAFLOW_CONFIG_DIR', '/home/real/.config/openaflow-server')
+    vi.stubEnv('CLAUDE_CONFIG_DIR', '/home/real/.claude')
+    const place = appImagePlace(8450)
+    try {
+      expect(basename(place.root).startsWith(APPIMAGE_ROOT_PREFIX)).toBe(true)
+      expect(realpathSync.native(place.root)).toBe(place.root)
+      expect(place.installDir.startsWith(`${place.root}/`)).toBe(true)
+      for (const name of ['HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'OPENAFLOW_CONFIG_DIR', 'OPENAFLOW_DESKTOP_DATA_DIR', 'OPENAFLOW_PORTS_DIR', 'OPENAFLOW_CLAUDE_DIR']) {
+        expect(place.env[name]?.startsWith(`${place.root}/`), name).toBe(true)
+      }
+      for (const name of ['HOME', 'TMPDIR', 'OPENAFLOW_CONFIG_DIR', 'OPENAFLOW_DESKTOP_DATA_DIR', 'OPENAFLOW_PORTS_DIR', 'OPENAFLOW_CLAUDE_DIR']) expect(existsSync(place.env[name]!), name).toBe(true)
+      expect(place.env.APPIMAGE_EXTRACT_AND_RUN).toBe('1')
+      expect(place.env.PATH).toBe('/usr/local/bin:/usr/bin:/bin')
+      expect(place.env.OPENAFLOW_API_PORT).toBe('8450')
+      expect(place.env.OPENAFLOW_CLAUDE_BIN?.startsWith(place.root)).toBe(true)
+      expect(existsSync(place.env.OPENAFLOW_CLAUDE_BIN!)).toBe(false)
+      // Nothing of the caller's: not another AppImage, not a CLAUDE variable, not Electron or Vitest.
+      expect(place.env.APPIMAGE).toBeUndefined()
+      expect(place.env.CLAUDE_CONFIG_DIR).toBeUndefined()
+      expect(Object.keys(place.env).filter((k) => /^(VITEST|ELECTRON_|NODE_)/i.test(k))).toEqual([])
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(place.root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('missingParts', () => {
+  test('names each part the AppImage lacks outside its asar', () => {
+    const parts = ['app.asar', 'server/server.mjs', 'THIRD-PARTY-NOTICES.txt', 'pty-host/pty-host.cjs', 'pty-host/node_modules/node-pty/package.json', 'pty-host/node_modules/node-pty/prebuilds/linux-x64/pty.node', 'hooks-plugin/.claude-plugin/plugin.json', 'hooks-plugin/hooks/hooks.json', 'hooks-plugin/scripts/record.sh']
+    for (const part of parts) {
+      mkdirSync(join(dir, part, '..'), { recursive: true })
+      writeFileSync(join(dir, part), '')
+    }
+    expect(missingParts(dir)).toEqual([])
+    rmSync(join(dir, 'hooks-plugin', '.claude-plugin'), { recursive: true })
+    rmSync(join(dir, 'pty-host', 'node_modules', 'node-pty', 'prebuilds'), { recursive: true })
+    expect(missingParts(dir)).toEqual(['pty-host/node_modules/node-pty/prebuilds/linux-x64', 'hooks-plugin/.claude-plugin/plugin.json'])
+  })
+})
+
+describe.runIf(process.platform === 'linux')('endAppImage', () => {
+  /** A stand-in for the AppImage runtime: a shell in its own process group, whose child is the app. */
+  const startGroup = async (script: string) => {
+    const child = spawn('sh', ['-c', script], { detached: true, stdio: 'ignore', windowsHide: true })
+    await new Promise<void>((resolve) => child.once('spawn', resolve))
+    // Its child has started once the shell has one.
+    await sleep(200)
+    return child.pid!
+  }
+  const groupGone = (pgid: number) => {
+    try {
+      process.kill(-pgid, 0)
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  test('an app that ends on SIGTERM leaves nothing, and nothing is reported', async () => {
+    const pid = await startGroup('sleep 30; true')
+    const place = { root: dir, installDir: dir, env: {}, port: 0 }
+    expect(await endAppImage(pid, place, { endMs: 5_000 })).toEqual([])
+    expect(groupGone(pid)).toBe(true)
+  })
+
+  test('an app that ignores SIGTERM is reported, then killed', async () => {
+    const pid = await startGroup('trap "" TERM; sleep 30; true')
+    const place = { root: dir, installDir: dir, env: {}, port: 0 }
+    const started = Date.now()
+    const left = await endAppImage(pid, place, { endMs: 500 })
+    expect(left).toContain(pid)
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(groupGone(pid)).toBe(true)
+  })
+
+  test('processesUnder finds a process by its executable path, and only by it', async () => {
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    const copy = join(bin, 'sleep-copy')
+    // A copy of sleep inside the folder stands in for the unpacked Electron.
+    writeFileSync(copy, readFileSync('/usr/bin/sleep'), { mode: 0o755 })
+    const child = spawn(copy, ['30'], { stdio: 'ignore', windowsHide: true })
+    await new Promise<void>((resolve) => child.once('spawn', resolve))
+    try {
+      expect(await processesUnder(`${dir}/`)).toEqual([child.pid])
+      expect(await processesUnder(`${join(dir, 'other')}/`)).toEqual([])
+    } finally {
+      child.kill('SIGKILL')
+    }
   })
 })
