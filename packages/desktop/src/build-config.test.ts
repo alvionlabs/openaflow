@@ -3,7 +3,8 @@ import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { buildConfig, builderOptions, checkVersion, EXE_NAME, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
+import { appImageName, buildConfig, builderOptions, checkVersion, EXE_NAME, LINUX_UPDATE_FILE, packageTarget, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
+import { hooksPluginDir } from './pty-host-launch.ts'
 import { CONFIG_DIR_NAME } from '@openaflow/server/config'
 import { APP_ID, APP_NAME } from './shell-config.ts'
 import { RELEASES_URL } from './update-flow.ts'
@@ -92,10 +93,47 @@ describe('electron-builder config', () => {
     expect((JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')) as { version: string }).version).toBe('1.2.0-beta.18')
   })
 
-  test('Linux builds an unpacked folder for now, with a lowercase executable', () => {
+  test('Linux builds one x64 AppImage', () => {
     const c = config({ platform: 'linux' })
-    expect(c.linux?.target).toEqual([{ target: 'dir', arch: ['x64'] }])
+    expect(c.linux?.target).toEqual([{ target: 'AppImage', arch: ['x64'] }])
     expect(c.linux?.executableName).toBe('openaflow')
+    // One name for every x64 build: electron-builder's ${arch} would say x64 in some places and x86_64 in others.
+    const name = c.appImage?.artifactName
+    for (const version of ['0.1.0', '1.2.3', '10.20.30']) {
+      expect(name?.replace('${version}', version).replace('${ext}', 'AppImage')).toBe(`openaflow-${version}-x86_64.AppImage`)
+      expect(appImageName(version)).toBe(`openaflow-${version}-x86_64.AppImage`)
+    }
+    expect(name).not.toMatch(/\s/)
+    // electron-builder writes latest-linux.yml beside the AppImage when the config has a publish provider.
+    expect(LINUX_UPDATE_FILE).toBe('latest-linux.yml')
+    expect((c.publish as { provider?: string }).provider).toBe('github')
+  })
+
+  test('package target per platform', () => {
+    expect(packageTarget('win32')).toEqual({ platform: 'win32', target: 'nsis' })
+    expect(packageTarget('linux')).toEqual({ platform: 'linux', target: 'AppImage' })
+    // Each target is the one the config names for that system.
+    expect(config({ platform: 'win32' }).win?.target).toEqual([{ target: packageTarget('win32').target, arch: ['x64'] }])
+    expect(config({ platform: 'linux' }).linux?.target).toEqual([{ target: packageTarget('linux').target, arch: ['x64'] }])
+    for (const other of ['darwin', 'freebsd', 'aix'] as const) {
+      expect(() => packageTarget(other), other).toThrow(new RegExp(`Windows and Linux only, not ${other}`))
+    }
+  })
+
+  test('the hooks plugin sits outside the asar', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const c = config({ platform })
+      const plugin = (c.extraResources as { from: string; to: string }[]).find((r) => r.to === 'hooks-plugin')
+      expect(plugin, platform).toEqual({ from: '../hooks-plugin/plugin', to: 'hooks-plugin' })
+      expect(c.files, platform).not.toContainEqual(expect.stringContaining('hooks-plugin'))
+      // The folder the app looks in, dev and packaged, is the one the build copies.
+      expect(hooksPluginDir({ packaged: true, appPath: 'unused', resourcesPath: join('R', 'resources') })).toBe(join('R', 'resources', plugin!.to))
+      expect(hooksPluginDir({ packaged: false, appPath: pkg, resourcesPath: 'unused' })).toBe(join(pkg, plugin!.from))
+    }
+    // The folder exists and holds the plugin's hooks and its script.
+    const dir = join(pkg, '..', 'hooks-plugin', 'plugin')
+    expect(readdirSync(join(dir, 'hooks'))).toContain('hooks.json')
+    expect(readdirSync(join(dir, 'scripts'))).toContain('record.sh')
   })
 
   test('artifact names have no spaces', () => {

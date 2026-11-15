@@ -71,6 +71,8 @@ export function startUpdater(ctx: ShellContext): UpdateFlow | undefined {
 
   const flow = createUpdateFlow({
     packaged: app.isPackaged,
+    platform: process.platform,
+    appImage: ctx.env.APPIMAGE,
     updater: () => realUpdater(feed),
     ask,
     stop: () => {

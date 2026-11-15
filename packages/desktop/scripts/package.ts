@@ -1,13 +1,14 @@
 // `pnpm package [--version=<x.y.z>] [--output=<dir>] [--test-feed] [--test-hooks]`: builds, writes the licence notices,
-// then packages. On Windows: the installer, its blockmap, latest.yml, and win-unpacked. On Linux, for now: only
-// linux-unpacked. It always passes `publish: never`, and it signs nothing.
+// then packages. On Windows: the installer, its blockmap, latest.yml, and win-unpacked. On Linux: the x64 AppImage,
+// latest-linux.yml, and linux-unpacked. Any other system stops with an error. It always passes `publish: never`, and
+// it signs nothing.
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Arch, build, Platform } from 'electron-builder'
-import { builderOptions, parsePackageArgs } from '../src/build-config.ts'
+import { builderOptions, packageTarget, parsePackageArgs } from '../src/build-config.ts'
 import { bundleDesktop } from '../src/bundle-desktop.ts'
 import { bundleRoots, LICENCE_OVERRIDES, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
 
@@ -40,12 +41,17 @@ function writeNotices(): string {
 }
 
 // A bad flag, or a system with no target, stops here, before anything builds.
-const { testFeed = false, testHooks = false, ...args } = parsePackageArgs(process.argv.slice(2))
-if (process.platform !== 'win32' && process.platform !== 'linux') {
-  console.error(`openaflow: pnpm package builds on Windows and Linux only, not ${process.platform}`)
+let picked: ReturnType<typeof packageTarget>
+let parsed: ReturnType<typeof parsePackageArgs>
+try {
+  parsed = parsePackageArgs(process.argv.slice(2))
+  picked = packageTarget(process.platform)
+} catch (err) {
+  console.error(`openaflow: ${err instanceof Error ? err.message : String(err)}`)
   process.exit(1)
 }
-const targets = process.platform === 'win32' ? Platform.WINDOWS.createTarget('nsis', Arch.x64) : Platform.LINUX.createTarget('dir', Arch.x64)
+const { testFeed = false, testHooks = false, ...args } = parsed
+const targets = picked.platform === 'win32' ? Platform.WINDOWS.createTarget(picked.target, Arch.x64) : Platform.LINUX.createTarget(picked.target, Arch.x64)
 
 const built = spawnSync('pnpm -w run build', { cwd: root, shell: true, stdio: 'inherit', windowsHide: true })
 if (built.status !== 0) process.exit(built.status ?? 1)

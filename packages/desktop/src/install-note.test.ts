@@ -46,4 +46,28 @@ describe('docs/install.md', () => {
     expect(note).toContain('%APPDATA%\\OpenAFlow\\desktop.log')
     expect(note).toContain('find **OpenAFlow**')
   })
+
+  test('the Linux note', () => {
+    const note = read('docs/install.md')
+    const linux = note.split('\n## Linux')[1]?.split('\n## ')[0] ?? ''
+    expect(linux).not.toBe('')
+    expect(note.split('\n')[2]).toMatch(/Linux/)
+    for (const term of [
+      '`openaflow-<version>-x86_64.AppImage`',
+      'chmod +x',
+      'FUSE 2',
+      '`libfuse2`',
+      '`fuse-libs`',
+      '--appimage-extract-and-run',
+      'AppIndicator',
+      'Ubuntu 24.04',
+      'sandbox',
+      '~/.config/openaflow-server',
+      '~/.config/OpenAFlow/desktop.log',
+    ]) {
+      expect(linux, term).toContain(term)
+    }
+    // It describes the sandbox limit and gives no workaround: the human chooses one.
+    for (const workaround of ['--no-sandbox', 'sysctl', 'apparmor_restrict', 'chrome-sandbox', 'chmod 4755']) expect(linux, workaround).not.toContain(workaround)
+  })
 })
