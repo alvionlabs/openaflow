@@ -1,7 +1,8 @@
 // The server side of the terminal link with the desktop's main process, over the parent channel parent-link.ts
 // gives a server that main started with OPENAFLOW_TERMINALS=1. The server asks `start`, `list`, and `dispose`; main
-// answers, and sends each session's `exit` and each host crash's `lost`. The messages are sprint terminal-tab's shared
-// contract §2; main's side is packages/desktop/src/terminal-relay.ts. The rules are in
+// answers, and sends each session's `exit` and each host crash's `lost`. The server also sends `sweep` after its
+// reconcile and `labels` after a Board rebuild. The messages are sprint terminal-tab's shared contract §2 and
+// session-life's §3; main's side is packages/desktop/src/terminal-relay.ts. The rules are in
 // pod-docs/feature-details/hosted-sessions.md.
 
 import type { ParentChannel } from './parent-link.ts'
@@ -9,7 +10,21 @@ import type { ParentChannel } from './parent-link.ts'
 export const TERMINAL_MESSAGE = 'openaflow:terminal'
 
 /** `@openaflow/pty-host/protocol`'s shapes, copied: the server doesn't depend on that package. */
-export type StartSpec = { id: string; program: string; args: string[]; cwd: string; env: Record<string, string>; cols: number; rows: number }
+export type StartSpec = {
+  id: string
+  program: string
+  args: string[]
+  cwd: string
+  env: Record<string, string>
+  cols: number
+  rows: number
+  /** Where the host saves the session's screen text: `<config dir>/screens/<id>.txt`. */
+  screenFile?: string
+}
+/** A session the reconcile set to `stopped · app closed`, with the stop command its start had (session-life §6). */
+export type SweepSession = { id: string; stop?: string[] }
+/** An open session's name for the quit dialog (`sessionLabel`). */
+export type SessionLabel = { id: string; label: string }
 export type SessionInfo = { id: string; pid: number; live: boolean; startedAt: number }
 
 /** What main tells the server about a session, also with no request waiting. */
@@ -20,11 +35,18 @@ export type TerminalEvent =
   | { op: 'lost'; ids: string[] }
 
 export type TerminalChannel = {
-  /** Resolves on `started`; rejects with main's word on `start-failed`, or `terminals unavailable` after the answer limit. */
-  start(spec: StartSpec): Promise<{ pid: number }>
+  /**
+   * Resolves on `started`; rejects with main's word on `start-failed`, or `terminals unavailable` after the answer limit.
+   * `stop` goes beside the spec, never in it: main runs it when it ends the session.
+   */
+  start(spec: StartSpec, stop?: string[]): Promise<{ pid: number }>
   /** Resolves with the host's sessions; rejects with main's word on `list-failed`, or `no answer` after the answer limit. */
   list(): Promise<SessionInfo[]>
   dispose(id: string): void
+  /** The sessions the last app life left: main ends whatever still runs under their markers. */
+  sweep(sessions: SweepSession[]): void
+  /** Every open session's label; main keeps the newest list for the quit dialog. */
+  labels(labels: SessionLabel[]): void
   /** Every well-formed `started`, `start-failed`, `exit`, and `lost`, before any request settles. Returns the unsubscribe. */
   onEvent(fn: (e: TerminalEvent) => void): () => void
   /** Stops: pending requests stay unsettled, and nothing more goes out or comes in. */
@@ -119,10 +141,16 @@ export function createTerminalChannel(o: { link: ParentChannel; log(line: string
   }
 
   return {
-    start: (spec) => ask<{ pid: number }>('start', { spec }, UNAVAILABLE),
+    start: (spec, stop) => ask<{ pid: number }>('start', stop === undefined ? { spec } : { spec, stop }, UNAVAILABLE),
     list: () => ask<SessionInfo[]>('list', {}, 'no answer'),
     dispose(id) {
       if (open) o.link.send({ type: TERMINAL_MESSAGE, op: 'dispose', id })
+    },
+    sweep(sessions) {
+      if (open) o.link.send({ type: TERMINAL_MESSAGE, op: 'sweep', sessions })
+    },
+    labels(labels) {
+      if (open) o.link.send({ type: TERMINAL_MESSAGE, op: 'labels', labels })
     },
     onEvent(fn) {
       listeners.add(fn)
