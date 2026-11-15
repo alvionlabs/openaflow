@@ -44,14 +44,16 @@ describe('pod-ci.yml', () => {
     expect(steps.filter((s) => s.if !== undefined)).toEqual([])
   })
 
-  test('pty proof jobs', () => {
+  test('electron jobs', () => {
     const flow = ci()
     // Today's triggers: every pull request, and a push to pod-staging.
     expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
     expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
+    // The electron jobs took over the pty proof's.
+    expect(flow.jobs?.['pty-proof']).toBeUndefined()
 
-    const job = flow.jobs?.['pty-proof']
-    expect(job?.name).toBe('pty proof (${{ matrix.os }})')
+    const job = flow.jobs?.electron
+    expect(job?.name).toBe('electron (${{ matrix.os }})')
     expect(job?.['runs-on']).toBe('${{ matrix.os }}')
     expect(job?.strategy?.['fail-fast']).toBe(false)
     const include = (job?.strategy?.matrix?.include ?? []) as { os: string; display: string; app: string }[]
@@ -74,15 +76,21 @@ describe('pod-ci.yml', () => {
     const sysctl = steps[at(/sysctl -w kernel\.apparmor_restrict_unprivileged_userns=0/)]
     expect(sysctl?.if).toBe("runner.os == 'Linux'")
 
-    const unpackaged = steps[at(/test:electron real-pty-proof/, false)]
-    const packaged = steps[at(/test:electron real-pty-proof/, true)]
-    for (const step of [unpackaged, packaged]) expect(step?.run).toBe('${{ matrix.display }} pnpm test:electron real-pty-proof')
-    expect(packaged?.env?.OPENAFLOW_PACKAGED_APP).toBe('${{ github.workspace }}/${{ matrix.app }}')
+    // One file a step: vitest runs files side by side, and three Electron apps at once make the timings flaky.
+    // real-start runs Electron's own binary on dist/main.cjs, so it has no packaged run.
+    const unpackaged = ['real-start', 'real-pty-proof', 'real-terminal'].map((name) => at(new RegExp(`test:electron ${name}$`), false))
+    const packaged = ['real-pty-proof', 'real-terminal'].map((name) => at(new RegExp(`test:electron ${name}$`), true))
+    expect([...unpackaged, ...packaged].every((i) => i >= 0), JSON.stringify({ unpackaged, packaged })).toBe(true)
+    expect(at(/test:electron real-start/, true)).toBe(-1)
+    for (const i of [...unpackaged, ...packaged]) expect(steps[i]?.run).toMatch(/^\$\{\{ matrix\.display \}\} pnpm test:electron real-[a-z-]+$/)
+    for (const i of packaged) expect(steps[i]?.env?.OPENAFLOW_PACKAGED_APP).toBe('${{ github.workspace }}/${{ matrix.app }}')
+    // Only the named files: `pnpm test:electron` with no name would also run the Windows-only proofs.
+    expect(steps.filter((s) => /test:electron\s*$/.test(s.run ?? ''))).toEqual([])
 
-    const order = [at(/pnpm install/), at(/electron\/install\.js/), at(/^pnpm build$/), at(/real-pty-proof/, false), at(/^pnpm package --test-hooks$/), at(/real-pty-proof/, true)]
+    const order = [at(/pnpm install/), at(/electron\/install\.js/), at(/^pnpm build$/), ...unpackaged, at(/^pnpm package --test-hooks$/), ...packaged]
     expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true)
     expect([...order].sort((a, b) => a - b)).toEqual(order)
-    expect(at(/sysctl/)).toBeLessThan(at(/real-pty-proof/, false))
+    expect(at(/sysctl/)).toBeLessThan(Math.min(...unpackaged))
 
     // A test-hooks build never leaves the runner.
     expect(steps.filter((s) => /upload-artifact|release:check|gh release/.test(`${s.uses ?? ''} ${s.run ?? ''}`))).toEqual([])
