@@ -133,6 +133,29 @@ describe('wrapper and probe', () => {
       expect(alive(pid!)).toBe(false)
     })
 
+    test('a hang whose child holds stderr open still answers at the limit', async () => {
+      const dir = fakeTools(root, 'hold', { systemdRun: `${sys('sleep')} 30 &\necho $! > '${root}/held'\nwait` })
+      try {
+        const late = new Promise<'still waiting'>((r) => setTimeout(() => r('still waiting'), 3000))
+        const answer = await Promise.race([probe(dir, {}, 300).then((a) => a.p), late])
+        expect(answer).toEqual({ on: false, reason: 'no answer in 0.3 s' })
+        expect(alive(runs(dir)[0]!)).toBe(false)
+      } finally {
+        const held = Number(readFileSync(join(root, 'held'), 'utf8'))
+        if (held > 1 && alive(held)) process.kill(held, 'SIGKILL')
+      }
+    }, 10_000)
+
+    test('the default limit is 5 s', async () => {
+      const dir = fakeTools(root, 'hang-default', { systemdRun: `exec ${sys('sleep')} 30` })
+      const started = Date.now()
+      const { p } = await probe(dir)
+      const took = Date.now() - started
+      expect(took).toBeGreaterThanOrEqual(4900)
+      expect(took).toBeLessThan(8000)
+      expect(p).toEqual({ on: false, reason: 'no answer in 5 s' })
+    }, 15_000)
+
     test('a missing tool: off, naming it, and nothing runs', async () => {
       const cases = [
         { name: 'no-run', o: { systemdRun: undefined }, word: 'systemd-run not found' },

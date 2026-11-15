@@ -55,28 +55,41 @@ async function whyOff(o: ScopeProbeInput): Promise<ScopeProbe | string> {
 function run(file: string, args: string[], env: Record<string, string>, timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
     let err = ''
-    let timedOut = false
+    let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined
+    let killed = false
     const child = spawn(file, args, { env, cwd: '/', stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
+    // Settles once. A child the probe started may hold stderr open, so the limit never waits for `close`.
+    const done = (word: string) => {
+      clearTimeout(timer)
+      clearTimeout(reaped)
+      child.stderr.destroy()
+      resolve(word)
+    }
+    const exitWord = (): string => {
+      if (exit?.code === 0) return 'exit 0'
+      const line = err.split('\n').map((l) => l.trim()).find((l) => l !== '')?.slice(0, 200)
+      const head = exit?.code === null || exit === undefined ? `killed by ${exit?.signal}` : `exit ${exit.code}`
+      return line === undefined ? head : `${head}: ${line}`
+    }
+    const late = `no answer in ${timeoutMs / 1000} s`
+    let reaped: NodeJS.Timeout | undefined
+    const timer = setTimeout(() => {
+      if (exit !== undefined) return done(exitWord())
+      // Answer once the killed child is gone, or a second later at most.
+      killed = true
+      child.kill('SIGKILL')
+      reaped = setTimeout(() => done(late), 1000)
+    }, timeoutMs)
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (d: string) => {
       if (err.length < 4096) err += d
     })
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGKILL')
-    }, timeoutMs)
-    child.on('error', (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer)
-      resolve(`could not start: ${e.code ?? e.message}`)
+    child.on('error', (e: NodeJS.ErrnoException) => done(`could not start: ${e.code ?? e.message}`))
+    child.on('exit', (code, signal) => {
+      exit = { code, signal }
+      if (killed) done(late)
     })
-    child.on('close', (code, signal) => {
-      clearTimeout(timer)
-      if (timedOut) return resolve(`no answer in ${timeoutMs / 1000} s`)
-      if (code === 0) return resolve('exit 0')
-      const line = err.split('\n').map((l) => l.trim()).find((l) => l !== '')?.slice(0, 200)
-      const head = code === null ? `killed by ${signal}` : `exit ${code}`
-      resolve(line === undefined ? head : `${head}: ${line}`)
-    })
+    child.on('close', () => done(killed ? late : exitWord()))
   })
 }
 
