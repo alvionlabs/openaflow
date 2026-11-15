@@ -388,5 +388,13 @@ describe.runIf(WIN)('windows shims on real files', () => {
     const c = ok(sessionCommand({ ...win(), claude: join(other, 'claude.cmd'), windows: undefined, env: process.env }))
     expect(c.args.slice(0, 3)).toEqual(['/d', '/c', 'call'])
     expect(c.typeYourself).toBe('/pod:plan add tags')
+
+    const { skill: _skill, text: _text, ...rest } = win()
+    const r2 = ok(resumeCommand({ ...rest, claude: join(npm, 'claude.cmd'), windows: undefined, env: process.env }))
+    expect(r2.program).toBe(join(npm, 'node.exe'))
+    expect(r2.args).toEqual([join(npm, 'node_modules', 'claude', 'cli.js'), '--resume', SESSION, '--plugin-dir', WIN_PLUGIN])
+    const c2 = ok(resumeCommand({ ...rest, claude: join(other, 'claude.cmd'), windows: undefined, env: process.env }))
+    expect(c2.args).toEqual(['/d', '/c', 'call', join(other, 'claude.cmd'), '--resume', SESSION, '--plugin-dir', WIN_PLUGIN])
+    expect('typeYourself' in c2).toBe(false)
   })
 })
