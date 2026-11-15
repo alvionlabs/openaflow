@@ -27,9 +27,9 @@ export type TerminalBridge = {
   /** Calls `fn` on each host state; returns a function that stops the calls. */
   onHostState(fn: (state: TerminalHostState) => void): () => void
   /** Calls `fn(count)` once a quit is confirmed and the sessions end; returns a stop function. Undefined where the shell has no `onQuitting`. */
-  onQuitting: ((fn: (count: number) => void) => () => void) | undefined
+  onQuitting?: ((fn: (count: number) => void) => () => void) | undefined
   /** The host's state now. Undefined where the shell has no `terminalHostState`. */
-  hostState: (() => Promise<TerminalHostRead>) | undefined
+  hostState?: (() => Promise<TerminalHostRead>) | undefined
 }
 
 /**
