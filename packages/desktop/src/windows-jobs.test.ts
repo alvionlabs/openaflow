@@ -86,7 +86,8 @@ describe('helper protocol', () => {
     helpers[0]!.say('ok s-1\r\n')
     await settle()
     expect(a).toEqual({ done: true, value: true })
-    expect(log).not.toHaveBeenCalled()
+    expect(log.mock.calls).toEqual([['openaflow desktop: session s-1 in a job after 0 ms']])
+    log.mockClear()
 
     const b = track(jobs.assign('s-2', 77))
     expect(helpers).toHaveLength(1)
@@ -95,6 +96,23 @@ describe('helper protocol', () => {
     expect(b).toEqual({ done: true, value: false })
     expect(log).toHaveBeenCalledOnce()
     expect(log.mock.calls[0]![0]).toMatch(/^openaflow desktop: session s-2 not in a job: error 5$/)
+  })
+
+  test('an ok logs how long the assign took and how many processes the session started before it stay outside', async () => {
+    const { jobs, helpers, log } = setup()
+    const a = track(jobs.assign('s-1', 10))
+    await vi.advanceTimersByTimeAsync(1_250)
+    helpers[0]!.say('ok s-1 2\r\n')
+    await settle()
+    expect(a.value).toBe(true)
+    const b = track(jobs.assign('s-2', 20))
+    helpers[0]!.say('ok s-2 0\r\n')
+    await settle()
+    expect(b.value).toBe(true)
+    expect(log.mock.calls).toEqual([
+      ['openaflow desktop: session s-1 in a job after 1250 ms; 2 processes it started before stay outside'],
+      ['openaflow desktop: session s-2 in a job after 0 ms'],
+    ])
   })
 
   test('close writes one line and resolves at closed', async () => {
@@ -317,9 +335,13 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
   const helpers: ChildProcess[] = []
   const spawnHelper: SpawnHelper = (file, args, options) => {
     const c = spawn(file, args, { ...options, windowsHide: true })
+    // All of it: the module keeps only the tail, which may miss a compiler error.
+    c.stderr.on('data', (d: Buffer) => process.stderr.write(`windows-jobs helper stderr: ${d.toString()}`))
     helpers.push(c)
     return c
   }
+  /** The log less the line each successful assign writes. */
+  const problems = () => log.filter((l) => !/ in a job after \d+ ms/.test(l))
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'oaf-jobs-'))
@@ -393,7 +415,7 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
   async function assignTimed(jobs: ReturnType<typeof createJobControl>, id: string, pid: number) {
     const t0 = Date.now()
     const ok = await jobs.assign(id, pid)
-    console.log(`windows-jobs: assign ${id} took ${Date.now() - t0} ms: ${ok}`)
+    console.log(`windows-jobs: assign ${id} took ${Date.now() - t0} ms: ${ok} (${log.at(-1) ?? 'no log'})`)
     expect(ok, `assign ${id} failed. Log:\n${log.join('\n')}`).toBe(true)
   }
 
@@ -413,7 +435,7 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     expect(alive(other.self.pid) && alive(otherChild.pid)).toBe(true)
     expect(await portOpen(otherChild.port)).toBe(true)
     jobs.dispose()
-    expect(log).toEqual([])
+    expect(problems()).toEqual([])
   }, 60_000)
 
   test('a failed assign answers false and keeps the helper for the next session', async () => {
@@ -452,9 +474,9 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     ] as const) {
       await gone(p, what)
     }
-    await waitFor(() => log.length > 0, 'the helper exit is logged')
-    expect(log).toHaveLength(1)
-    expect(log[0]).toMatch(/^openaflow desktop: job helper exited/)
+    await waitFor(() => problems().length > 0, 'the helper exit is logged')
+    expect(problems()).toHaveLength(1)
+    expect(problems()[0]).toMatch(/^openaflow desktop: job helper exited/)
 
     // The next assign starts a new helper.
     const c = await startSession('c')
