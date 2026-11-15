@@ -60,8 +60,13 @@
   margin-top: 8px;
 }
 
+/* Phone: the card's spacing is tighter, as .next-acts is (runs.css); the actions then sit 16 px below the last group. */
 @media (max-width: 480px) {
   .next-step .new-session {
     margin-top: 16px;
+  }
+
+  .next-step .ns-actions {
+    margin-top: 0;
   }
 }

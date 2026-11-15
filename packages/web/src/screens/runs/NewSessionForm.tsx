@@ -115,7 +115,8 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props
       <p className="note ns-note" role="status">
         {idle?.note ?? ''}
       </p>
-      <div className="ns-actions">
+      {/* On the card the buttons stack on a phone, as every card action does; the modal keeps its row. */}
+      <div className={cancel ? 'ns-actions' : 'ns-actions inplace-actions'}>
         {cancel}
         <button className="btn primary" type="submit" disabled={busy || idle?.fieldError !== undefined}>
           {busy ? 'Starting…' : 'New session'}

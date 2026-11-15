@@ -78,7 +78,8 @@ export function NextStepCard({ repo, run, card }: Props) {
 
   const a = card.action
   const status = nextStatus(card.status)
-  const calm = card.tier === 'nothing'
+  // The start card holds a form: it is an action card, drawn solid, not the calm Nothing to do.
+  const calm = card.tier === 'nothing' && a.kind === 'none'
   // One queue write at a time: Answer, Close and Keep wait for each other.
   const saving = answer.kind === 'saving' || resolve.kind === 'saving'
   const triage = a.kind === 'answer' ? triageTarget(card.entry, repo.id) : undefined
