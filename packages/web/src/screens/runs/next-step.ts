@@ -6,7 +6,8 @@
 // listed but never takes a run's card (a repo row keeps a real stop as its card).
 // Hosted sessions (terminal-tab N1): a repo row with no open session gets the start card (the New session form);
 // a row whose shown session waits for you gets the waiting card (Open terminal), ranked as a pending entry pod goes on
-// without, so it raises no toast and no urgent banner; a hosted run's reply says to type the word in the terminal.
+// without, so it raises no toast and no urgent banner; a repo row whose shown session is starting or live gets the
+// running card (Open terminal), in the nothing tier as the start card; a hosted run's reply says to type the word in the terminal.
 // Pure; the card and the tab only render these.
 
 import {
@@ -16,6 +17,7 @@ import {
   rowSessions,
   sessionView,
   shownSession,
+  skillCommand,
   stopsRun,
   waitingPrs,
   type BoardRepo,
@@ -37,7 +39,7 @@ export type NextAction =
   | { kind: 'reply'; panel: ReplyPanelView }
   /** The start card: the New session form for this repo. */
   | { kind: 'new-session'; repoId: string }
-  /** The waiting card: Open terminal on this row's Terminal tab. */
+  /** The waiting and running cards: Open terminal on this row's Terminal tab. */
   | { kind: 'open-terminal' }
   | { kind: 'none' }
 export type NextItem = {
@@ -72,6 +74,7 @@ export const START_TITLE = 'No active plan'
 export const START_DETAIL = 'Pick what to start, then describe it.'
 export const WAITING_TITLE = 'Claude waits for you in the terminal'
 export const WAITING_DETAIL = 'It may ask you to trust this folder or to sign in. The app never answers for you.'
+export const RUNNING_TITLE = "A session runs in this repo's terminal"
 export const HOSTED_STOPPED = "This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before."
 /** The browser build's words in place of the form, and of Open terminal (sprint terminal-tab §7's browser rule). */
 export const DESKTOP_START = 'Open the desktop app to start a session.'
@@ -184,6 +187,19 @@ function canStart(run: RunSummary, shown: HostedSession | undefined): boolean {
   return shown === undefined || (shown.state !== 'starting' && shown.state !== 'live')
 }
 
+/** A repo row whose shown session is starting or live (not yet waiting): the sidebar reads Running, and so does this card. */
+const runningCard = (s: HostedSession, run: RunSummary): NextItem => {
+  const command = skillCommand(s.skill)
+  return {
+    key: `running:${s.marker}`,
+    tier: 'nothing',
+    status: runStatus(run),
+    title: RUNNING_TITLE,
+    detail: command === undefined ? 'It started with no prompt.' : `It started with \`${command}\`.`,
+    action: { kind: 'open-terminal' },
+  }
+}
+
 const startCard = (run: RunSummary, repo: BoardRepo): NextItem => ({
   key: 'new-session',
   tier: 'nothing',
@@ -228,6 +244,9 @@ export function nextSteps(run: RunSummary | undefined, repo: BoardRepo | undefin
   const sorted = items.sort(byTier)
   const first = sorted.find((i) => !unjoined.has(i.key))
   if (first && ACTION_TIERS.has(first.tier)) return { card: first, rest: sorted.filter((i) => i !== first) }
+  const view = shown && sessionView(shown, now)
+  const readable = run.state !== 'error' && run.state !== 'unsupported'
+  if (shown && readable && run.plan === undefined && (view === 'starting' || view === 'live')) return { card: runningCard(shown, run), rest: sorted }
   return { card: canStart(run, shown) ? startCard(run, repo) : nothingCard(run, repo), rest: sorted }
 }
 
