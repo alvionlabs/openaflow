@@ -9,7 +9,7 @@
 
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
-import { FLOW, sizeOk, type HostToWindow } from './protocol.ts'
+import { FLOW, sizeOk, STALE_PORT_MS, type HostToWindow } from './protocol.ts'
 
 /** The parts of a node-pty process that a session uses. Each may throw once the process has ended. */
 export type SessionPty = { write(data: string): void; resize(cols: number, rows: number): void; pause(): void; resume(): void }
@@ -23,7 +23,14 @@ export type WindowPort = {
 }
 
 /** One window's port, as the sessions see it. */
-export type WindowLink = { post(m: HostToWindow): void; onClose(fn: () => void): () => void }
+export type WindowLink = {
+  post(m: HostToWindow): void
+  onClose(fn: () => void): () => void
+  /** When the port last sent a message, or was linked. */
+  heardAt(): number
+  /** Called on each message from the port, before it is handled. */
+  onHeard(fn: () => void): () => void
+}
 
 export type Session = {
   /** Output from the pty. Output after `ended` is dropped. */
@@ -45,12 +52,19 @@ export type Session = {
 /** Wraps a window port. Call it once per port; it starts the port, as Electron's ports need. */
 export function linkPort(port: WindowPort, onMessage: (data: unknown) => void): WindowLink {
   const closeFns = new Set<() => void>()
+  const heardFns = new Set<() => void>()
   let closed = false
-  port.on('message', (e) => onMessage(e?.data))
+  let heardAt = Date.now()
+  port.on('message', (e) => {
+    heardAt = Date.now()
+    for (const fn of [...heardFns]) fn()
+    onMessage(e?.data)
+  })
   port.on('close', () => {
     closed = true
     for (const fn of [...closeFns]) fn()
     closeFns.clear()
+    heardFns.clear()
   })
   port.start()
   return {
@@ -69,6 +83,11 @@ export function linkPort(port: WindowPort, onMessage: (data: unknown) => void): 
       }
       closeFns.add(fn)
       return () => closeFns.delete(fn)
+    },
+    heardAt: () => heardAt,
+    onHeard(fn) {
+      heardFns.add(fn)
+      return () => heardFns.delete(fn)
     },
   }
 }
@@ -102,7 +121,11 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
   const serializer = new SerializeAddon()
   term.loadAddon(serializer)
 
-  type Attached = { unacked: number; off(): void }
+  /**
+   * `overSince`: when its count went over `FLOW.pauseAbove`. `stale`: over, and silent `STALE_PORT_MS` since then
+   * and since its last message, so it no longer holds the pty. Its next message counts it again from 0.
+   */
+  type Attached = { unacked: number; off(): void; overSince?: number; stale: boolean }
   /** Ports that get live data, with the characters they have not acked. */
   const live = new Map<WindowLink, Attached>()
   /** Ports waiting for their replay. A newer attach or a detach replaces or drops the token. */
@@ -112,10 +135,25 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
   let exitCode: number | undefined
   let disposed = false
   let paused = false
+  /** While paused: the moment the next port over the limit goes stale. */
+  let staleTimer: ReturnType<typeof setTimeout> | undefined
+
+  const staleAt = (link: WindowLink, a: Attached) => Math.max(a.overSince ?? Infinity, link.heardAt()) + STALE_PORT_MS
 
   const balance = () => {
+    clearTimeout(staleTimer)
+    staleTimer = undefined
     if (ended || disposed) return
-    const counts = [...live.values()].map((a) => a.unacked)
+    const now = Date.now()
+    for (const [link, a] of live) {
+      if (a.unacked <= FLOW.pauseAbove) a.overSince = undefined
+      else {
+        a.overSince ??= now
+        if (now >= staleAt(link, a)) a.stale = true
+      }
+    }
+    const holding = [...live].filter(([, a]) => !a.stale)
+    const counts = holding.map(([, a]) => a.unacked)
     if (!paused && counts.some((n) => n > FLOW.pauseAbove)) {
       paused = true
       quietly(() => pty.pause())
@@ -123,6 +161,9 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
       paused = false
       quietly(() => pty.resume())
     }
+    if (!paused) return
+    const next = Math.min(...holding.filter(([, a]) => a.overSince !== undefined).map(([link, a]) => staleAt(link, a)))
+    if (Number.isFinite(next)) staleTimer = setTimeout(balance, Math.max(0, next - now))
   }
 
   const drop = (link: WindowLink) => {
@@ -153,6 +194,7 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
     ended(code) {
       if (ended || disposed) return
       ended = true
+      clearTimeout(staleTimer)
       term.write('', () => {
         if (disposed) return
         exitCode = code
@@ -177,7 +219,22 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
           link.post({ type: 'exit', id, exitCode })
           return
         }
-        live.set(link, { unacked: 0, off: token.off })
+        const offHeard = link.onHeard(() => {
+          const a = live.get(link)
+          if (a === undefined || !a.stale) return
+          a.stale = false
+          a.unacked = 0
+          a.overSince = undefined
+          balance()
+        })
+        live.set(link, {
+          unacked: 0,
+          stale: false,
+          off: () => {
+            token.off()
+            offHeard()
+          },
+        })
       })
     },
 
@@ -211,6 +268,7 @@ export function createSession(o: { id: string; pty: SessionPty; cols: number; ro
     dispose() {
       if (disposed) return
       disposed = true
+      clearTimeout(staleTimer)
       for (const link of [...pending.keys(), ...live.keys()]) drop(link)
       term.dispose()
     },

@@ -48,6 +48,8 @@ export const MAIN_ONLY: ReadonlySet<string> = new Set(['start', 'kill', 'dispose
 export const BEAT_MS = 5_000
 /** A port over `pauseAbove` unacked characters pauses the pty; it resumes once every port is under `resumeBelow`. */
 export const FLOW = { pauseAbove: 100_000, resumeBelow: 5_000 }
+/** A port over `FLOW.pauseAbove` that has sent nothing for this long stops holding the pty, until its next message. */
+export const STALE_PORT_MS = 30_000
 
 /** A session ID: a run marker. */
 export const SESSION_ID = /^[a-z0-9-]{1,64}$/
