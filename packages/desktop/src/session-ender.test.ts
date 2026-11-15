@@ -321,16 +321,16 @@ const listen = () => new Promise((r) => { const s = createServer((c) => c.end())
 const keep = () => setInterval(() => {}, 1000)
 const env = clear === 'clear' ? {} : process.env
 if (role === 'leader') {
-  spawn(process.execPath, [me, 'child', out], { stdio: 'ignore' })
+  spawn(process.execPath, [me, 'child', out], { stdio: 'ignore', windowsHide: true })
   // In a scope, a child that ignores SIGTERM would hold \`systemctl stop\` past its limit.
-  if (clear !== 'clear') spawn(process.execPath, [me, 'stubborn', out], { stdio: 'ignore' })
-  spawn(process.execPath, [me, 'launcher', out, clear ?? ''], { stdio: 'ignore', detached: true, env })
+  if (clear !== 'clear') spawn(process.execPath, [me, 'stubborn', out], { stdio: 'ignore', windowsHide: true })
+  spawn(process.execPath, [me, 'launcher', out, clear ?? ''], { stdio: 'ignore', detached: true, env, windowsHide: true })
   report({}); keep()
 } else if (role === 'stubborn') {
   process.on('SIGHUP', () => {}); process.on('SIGTERM', () => {})
   report({ port: await listen() }); keep()
 } else if (role === 'launcher') {
-  const c = spawn(process.execPath, [me, 'orphan', out], { stdio: 'ignore', detached: true, env })
+  const c = spawn(process.execPath, [me, 'orphan', out], { stdio: 'ignore', detached: true, env, windowsHide: true })
   c.unref(); report({ orphan: c.pid }); process.exit(0)
 } else if (role === 'orphan') {
   report({ port: await listen() }); keep()
@@ -359,7 +359,7 @@ function probeScope(): { ok: true; run: string; ctl: string } | { ok: false; rea
   const ctl = findOnPath('systemctl')
   const yes = findOnPath('true')
   if (!run || !ctl || !yes) return { ok: false, reason: 'systemd-run, systemctl, or true is not on PATH' }
-  const r = spawnSync(run, ['--user', '--scope', '--quiet', yes], { timeout: 5_000, stdio: 'pipe' })
+  const r = spawnSync(run, ['--user', '--scope', '--quiet', yes], { timeout: 5_000, stdio: 'pipe', windowsHide: true })
   if (r.status !== 0) return { ok: false, reason: `the probe answered ${r.error?.message ?? `exit ${r.status}`}: ${String(r.stderr).trim()}` }
   return { ok: true, run, ctl }
 }
@@ -434,6 +434,7 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
     const marker = randomUUID()
     leader = spawn(process.execPath, [join(dir, 'tree.mjs'), 'leader', join(dir, 'out.jsonl')], {
       stdio: 'ignore',
+      windowsHide: true,
       detached: true,
       env: { ...process.env, OPENAFLOW_RUN: marker },
     })
@@ -469,6 +470,7 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
     try {
       leader = spawn(scope.run, ['--user', '--scope', '--quiet', `--unit=${unit}`, process.execPath, join(dir, 'tree.mjs'), 'leader', join(dir, 'out.jsonl'), 'clear'], {
         stdio: 'ignore',
+        windowsHide: true,
         detached: true,
         env: { ...process.env, OPENAFLOW_RUN: marker },
       })
@@ -485,7 +487,7 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
       expect(await portRefused(t.orphan!.port!)).toBe(true)
       expect(log).not.toHaveBeenCalled()
     } finally {
-      spawnSync(scope.ctl, ['--user', 'stop', unit], { timeout: 5_000, stdio: 'ignore' })
+      spawnSync(scope.ctl, ['--user', 'stop', unit], { timeout: 5_000, stdio: 'ignore', windowsHide: true })
     }
   }, 30_000)
 })
