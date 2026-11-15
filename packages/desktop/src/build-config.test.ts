@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { buildConfig, builderOptions, checkVersion, EXE_NAME, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
@@ -12,7 +12,8 @@ const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 type Manifest = { version: string; dependencies?: Record<string, string>; devDependencies: Record<string, string> }
 const manifest = () => JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')) as Manifest
 const NOTICES = 'C:\\tmp\\THIRD-PARTY-NOTICES.txt'
-const config = (o: { version?: string; output?: string } = {}) => buildConfig({ noticesFile: NOTICES, ...o })
+const NODE_PTY = join('C:', 'repo', 'node_modules', '.pnpm', 'node-pty@1.2.0-beta.18', 'node_modules', 'node-pty')
+const config = (o: { version?: string; output?: string; platform?: 'win32' | 'linux' } = {}) => buildConfig({ noticesFile: NOTICES, nodePtyDir: NODE_PTY, ...o })
 
 describe('electron-builder config', () => {
   test("per-user NSIS with the shell's identity", () => {
@@ -72,6 +73,31 @@ describe('electron-builder config', () => {
     expect(c.nodeGypRebuild).toBe(false)
   })
 
+  test('node-pty and the pty host sit outside the asar', () => {
+    // A native .node file can't load from inside an asar. The host's bundle and node-pty sit in resources/pty-host,
+    // so the bundle's require('node-pty') finds node_modules/node-pty beside it.
+    for (const [platform, prebuilds] of [['win32', 'win32-x64'], ['linux', 'linux-x64']] as const) {
+      const c = config({ platform })
+      expect(c.extraResources).toContainEqual({ from: '../pty-host/dist/pty-host.cjs', to: 'pty-host/pty-host.cjs' })
+      const pty = (c.extraResources as { from: string; to: string; filter?: string[] }[]).find((r) => r.to === 'pty-host/node_modules/node-pty')
+      expect(pty?.from, platform).toBe(NODE_PTY)
+      // Its package.json, its JavaScript (with lib/worker, which Windows uses), its licence, and this platform's prebuilt binaries.
+      expect(pty?.filter, platform).toEqual(['package.json', 'LICENSE', 'lib/**/*.js', '!lib/**/*.test.js', `prebuilds/${prebuilds}/**/*`, '!**/*.pdb'])
+      expect(c.files, platform).not.toContainEqual(expect.stringContaining('pty-host'))
+      expect(c.asarUnpack, platform).toBeUndefined()
+    }
+    // By default, pnpm's link resolved to the real folder, which holds the pinned version.
+    const real = (buildConfig({ noticesFile: NOTICES }).extraResources as { from: string; to: string }[]).find((r) => r.to === 'pty-host/node_modules/node-pty')!.from
+    expect(real).not.toContain(`pty-host${sep}node_modules`)
+    expect((JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')) as { version: string }).version).toBe('1.2.0-beta.18')
+  })
+
+  test('Linux builds an unpacked folder for now, with a lowercase executable', () => {
+    const c = config({ platform: 'linux' })
+    expect(c.linux?.target).toEqual([{ target: 'dir', arch: ['x64'] }])
+    expect(c.linux?.executableName).toBe('openaflow')
+  })
+
   test('artifact names have no spaces', () => {
     const name = config().nsis!.artifactName!
     for (const version of ['0.1.0', '1.2.3', '10.20.30']) {
@@ -93,7 +119,7 @@ describe('electron-builder config', () => {
   })
 
   test('a local build never publishes and never signs', () => {
-    const o = builderOptions({ noticesFile: NOTICES, version: '1.2.3', output: 'C:\\tmp\\out' })
+    const o = builderOptions({ noticesFile: NOTICES, nodePtyDir: NODE_PTY, version: '1.2.3', output: 'C:\\tmp\\out' })
     expect(o.publish).toBe('never')
     expect(o.projectDir).toBe(pkg)
     expect(o.config.forceCodeSigning).toBe(false)
@@ -123,6 +149,9 @@ describe('electron-builder config', () => {
     // pnpm passes a separator through from `pnpm package -- --version=...`.
     expect(parsePackageArgs(['--', '--version=1.2.3'])).toEqual({ version: '1.2.3' })
     expect(parsePackageArgs(['--test-feed'])).toEqual({ testFeed: true })
+    expect(parsePackageArgs(['--test-hooks'])).toEqual({ testHooks: true })
+    expect(parsePackageArgs(['--test-hooks', '--test-feed'])).toEqual({ testHooks: true, testFeed: true })
+    expect(() => parsePackageArgs(['--test-hooks=1'])).toThrow(/--test-hooks=1/)
     expect(parsePackageArgs(['--version=1.2.3', '--test-feed', '--output=C:\o'])).toEqual({ version: '1.2.3', output: 'C:\o', testFeed: true })
     expect(() => parsePackageArgs(['--test-feed=1'])).toThrow(/--test-feed=1/)
     expect(() => parsePackageArgs(['--version=1.2'])).toThrow(/version/)

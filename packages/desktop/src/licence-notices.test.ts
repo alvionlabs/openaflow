@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { packageRootsFromMetafile, productionClosure, renderNotices } from './licence-notices.ts'
+import { bundlePtyHost } from '../../pty-host/scripts/build.ts'
+import { LICENCE_OVERRIDES, bundleRoots, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from './licence-notices.ts'
 
 let dir: string
 
@@ -132,4 +134,29 @@ describe('licence notices', () => {
     expect(text).toContain('a-pkg 1.0.0')
     expect(text).toBe(renderNotices({ roots: [a, b], overrides: {}, extras: [] }))
   })
+
+  test('an external import of a bundle names its package too', () => {
+    const pkg = join(dir, 'host')
+    mkdirSync(pkg)
+    const inside = plant(pkg, 'inside-pkg', '1.0.0', { licence: 'x' })
+    const outside = plant(pkg, 'outside-pkg', '2.0.0', { licence: 'x' })
+    const m = meta(['host/node_modules/inside-pkg/a.js'], { 'out.cjs': { imports: [{ path: 'outside-pkg', external: true }, { path: 'node:fs', external: true }, { path: 'fs', external: true }] } })
+    expect(bundleRoots(m, pkg).sort()).toEqual([inside, outside].sort())
+    const missing = meta([], { 'out.cjs': { imports: [{ path: 'gone-pkg', external: true }] } })
+    expect(() => bundleRoots(missing, pkg)).toThrow(/gone-pkg/)
+  })
+
+  test('the notices name node-pty and xterm', async () => {
+    const ptyHost = fileURLToPath(new URL('../../pty-host', import.meta.url))
+    const outfile = join(dir, 'pty-host.cjs')
+    await bundlePtyHost({ outfile })
+    const m = JSON.parse(readFileSync(`${outfile}.meta.json`, 'utf8')) as BundleMeta
+    const text = renderNotices({ roots: bundleRoots(m, ptyHost), overrides: LICENCE_OVERRIDES, extras: [] })
+    expect(text).toContain('node-pty 1.2.0-beta.18')
+    expect(text).toContain('@xterm/headless 6.0.0')
+    expect(text).toContain('@xterm/addon-serialize 0.14.0')
+    // node-pty's own file, with Microsoft's notice for ConPTY; xterm ships none, so its text is the override.
+    expect(text).toContain('Microsoft Corporation')
+    expect(countOf(text, 'The xterm.js authors')).toBe(2)
+  }, 60_000)
 })

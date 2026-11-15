@@ -6,12 +6,15 @@ import { app, BrowserWindow, dialog, Menu } from 'electron'
 import { hideWindows } from './hide-windows.ts'
 import { forkServer } from './host-main.ts'
 import { startNotifier } from './notifier-main.ts'
+import { ptyHostEntry } from './pty-host-launch.ts'
+import { forkPtyHost, type PtyHost } from './pty-host-main.ts'
 import { createQuitFlow } from './quit-flow.ts'
 import { createServerHost, type ServerHost } from './server-host.ts'
 import { serverEntry, serverEnv } from './server-launch.ts'
 import { createShellBus, type ShellBus } from './shell-bus.ts'
 import { APP_ID, APP_NAME, dataDirOverride } from './shell-config.ts'
 import { createLogFile, LOG_FILE, nodeLogFs, teeConsole } from './shell-log.ts'
+import { installTestHooks } from './test-hooks-main.ts'
 import { applyTestEnv, TEST_ENV_FILE } from './update-feed.ts'
 import { failureText, relaunchArgs } from './update-flow.ts'
 import { startUpdater } from './updater-main.ts'
@@ -19,6 +22,8 @@ import { startWindow } from './window-main.ts'
 
 /** `pnpm package --test-feed` sets this. In every other build the test feed's code is removed. */
 declare const __OPENAFLOW_TEST_FEED__: boolean
+/** The Electron harness and `pnpm package --test-hooks` set this. In every other build the test hooks' code is removed. */
+declare const __OPENAFLOW_TEST_HOOKS__: boolean
 
 export type ShellContext = {
   host: ServerHost
@@ -64,7 +69,8 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   // With this listener, the app stays alive with no window.
   app.on('window-all-closed', () => {})
 
-  const entry = serverEntry({ packaged: app.isPackaged, appPath: o.appPath ?? app.getAppPath(), resourcesPath: process.resourcesPath })
+  const place = { packaged: app.isPackaged, appPath: o.appPath ?? app.getAppPath(), resourcesPath: process.resourcesPath }
+  const entry = serverEntry(place)
   const host = createServerHost({
     fork: () => forkServer({ entry, env: serverEnv(o.env, process.pid), onSpawn: o.onServer }),
   })
@@ -90,6 +96,13 @@ export function startShell(o: ShellOptions): ShellContext | undefined {
   // `session-end` is a window's event, so each window reports it.
   app.on('browser-window-created', (_e, win) => win.on('session-end', () => flow.sessionEnd()))
   app.on('second-instance', () => bus.showWindow())
+  // The terminal host starts once, after the server's first ready. Its failure leaves the board running.
+  let ptyHost: PtyHost | undefined
+  host.onReady(() => {
+    if (ptyHost !== undefined) return
+    ptyHost = forkPtyHost({ entry: ptyHostEntry(place), env: o.env })
+    if (__OPENAFLOW_TEST_HOOKS__) installTestHooks(ptyHost)
+  })
   host.onFailed((error) => {
     ;(o.onFailed ?? showFailure)(error, updater?.willCheck() ?? false)
     // The page has no server. The tray stays, so Quit still works while the update check runs.
