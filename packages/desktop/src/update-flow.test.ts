@@ -53,7 +53,17 @@ function deferred<T = void>() {
   return { promise, resolve, reject }
 }
 
-function setup(o: { packaged?: boolean; firstCheckMs?: number; stop?: () => Promise<unknown>; updaterThrows?: boolean; ask?: (v: string) => Promise<Answer> } = {}) {
+function setup(
+  o: {
+    packaged?: boolean
+    platform?: NodeJS.Platform
+    appImage?: string | undefined
+    firstCheckMs?: number
+    stop?: () => Promise<unknown>
+    updaterThrows?: boolean
+    ask?: (v: string) => Promise<Answer>
+  } = {},
+) {
   const events: string[] = []
   const logs: string[] = []
   const clock = fakeClock()
@@ -78,6 +88,8 @@ function setup(o: { packaged?: boolean; firstCheckMs?: number; stop?: () => Prom
   const answers: Answer[] = []
   const flow = createUpdateFlow({
     packaged: o.packaged ?? true,
+    platform: o.platform ?? 'win32',
+    appImage: 'appImage' in o ? o.appImage : undefined,
     firstCheckMs: o.firstCheckMs,
     updater: () => {
       made++
@@ -814,5 +826,46 @@ describe('createUpdateFlow', () => {
         expect(t.checks()).toBe(0)
       }
     })
+  })
+
+  test('outside an AppImage the updater stays off', async () => {
+    // A packaged Linux app that runs from linux-unpacked or from an extracted AppImage: electron-updater can't replace it.
+    for (const appImage of [undefined, '']) {
+      const t = setup({ platform: 'linux', appImage })
+      t.flow.start()
+      t.flow.start()
+      await t.clock.advance(RECHECK_MS * 3)
+      expect(t.made()).toBe(0)
+      expect(t.checks()).toBe(0)
+      expect(t.clock.count()).toBe(0)
+      expect(t.logs).toEqual(['openaflow desktop: update off: not started from an AppImage'])
+      expect(t.flow.willCheck()).toBe(false)
+      // After a server failure, the app quits at once: no check, no wait.
+      let done = false
+      void t.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(done).toBe(true)
+      expect(t.checks()).toBe(0)
+    }
+
+    // Inside an AppImage, the updater runs as on Windows.
+    const inside = setup({ platform: 'linux', appImage: '/home/u/Apps/openaflow-1.2.3-x86_64.AppImage' })
+    inside.flow.start()
+    await inside.clock.advance(FIRST_CHECK_MS)
+    expect(inside.made()).toBe(1)
+    expect(inside.checks()).toBe(1)
+    expect(inside.logs).toEqual([])
+
+    // Windows has no AppImage, and an unpackaged Linux app logs nothing.
+    const windows = setup({ platform: 'win32', appImage: undefined })
+    windows.flow.start()
+    await windows.clock.advance(FIRST_CHECK_MS)
+    expect(windows.checks()).toBe(1)
+    expect(windows.logs).toEqual([])
+    const dev = setup({ platform: 'linux', appImage: undefined, packaged: false })
+    dev.flow.start()
+    await dev.clock.advance(FIRST_CHECK_MS)
+    expect(dev.checks()).toBe(0)
+    expect(dev.logs).toEqual([])
   })
 })
