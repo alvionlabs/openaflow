@@ -438,6 +438,32 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     expect(problems()).toEqual([])
   }, 60_000)
 
+  test('close ends a child started before the assign', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await startSession('a')
+    // The session's program starts a child before main's assign lands, as with a cold helper.
+    const early = await a.go()
+    await assignTimed(jobs, 'a', a.self.pid)
+    expect(alive(early.pid) && (await portOpen(early.port))).toBe(true)
+
+    await jobs.close('a')
+    await gone(a.self, 'the assigned process')
+    await gone(early, 'the child it started before the assign')
+    jobs.dispose()
+  }, 60_000)
+
+  test('helper exit ends a child started before the assign', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await startSession('a')
+    const early = await a.go()
+    await assignTimed(jobs, 'a', a.self.pid)
+
+    // Main's crash: the helper ends, and Windows ends what is in the job.
+    helpers[0]!.kill()
+    await gone(a.self, 'the assigned process')
+    await gone(early, 'the child it started before the assign')
+  }, 60_000)
+
   test('a failed assign answers false and keeps the helper for the next session', async () => {
     const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
     const done = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true })
