@@ -1,12 +1,14 @@
-// The Terminal tab's panel (sprint terminal-tab T1, draft sections 1 and 3): the row's shown session as a live
-// terminal, or the stop bar (dot, word, one muted line, Dismiss) over its faded last screen. Also the browser build's
-// note in place of the tab. Glue: the rules are in terminal-tab.ts and dismiss-flow.ts.
+// The Terminal tab's panel (sprint terminal-tab T1, session-life W2, draft sections 1 and 3): the row's shown session
+// as a live terminal, or the stop bar (dot, word, one muted line, Resume and Dismiss) over its faded last screen. Also
+// the browser build's note in place of the tab. Glue: the rules are in terminal-tab.ts, dismiss-flow.ts, and
+// resume-session-flow.ts.
 
 import { sessionView, sessionWord, type HostedSession } from '@openaflow/model'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ModalAlert } from '../../components/ModalAlert.tsx'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createDismissFlow, type DismissState } from './dismiss-flow.ts'
+import { createResumeFlow, resumeBusy, resumeError, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
 import { browserView, terminalBody, type StopBar } from './terminal-tab.ts'
 import { TerminalView } from './TerminalView.tsx'
 import './terminal.css'
@@ -28,21 +30,34 @@ type Props = {
 }
 
 export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismissed, focus = false, onFocusDone }: Props) {
-  const body = terminalBody(session, now)
+  const body = terminalBody(session, now, bridge !== undefined)
   const ended = body.kind === 'stopped'
   const view = sessionView(session, now)
+  // Resume lives here, not in the bar: the bar leaves once the new session shows, and the tab then focuses it.
+  const [resume, setResume] = useState<ResumeState>({ kind: 'idle' })
+  const [own, setOwn] = useState<string | undefined>(undefined)
+  const resumeFlow = useMemo(() => createResumeFlow(setResume, setOwn), [])
+  useEffect(() => () => resumeFlow.dispose(), [resumeFlow])
+  useEffect(() => resumeFlow.seen(session.marker), [resumeFlow, session.marker])
+  const ownFocus = own === session.marker
+  const focusDone = useCallback(() => {
+    setOwn(undefined)
+    if (focus) onFocusDone?.()
+  }, [focus, onFocusDone])
   return (
     <div className="terminal-panel">
-      {body.kind === 'stopped' && <StopBarView key={session.marker} bar={body.bar} target={{ repoId, marker: session.marker }} {...(onDismissed ? { onDismissed } : {})} />}
-      <TerminalView
-        key={session.marker}
-        id={session.marker}
-        bridge={bridge}
-        attach={view !== 'starting'}
-        ended={ended}
-        focus={focus}
-        {...(onFocusDone ? { onFocusDone } : {})}
-      />
+      {body.kind === 'stopped' && (
+        <StopBarView
+          key={session.marker}
+          bar={body.bar}
+          target={{ repoId, marker: session.marker }}
+          resuming={resumeBusy(resume, session.marker)}
+          resumeError={resumeError(resume, session.marker)}
+          onResume={resumeFlow.resume}
+          {...(onDismissed ? { onDismissed } : {})}
+        />
+      )}
+      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={view !== 'starting'} ended={ended} focus={focus || ownFocus} onFocusDone={focusDone} />
       {!ended && (
         <p className="term-foot">
           <span className={`status ${view === 'waiting' ? 's-you' : 's-run'}`}>{sessionWord(session, now)}</span>
@@ -56,14 +71,50 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
   )
 }
 
-function StopBarView({ bar, target, onDismissed }: { bar: StopBar; target: { repoId: string; marker: string }; onDismissed?: () => void }) {
+type StopBarViewProps = {
+  bar: StopBar
+  target: ResumeTarget
+  resuming: boolean
+  resumeError: string | undefined
+  onResume(target: ResumeTarget): void
+  onDismissed?: () => void
+}
+
+function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed }: StopBarViewProps) {
   const [state, setState] = useState<DismissState>({ kind: 'idle' })
   // The callback taken at the press: the flow outlives the bar when the new Board comes before the answer.
   const done = useRef<(() => void) | undefined>(undefined)
   const flow = useMemo(() => createDismissFlow(setState, () => done.current?.()), [])
   useEffect(() => () => flow.dispose(), [flow])
-  const busy = state.kind === 'dismissing'
-  const error = state.kind === 'idle' ? state.error : undefined
+  // One alert box: the error of the button pressed last.
+  const [last, setLast] = useState<'resume' | 'dismiss'>('dismiss')
+  const dismissError = state.kind === 'idle' ? state.error : undefined
+  const error = last === 'resume' ? resumeError : dismissError
+  const busy = resuming ? 'resume' : state.kind === 'dismissing' ? 'dismiss' : undefined
+  return (
+    <StopBarPanel
+      bar={bar}
+      {...(busy ? { busy } : {})}
+      {...(error ? { error } : {})}
+      onResume={() => {
+        setLast('resume')
+        onResume(target)
+      }}
+      onDismiss={() => {
+        setLast('dismiss')
+        done.current = onDismissed
+        flow.dismiss(target)
+      }}
+    />
+  )
+}
+
+/**
+ * The stop bar (session-life §9): the dot, the word, one muted line, then Resume (primary, when the bar offers it) and
+ * Dismiss; the alert box under it. While either runs, both buttons are off; Resume reads Resuming….
+ */
+export function StopBarPanel({ bar, busy, error, onResume, onDismiss }: { bar: StopBar; busy?: 'resume' | 'dismiss'; error?: string; onResume(): void; onDismiss(): void }) {
+  const off = busy !== undefined
   return (
     <div className="stop-wrap">
       <div className="stop-bar">
@@ -71,7 +122,12 @@ function StopBarView({ bar, target, onDismissed }: { bar: StopBar; target: { rep
           <span className={`status ${bar.dot}`}>{bar.word}</span>
           <p className="stop-line muted">{bar.line}</p>
         </div>
-        <button className="btn" type="button" disabled={busy} aria-busy={busy} onClick={() => ((done.current = onDismissed), flow.dismiss(target))}>
+        {bar.resume && (
+          <button className="btn primary" type="button" disabled={off} aria-busy={busy === 'resume'} onClick={onResume}>
+            {busy === 'resume' ? 'Resuming…' : 'Resume'}
+          </button>
+        )}
+        <button className="btn" type="button" disabled={off} aria-busy={busy === 'dismiss'} onClick={onDismiss}>
           Dismiss
         </button>
       </div>
