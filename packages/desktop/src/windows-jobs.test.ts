@@ -98,7 +98,7 @@ describe('helper protocol', () => {
     expect(log.mock.calls[0]![0]).toMatch(/^openaflow desktop: session s-2 not in a job: error 5$/)
   })
 
-  test('an ok logs how long the assign took and how many processes the session started before it stay outside', async () => {
+  test('an ok logs how long the assign took and how many processes the session started before it joined too', async () => {
     const { jobs, helpers, log } = setup()
     const a = track(jobs.assign('s-1', 10))
     await vi.advanceTimersByTimeAsync(1_250)
@@ -110,7 +110,7 @@ describe('helper protocol', () => {
     await settle()
     expect(b.value).toBe(true)
     expect(log.mock.calls).toEqual([
-      ['openaflow desktop: session s-1 in a job after 1250 ms; 2 processes it started before stay outside'],
+      ['openaflow desktop: session s-1 in a job after 1250 ms; 2 processes it started before joined too'],
       ['openaflow desktop: session s-2 in a job after 0 ms'],
     ])
   })

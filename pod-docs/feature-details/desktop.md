@@ -103,6 +103,7 @@ sequenceDiagram
 - Never add a tree kill, `taskkill /T`, or a Job Object for a resumed `claude -p` run, or for anything outside the session roster. The roster's hosted sessions are the one place they belong.
 - On Linux, a SIGTERM to main (a logout, `kill <pid>`) goes through `before-quit`, so with a live session it opens the quit box and waits for an answer.
 - On Windows, the Job Object helper is a child of main: when main ends, its stdin closes and Windows ends every process in every job, ended sessions' leftovers included. Call `jobs.dispose()` only when that is the intent.
+- On Windows, the helper starts at the first assign, and that assign takes about 0.4–1.4 s. A session's program can start children in that time. The helper puts them in the job after the assign, by parent pid with start times checked. Never drop that step: without it, those children outlive a quit and every crash.
 - Keep `SystemRoot` in the server's env: without it, `listen` fails in a `utilityProcess`.
 - An npm-installed `claude` needs a Node beside it or on the merged `Path`, or the start fails with `node not found`.
 - Never import `electron` from a plain module, a test, or a build script, not even `import type`. Under Node, loading the package downloads the binary, and CI has none. The tests' `real-*.test.ts` bodies stay inside `describe.runIf`.
@@ -118,7 +119,7 @@ sequenceDiagram
 - On Linux, node-pty 1.2.0-beta.18's prebuilt `pty.node` needs no `spawn-helper` (only macOS ships one). On Windows, its prebuilds hold `conpty/conpty.dll` and `OpenConsole.exe`, and `lib/worker/` runs the ConPTY output pipe, so the package filter keeps all of `lib/`.
 - The relay holds a session's `exit` until its `started` has gone out, because `started` waits for the start's promise and the host can send `exit` in the same tick. `req` is unique only per server process, so a late answer must never reach a restarted server.
 - Code that must act when the app quits listens on `ctx.onQuitThrough`, not `app.on('before-quit')`: `before-quit` also fires for a quit that the quit box's Cancel stops.
-- Not checked by any agent: the native quit box (`showQuitDialog`; every check answers through the test hook), a quit after the server failed for good with a live session, `endSessions()` on the real path (U2 wires it), a real `session-end`, and whether a real Windows session's job `assign` succeeds (CI ran no session quit on Windows).
+- Not checked by any agent: the native quit box (`showQuitDialog`; every check answers through the test hook), a quit after the server failed for good with a live session, `endSessions()` on the real path (U2 wires it), a real `session-end`. A real Windows session's job `assign` succeeds in CI (`real-quit`, session-life W3-fix).
 - Not checked by any agent: the native folder dialog from the bridge, the tray menu's look, real clicks on the icon, the native error box, a real `session-end`, and the 80 s kill on a real process.
 
 ## History
@@ -141,3 +142,4 @@ sequenceDiagram
 - 2026-11-15 · terminal-tab D1: the server terminal link (`terminal-relay.ts`), `send` and `onMessage` on the server host, the starter's per-session `exit` event and `dispose`, and the server's `OPENAFLOW_TERMINALS` and `OPENAFLOW_HOOKS_PLUGIN`. The unused `createPtyHostClient` is gone.
 - 2026-11-15 · session-life D2: the quit question, ending hosted sessions at a confirmed quit, `endSessions()` for Restart now, the starter's `flush`, the relay's `stop`, `sweep`, `labels`, and its silence after a confirm, `onQuitting` and `terminalHostState` in the preload, and the quit answer test hook.
 - 2026-11-15 · session-life W2-fix: Cancel in the quit box leaves the app as it was. The window, notifier, and updater act on `ctx.onQuitThrough`, not on `before-quit`. `real-session.test.ts` checks a Cancel in the real app.
+- 2026-11-15 · session-life W3-fix: on Windows, the job helper puts the children a session started before its assign in the job, and logs each assign's time. A confirmed quit, a host crash, and a main crash now end them.

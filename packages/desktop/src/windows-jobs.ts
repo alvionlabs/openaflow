@@ -1,5 +1,6 @@
 // Windows Job Objects for hosted sessions: one job per session, with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so closing
-// the job ends the session's program and every child it started after the assign, detached ones too. No native
+// the job ends the session's program and every child it started, detached ones too: those it started after the
+// assign join on their own, and the helper puts the ones it started before in the job at the assign. No native
 // dependency: one hidden `powershell.exe` child of main compiles a small C# class with `Add-Type` and holds the job
 // handles. When that helper ends (its stdin closes, or it is killed), Windows closes its handles, so every job's
 // processes end too. No `electron` import: the glue passes Node's `spawn`. The rules are in
@@ -7,8 +8,11 @@
 //
 // Lines, one request at a time, answered in order:
 //   main → helper: `assign <id> <pid>`  `close <id>`
-//   helper → main: `ok <id> <outside>`  `fail <id> <win32 error>`  `closed <id>`
-// `outside`: how many processes the session's program started before the assign that are not in the job.
+//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error>`  `closed <id>`
+// `joined`: how many processes the session's program started before the assign, and their children, the helper put in
+// the job after it. Without that, a child started while the helper was still starting stays outside the job (CI,
+// session-life wave 3): close and the helper's exit never end it, and once its parent has ended, taskkill /T can't
+// find it either. `close` puts such children in the job once more before it ends the job.
 
 export type JobControl = {
   /** Puts a running process in the session's job. False on any failure: the caller falls back to a tree kill. */
@@ -134,6 +138,13 @@ public static class OpenAFlowJobs
     static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint length, IntPtr returned);
+
+    const int JobObjectBasicProcessIdList = 3;
+    const int MEMBERS_MAX = 4096;
+    // Passes of JoinEarlier: a process outside the job may start another one between two passes.
+    const int JOIN_PASSES = 5;
 
     // A process's start time, or -1 when it is gone or can't be read.
     static long Started(uint pid)
@@ -188,19 +199,46 @@ public static class OpenAFlowJobs
         return found;
     }
 
-    // How many of root's descendants are not in the job.
-    static int Outside(IntPtr job, uint root)
+    // Puts in the job each of root's descendants that is not in it: the ones root started before it joined the job,
+    // and theirs. What root starts after it joined is in the job already. Answers how many joined.
+    static int JoinEarlier(IntPtr job, uint root)
     {
-        int count = 0;
-        foreach (uint pid in Descendants(root))
+        int joined = 0;
+        for (int pass = 0; pass < JOIN_PASSES; pass++)
         {
-            IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-            if (process == IntPtr.Zero) continue;
-            bool inJob;
-            if (IsProcessInJob(process, job, out inJob) && !inJob) count++;
-            CloseHandle(process);
+            int added = 0;
+            foreach (uint pid in Descendants(root))
+            {
+                IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                if (process == IntPtr.Zero) continue;
+                bool inJob;
+                if (IsProcessInJob(process, job, out inJob) && !inJob && AssignProcessToJobObject(job, process)) added++;
+                CloseHandle(process);
+            }
+            joined += added;
+            if (added == 0) break;
         }
-        return count;
+        return joined;
+    }
+
+    // The pids in the job now.
+    static List<uint> Members(IntPtr job)
+    {
+        List<uint> list = new List<uint>();
+        // Two counts, then the pid list, one pointer-sized entry each.
+        int size = 8 + IntPtr.Size * MEMBERS_MAX;
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, (uint)size, IntPtr.Zero)) return list;
+            int count = Marshal.ReadInt32(buffer, 4);
+            for (int i = 0; i < count && i < MEMBERS_MAX; i++) list.Add((uint)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size).ToInt64());
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+        return list;
     }
 
     static string Assign(Dictionary<string, IntPtr> jobs, string id, uint pid)
@@ -235,7 +273,7 @@ public static class OpenAFlowJobs
             return "fail " + id + " " + error;
         }
         if (made) jobs[id] = job;
-        return "ok " + id + " " + Outside(job, pid);
+        return "ok " + id + " " + JoinEarlier(job, pid);
     }
 
     public static void Run()
@@ -256,6 +294,8 @@ public static class OpenAFlowJobs
                 IntPtr job;
                 if (jobs.TryGetValue(p[1], out job))
                 {
+                    // A child that a process outside the job started after the assign's last pass.
+                    foreach (uint member in Members(job)) JoinEarlier(job, member);
                     TerminateJobObject(job, 1);
                     CloseHandle(job);
                     jobs.Remove(p[1]);
@@ -335,8 +375,8 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
       h.queue.shift()
       if (word === 'fail' && head.settle) o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}`)
       if (word === 'ok' && head.settle) {
-        const outside = Number(code ?? 0)
-        const note = outside > 0 ? `; ${outside} processes it started before stay outside` : ''
+        const joined = Number(code ?? 0)
+        const note = joined > 0 ? `; ${joined} processes it started before joined too` : ''
         o.log(`${LOG} session ${id} in a job after ${Date.now() - head.at} ms${note}`)
       }
       finish(head, word === 'ok')
