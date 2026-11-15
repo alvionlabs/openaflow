@@ -416,7 +416,7 @@ export function appImagePlace(port: number): ProofPlace {
 export async function unpackAppImage(file: string, place: ProofPlace): Promise<string> {
   if (!existsSync(file)) throw new Error(`no AppImage at ${file}: run pnpm package first`)
   const code = await new Promise<number>((resolve, reject) => {
-    const child = spawn(file, ['--appimage-extract'], { cwd: place.installDir, env: place.env, stdio: 'ignore' })
+    const child = spawn(file, ['--appimage-extract'], { cwd: place.installDir, env: place.env, stdio: 'ignore', windowsHide: true })
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       reject(new Error(`the unpack took over ${UNPACK_MS} ms`))
@@ -454,7 +454,7 @@ export function missingParts(resources: string): string[] {
  * goes to waitForHealth's failure text.
  */
 export async function launchAppImage(file: string, place: ProofPlace): Promise<{ pid: number; output(): string }> {
-  const child = spawn(file, [], { cwd: place.root, env: place.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(file, [], { cwd: place.root, env: place.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   let text = ''
   child.stdout.on('data', (d) => (text += String(d)))
   child.stderr.on('data', (d) => (text += String(d)))
