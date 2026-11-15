@@ -37,6 +37,8 @@ const PACKAGED = packagedApp() !== undefined
 const RUN_MS = 240_000
 /** §10: a confirmed quit leaves nothing within 10 s. */
 const GONE_MS = 10_000
+/** A forced end of main also ends the server: its next parent poll (2 s), then the drain, which has no work here. */
+const SERVER_AFTER_MAIN_MS = 15_000
 
 /** Each pid gone and each child's port closed. */
 const allGone = async (pids: number[], children: LifeChild[]) => pids.every((p) => !alive(p)) && (await Promise.all(children.map((c) => portOpen(c.port)))).every((open) => !open)
@@ -193,18 +195,19 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const main = h.pid
         process.kill(main, 'SIGKILL')
         await lifeUntil('main gone', () => !alive(main), 20_000, w)
-        // The server sees its parent gone at its next poll (2 s), then drains. On windows-latest it has outlived main
-        // by more than 40 s: then say so and end it by its pid, so the next start runs as after a real crash.
-        const until = Date.now() + 40_000
+        // The server sees its parent gone at its next poll (2 s), then drains and exits.
+        const until = Date.now() + SERVER_AFTER_MAIN_MS
         while (alive(server) && Date.now() < until) await sleep(200)
-        if (alive(server)) {
-          process.stderr.write(`real-quit › app crash leftovers: the server (pid ${server}) still ran 40 s after main ended; ending it\n`)
+        const serverOutlived = alive(server)
+        if (serverOutlived) {
+          // End it by its pid, so a failed check leaves no server holding the port and the owner file.
           try {
             process.kill(server, 'SIGKILL')
           } catch {
             // Gone meanwhile.
           }
         }
+        expect(serverOutlived, `the server (pid ${server}) still ran ${SERVER_AFTER_MAIN_MS / 1000} s after main ended`).toBe(false)
       })
       // On Linux the detached child outlives the crash: the next start must end it. (On Windows main's job handle
       // may take it down with the app.)
