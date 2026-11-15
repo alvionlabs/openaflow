@@ -76,7 +76,16 @@ export function Listbox({ id, labelledBy, items, value, onChange, disabled }: Li
           <Icon name="chevron-down" />
         </span>
       </button>
-      <ul ref={listRef} id={listId} role="listbox" aria-labelledby={labelledBy} className="menu listbox-list" hidden={!state.open}>
+      <ul
+        ref={listRef}
+        id={listId}
+        role="listbox"
+        aria-labelledby={labelledBy}
+        className="menu listbox-list"
+        hidden={!state.open}
+        // A press anywhere in the list keeps focus on the button, so no blur closes it before the click lands.
+        onMouseDown={(e) => e.preventDefault()}
+      >
         {items.map((item, i) =>
           item.kind === 'divider' ? (
             <li key={i} role="separator" className="listbox-divider" />
@@ -88,8 +97,6 @@ export function Listbox({ id, labelledBy, items, value, onChange, disabled }: Li
               aria-selected={item.value === value}
               data-active={i === state.active ? '' : undefined}
               className="listbox-option"
-              // Keep focus on the button, so the click lands before any blur closes the list.
-              onMouseDown={(e) => e.preventDefault()}
               onMouseMove={() => setState((s) => hoverAt(items, s, i))}
               onClick={() => apply(pickAt(items, state, i))}
             >
