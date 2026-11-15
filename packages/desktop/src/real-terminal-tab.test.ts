@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import type { Board } from '@openaflow/model'
+import { projectDirName } from '../../server/src/transcript-files.ts'
 import { DESKTOP, launchHarness, packagedApp, type Harness } from '../test/electron-harness.ts'
 
 // The Terminal tab in the real Electron app, through the product path: the page's New session posts the route, the
@@ -79,6 +81,19 @@ const fitGap = (page: Page) =>
 
 /** Keyboard focus is in the live xterm's input (its helper textarea). */
 const inTerminal = (page: Page) => page.evaluate(() => document.activeElement?.matches('.term:not(.faded) textarea.xterm-helper-textarea') === true)
+
+/**
+ * Claude's transcript of the repo's hosted session, as `claude` would write it, so the server's resume check (session-life
+ * §4) finds it: the fake writes none, and with none a server with Resume reads `Can't resume · The session file is gone.`
+ */
+async function writeTranscript(h: Harness, repo: string): Promise<void> {
+  const board = (await (await fetch(`http://127.0.0.1:${h.port}/api/board`, { signal: AbortSignal.timeout(5_000) })).json()) as Board
+  const session = board.repos.find((r) => r.path === repo)?.hosted?.find((s) => s.state === 'live')?.liveSession
+  expect(session, 'the live session on the Board').toBeTruthy()
+  const project = join(h.dir, 'claude', 'projects', projectDirName(repo))
+  mkdirSync(project, { recursive: true })
+  writeFileSync(join(project, `${session}.jsonl`), `${JSON.stringify({ type: 'user', cwd: repo, message: { role: 'user', content: 'add a clock' } })}\n`)
+}
 
 const terminalTab = (page: Page) => page.locator('.main > .tabs button.tab', { hasText: 'Terminal' })
 const count = (text: string, part: string) => text.split(part).length - 1
@@ -244,15 +259,23 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
     'ended and dismissed',
     async () => {
       const { page } = h
+      // The session's transcript, as real `claude` leaves one: so the stop bar never reads Can't resume.
+      await writeTranscript(h, repo)
       await page.locator('.term').click()
       await page.keyboard.type('bye')
       await page.keyboard.press('Enter')
-      // The fake ends with code 0: the stop bar, with Dismiss and no Resume, and no dot on the tab.
+      // The fake ends with code 0: the stop bar, its word, and no dot on the tab.
       const bar = page.locator('.stop-bar')
       await until('the stop bar', () => bar.isVisible(), h)
       expect(await bar.locator('.status').innerText()).toBe('Ended · Claude exited')
+      expect(await bar.locator('.status.s-idle').count()).toBe(1)
       expect(await bar.innerText()).toMatch(/The terminal ended at \d\d:\d\d\./)
-      expect(await bar.getByRole('button').allInnerTexts()).toEqual(['Dismiss'])
+      // Before the server checks Resume (session-life S3), Dismiss only; after it, Resume then Dismiss. Never Can't resume.
+      // Wait out a Board rebuild, so a late resume check would show.
+      await sleep(1_500)
+      expect(await bar.locator('.status').innerText()).toBe('Ended · Claude exited')
+      expect(await page.locator('.terminal-panel').innerText()).not.toContain("Can't resume")
+      expect([['Dismiss'], ['Resume', 'Dismiss']]).toContainEqual(await bar.getByRole('button').allInnerTexts())
       expect(await terminalTab(page).locator('.status').count()).toBe(0)
       // The last screen stays under the bar, faded, while the host holds it.
       await until('the faded last screen', async () => (await screen(page)).includes('got:again'), h)
