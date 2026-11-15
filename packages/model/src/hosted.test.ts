@@ -106,6 +106,9 @@ describe('join', () => {
     // An agent on another session, or one that belongs to no run, joins nothing.
     expect(joinedRun(repoOf([agent({ plan: 'alpha', session: 'other' })], [fresh]), fresh, NOW)).toBeUndefined()
     expect(joinedRun(repoOf([agent({ type: 'Explore', session: 'sess-start' })], [fresh]), fresh, NOW)).toBeUndefined()
+    // An agent with no session never joins, even a record that names an empty id.
+    const blank = hosted({ sessionId: '', sessions: [''] })
+    expect(joinedRun(repoOf([agent({ plan: 'alpha', session: '' })], [blank]), blank, NOW)).toBeUndefined()
 
     // A plan the list doesn't show (all sprints done, nothing running) is no row: the repo row takes the session.
     const done = files({ 'pod-docs/plans/alpha.md': planDoc('alpha', 'done') })
