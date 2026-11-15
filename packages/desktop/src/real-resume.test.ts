@@ -79,6 +79,8 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (LINUX || WIN))(`r
       withApp(w, async (h) => {
         expect(await h.app.evaluate(({ app }) => app.isPackaged)).toBe(PACKAGED)
         const { marker, repoId, sessionId } = await lifeSession(h, w)
+        // The host's first save comes at most 10 s after the start.
+        await lifeUntil('the saved screen', () => existsSync(join(w.cfg, 'screens', `${marker}.txt`)), 15_000, w)
         const old = await testHooks(h).hostPid()
         process.kill(old!, 'SIGKILL')
         await lifeUntil('stopped · terminals restarted', async () => (await hostedOf(h, w, marker))?.stopReason === 'terminals restarted', 30_000, w)
@@ -87,6 +89,9 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (LINUX || WIN))(`r
         writeLifeTranscript(w, repoPath, sessionId)
         await lifeUntil('resume ok on the Board', async () => (await hostedOf(h, w, marker))?.resume === 'ok', 30_000, w)
 
+        // The old record's files are there before the Resume, so their removal below means something.
+        expect(existsSync(join(w.cfg, 'hooks', `${marker}.jsonl`))).toBe(true)
+        expect(existsSync(join(w.cfg, 'screens', `${marker}.txt`))).toBe(true)
         const answer = await postAction(h, 'resume-session', { repoId, marker, cols: 120, rows: 30 })
         expect(answer, JSON.stringify(answer)).toMatchObject({ status: 200, body: { outcome: 'started', logged: true } })
         const next = answer.body.marker as string
