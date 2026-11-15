@@ -153,17 +153,42 @@ export function startPtyHost(deps: HostDeps): PtyHost {
     }
   }
 
-  /** The pty's own kill. A session waiting for its pid ends as `start-failed` through its exit or its 10 s limit. */
+  /**
+   * Kills a pty whose session was given up while it waited for its pid: now, or, when the pty can't take a kill yet,
+   * once its pid shows (10 s at most). On Windows node-pty holds the kill until the program's first output.
+   */
+  function killAbandoned(proc: PtyProcess): void {
+    const tryKill = () => {
+      try {
+        proc.kill()
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (tryKill()) return
+    const end = Date.now() + PID_WAIT_MS
+    const retry = () => {
+      if (proc.pid > 0) return void tryKill()
+      if (Date.now() < end) setTimeout(retry, PID_POLL_MS)
+    }
+    setTimeout(retry, PID_POLL_MS)
+  }
+
+  /** The pty's own kill. A session waiting for its pid ends now, as `start-failed`. */
   function killSession(id: string): void {
     const session = sessions.get(id)
-    if (session !== undefined && !session.exited) kill(session)
+    if (session === undefined || session.exited) return
+    if (session.abandon === undefined) return kill(session)
+    killAbandoned(session.pty)
+    session.abandon('killed before it started')
   }
 
   function dispose(id: string): void {
     const session = sessions.get(id)
     if (session === undefined) return
     if (session.abandon !== undefined) {
-      kill(session)
+      killAbandoned(session.pty)
       return session.abandon('disposed before it started')
     }
     sessions.delete(id)
