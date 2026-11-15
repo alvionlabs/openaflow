@@ -55,6 +55,7 @@ type StartSpec = { id: string; program: string; args: string[]; cwd: string; env
 ```
 Each message is `{ type, ...fields }`. Rules:
 - `start` refuses with `start-failed` and spawns nothing: `bad id`, `id in use`, `program not absolute`, `no folder` (cwd), `bad size` (cols outside 2–500, rows outside 1–200), `spawn failed: <message>`.
+- `started` goes out only once the pty has a pid. On Linux that is the same tick; on Windows ConPTY gives the pid only after its output worker connects (about 1 s in CI), so the host checks every 10 ms and on each data and exit event. `started` always comes before `exit`, each once. A start that fails after the spawn answers `start-failed` with `spawn failed: <reason>`, frees the id, kills the pty, and sends no `exit`: `the program ended before it started (exit code N)`, `no process ID after 10 s`, `disposed before it started`, `the host is shutting down`. A session waiting for its pid sits in the map with pid 0 (`list` and `kill` must handle it). (Wave 1 fix, `c176a5d`.)
 - `ready` once, after `require('node-pty')` works; else `load-failed` and exit 1. Then a `beat` every 5 s.
 - `snapshot`: screen plus scrollback as right-trimmed plain lines; unknown id → `null`.
 - `exit` is reported once, to main and every attached port. The session stays listed (`live: false`), attachable, and snapshottable until `dispose`.
