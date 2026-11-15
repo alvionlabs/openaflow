@@ -81,6 +81,15 @@ async function startSession(h: Harness, id: string, pids: number[]): Promise<num
   return pid
 }
 
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 const endPids = (pids: number[]) => {
   for (const pid of pids) {
     try {
@@ -388,6 +397,34 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       expect(desktopLog(h)).not.toContain('terminal host exited')
     } finally {
       await h.close()
+    }
+  }, RUN_MS)
+
+  test.runIf(!PACKAGED)('a kill before the pid ends the session', async () => {
+    const pids: number[] = []
+    const h = await launchHarness()
+    try {
+      const id = 'early-1'
+      await until('the test hook', () => h.app.evaluate(() => (globalThis as Hooked).__openaflowTest?.terminals !== undefined), 60_000, h)
+      await hooks(h).list()
+      // The kill goes out right behind the start. On Windows the session still waits for its pid then, and node-pty
+      // holds the kill until the program's first output; on Linux the pid comes at once.
+      const answer = await h.app.evaluate(async (_e, s) => {
+        const t = (globalThis as Hooked).__openaflowTest!.terminals!
+        const started = t.start(s).then((r) => ({ pid: r.pid }), (err: unknown) => ({ error: String(err) }))
+        await t.kill(s.id)
+        return started
+      }, spec(id))
+      console.info(`openaflow proof: a kill right after the start answered ${JSON.stringify(answer)}`)
+      if ('pid' in answer) pids.push(answer.pid)
+      else expect(answer.error).toMatch(/spawn failed: /)
+
+      // Either way the session ends: no longer live, or gone. A started program is no longer running.
+      await until('the session to end', async () => (await hooks(h).list()).every((s) => s.id !== id || !s.live), 15_000, h)
+      if ('pid' in answer) await until(`process ${answer.pid} to end`, () => !alive(answer.pid), 15_000, h)
+    } finally {
+      await h.close()
+      endPids(pids)
     }
   }, RUN_MS)
 
