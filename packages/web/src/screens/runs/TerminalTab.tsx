@@ -17,7 +17,10 @@ type Props = {
   session: HostedSession
   now: number
   bridge: TerminalBridge | undefined
-  /** After a dismissal (or a session already gone): the stop bar is about to leave, so the screen moves focus. */
+  /**
+   * After a dismissal (or a session already gone): the stop bar leaves, maybe already has, so the screen moves focus.
+   * Called with the callback given when Dismiss was pressed, so the screen can tell the run has changed since.
+   */
   onDismissed?: () => void
 }
 
@@ -44,9 +47,8 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
 
 function StopBarView({ bar, target, onDismissed }: { bar: StopBar; target: { repoId: string; marker: string }; onDismissed?: () => void }) {
   const [state, setState] = useState<DismissState>({ kind: 'idle' })
-  // The screen's callback may change each render; the flow stays the one that holds the request.
-  const done = useRef(onDismissed)
-  done.current = onDismissed
+  // The callback taken at the press: the flow outlives the bar when the new Board comes before the answer.
+  const done = useRef<(() => void) | undefined>(undefined)
   const flow = useMemo(() => createDismissFlow(setState, () => done.current?.()), [])
   useEffect(() => () => flow.dispose(), [flow])
   const busy = state.kind === 'dismissing'
@@ -58,7 +60,7 @@ function StopBarView({ bar, target, onDismissed }: { bar: StopBar; target: { rep
           <span className={`status ${bar.dot}`}>{bar.word}</span>
           <p className="stop-line muted">{bar.line}</p>
         </div>
-        <button className="btn" type="button" disabled={busy} aria-busy={busy} onClick={() => flow.dismiss(target)}>
+        <button className="btn" type="button" disabled={busy} aria-busy={busy} onClick={() => ((done.current = onDismissed), flow.dismiss(target))}>
           Dismiss
         </button>
       </div>

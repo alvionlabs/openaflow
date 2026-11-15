@@ -208,6 +208,14 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     wasOpen.current = modalOpen
   }, [modalOpen])
 
+  // After Dismiss the stop bar leaves with its button: focus goes to the run title, unless the user has moved to
+  // another run since the press.
+  const shownRun = useRef(runKey)
+  shownRun.current = runKey
+  const dismissedOn = (key: string) => () => {
+    if (shownRun.current === key) runTitle.current?.focus()
+  }
+
   const press = (t: Tab) => {
     const next = tabPress(shown, t, view)
     saveTab(store.current, next.save)
@@ -356,7 +364,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                       session={rowSession}
                       now={now}
                       bridge={bridge}
-                      onDismissed={() => runTitle.current?.focus()}
+                      onDismissed={dismissedOn(runKey)}
                     />
                   )}
                 </div>

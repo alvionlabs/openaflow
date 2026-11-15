@@ -23,9 +23,12 @@ export type DismissTarget = { repoId: string; marker: string }
 
 export type DismissFlow = {
   state(): DismissState
-  /** Posts once; ignored while one is out, and after dispose. */
+  /** Posts once; ignored while one is out. A press means the bar is there again (React's dev mode disposes once on mount). */
   dismiss(target: DismissTarget): void
-  /** The bar left: an answer after this changes nothing. */
+  /**
+   * The bar left. The server rebuilds the Board before it answers, so the bar can leave first: an answer after this
+   * changes no state, but a dismissal still calls `onDone`, so the screen can move focus.
+   */
   dispose(): void
 }
 
@@ -41,7 +44,7 @@ export function createDismissFlow(
   let disposed = false
   const set = (s: DismissState) => {
     state = s
-    onChange(s)
+    if (!disposed) onChange(s)
   }
   const answered = (reply: ActionReply<DismissSessionResult>) => {
     if (reply.ok || isGone(reply)) {
@@ -49,17 +52,17 @@ export function createDismissFlow(
       onDone(reply.ok ? 'dismissed' : 'gone')
       return
     }
+    if (disposed) return
     warnUnknown('dismiss', DISMISS_ERRORS, reply)
     set({ kind: 'idle', error: refusalText(DISMISS_ERRORS, reply.message) })
   }
   return {
     state: () => state,
     dismiss(target) {
-      if (disposed || state.kind === 'dismissing') return
+      if (state.kind === 'dismissing') return
+      disposed = false
       set({ kind: 'dismissing' })
-      void post<DismissSessionResult>('dismiss-session', { repoId: target.repoId, marker: target.marker }).then((reply) => {
-        if (!disposed) answered(reply)
-      })
+      void post<DismissSessionResult>('dismiss-session', { repoId: target.repoId, marker: target.marker }).then(answered)
     },
     dispose() {
       disposed = true

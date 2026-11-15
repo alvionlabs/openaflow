@@ -82,17 +82,29 @@ describe('dismiss flow', () => {
     expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(['openaflow: dismiss failed (HTTP 500: HTTP 500)', 'openaflow: dismiss failed (HTTP 404: not found)'])
   })
 
-  it('a press clears the last error; an answer after dispose is dropped', async () => {
+  it('a press clears the last error; after dispose the state stays, but a dismissal still ends', async () => {
     const t = setup()
     t.flow.dismiss(TARGET)
     await t.reply(fail(409, 'session is live'))
     t.flow.dismiss(TARGET)
     expect(t.flow.state()).toEqual({ kind: 'dismissing' })
+    // The server rebuilds the Board before it answers, so the bar can leave first: its answer still ends the dismissal
+    // (the screen moves focus), but no state changes.
+    const seen = t.states.length
     t.flow.dispose()
     await t.reply(ok)
-    expect(t.done).toEqual([])
-    // Disposed: a press sends nothing.
+    expect(t.done).toEqual(['dismissed'])
+    expect(t.states.length).toBe(seen)
+    // A refusal after dispose shows nowhere.
+    const late = setup()
+    late.flow.dismiss(TARGET)
+    late.flow.dispose()
+    await late.reply(fail(409, 'session is live'))
+    expect(late.done).toEqual([])
+    expect(late.states.map((s) => s.kind)).toEqual(['dismissing'])
+    // A press after dispose (React's dev mode disposes once on mount) posts and shows its state again.
     t.flow.dismiss(TARGET)
-    expect(t.post).toHaveBeenCalledTimes(2)
+    expect(t.post).toHaveBeenCalledTimes(3)
+    expect(t.states.at(-1)).toEqual({ kind: 'dismissing' })
   })
 })
