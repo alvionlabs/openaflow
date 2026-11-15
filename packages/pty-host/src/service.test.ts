@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { HostToMain, HostToWindow, StartSpec } from './protocol.ts'
+import type { ScreenFs } from './screen-file.ts'
 import { startPtyHost, type PtyModule, type PtyProcess, type PtySpawnOptions } from './service.ts'
 import type { WindowPort } from './session.ts'
 
@@ -69,7 +70,22 @@ function fakePtyModule(o: { exitOnKill?: boolean; spawnError?: string; latePid?:
   return { mod, spawned }
 }
 
-function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModule; dirs?: string[]; shutdownWaitMs?: number } = {}) {
+/** Screen files in memory. `hang`: paths whose write never ends. */
+function memoryFs(o: { hang?: string[] } = {}) {
+  const files = new Map<string, string>()
+  const fs: ScreenFs = {
+    mkdir: async () => {},
+    writeFile: (path, text) => (o.hang?.some((h) => path.includes(h)) ? new Promise(() => {}) : Promise.resolve(void files.set(path, text))),
+    rename: async (from, to) => {
+      files.set(to, files.get(from)!)
+      files.delete(from)
+    },
+    unlink: async (path) => void files.delete(path),
+  }
+  return { fs, files }
+}
+
+function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModule; dirs?: string[]; shutdownWaitMs?: number; fs?: ScreenFs } = {}) {
   const pty = o.pty ?? fakePtyModule()
   const sent: HostToMain[] = []
   const exits: number[] = []
@@ -81,6 +97,8 @@ function host(o: { pty?: ReturnType<typeof fakePtyModule>; load?: () => PtyModul
     isDir: (p) => dirs.has(p),
     scrollback: 100,
     ...(o.shutdownWaitMs === undefined ? {} : { shutdownWaitMs: o.shutdownWaitMs }),
+    screenFs: o.fs ?? memoryFs().fs,
+    log: () => {},
   })
   const of = <T extends HostToMain['type']>(type: T) => sent.filter((m): m is Extract<HostToMain, { type: T }> => m.type === type)
   /** What main got, without `ready` and the beats. */
@@ -172,6 +190,10 @@ describe('pty host service', () => {
       [spec({ cols: 80.5 }), 'run-1', 'bad size'],
       [spec({ args: [1] as unknown as string[] }), 'run-1', 'bad message'],
       [spec({ env: { A: 1 } as unknown as Record<string, string> }), 'run-1', 'bad message'],
+      [spec({ screenFile: 'screens/run-1.txt' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: './run-1.txt' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: '' }), 'run-1', 'bad screen file'],
+      [spec({ screenFile: 5 as unknown as string }), 'run-1', 'bad screen file'],
     ]
     for (const [bad, id, error] of cases) {
       h.service.handle({ type: 'start', spec: bad })
@@ -181,6 +203,63 @@ describe('pty host service', () => {
     // The bounds themselves are fine.
     for (const [cols, rows] of [[2, 1], [500, 200]] as const) h.service.handle({ type: 'start', spec: spec({ id: `edge-${cols}`, cols, rows }) })
     expect(h.spawned).toHaveLength(3)
+    // An absolute screen file is fine.
+    h.service.handle({ type: 'start', spec: spec({ id: 'with-screen', screenFile: `${DIR}${isAbsolute('/x') ? '/' : '\\'}run.txt` }) })
+    expect(h.spawned).toHaveLength(4)
+  })
+
+  describe('flush', () => {
+    const file = (id: string) => `${DIR}${isAbsolute('/x') ? '/' : '\\'}screens-${id}.txt`
+
+    test('writes every file, then answers flushed once', async () => {
+      vi.useFakeTimers()
+      const m = memoryFs()
+      const h = host({ fs: m.fs, pty: fakePtyModule({ latePid: true }) })
+      // An empty host answers at once.
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.of('flushed')).toHaveLength(1)
+
+      h.service.handle({ type: 'start', spec: spec({ id: 'a', screenFile: file('a') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'b', screenFile: file('b') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'plain' }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'waiting', screenFile: file('waiting') }) })
+      for (const pty of h.spawned.slice(0, 3)) pty.connect()
+      h.spawned[0]!.emit('alpha\r\n')
+      h.spawned[1]!.emit('beta\r\n')
+      h.spawned[1]!.end(0)
+      await vi.advanceTimersByTimeAsync(20)
+      h.spawned[0]!.emit('alpha two\r\n')
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(10)
+      // Every started session's file, with its text now; a session with no file, or still waiting, writes none.
+      expect(Object.fromEntries(m.files)).toEqual({ [file('a')]: 'alpha\nalpha two', [file('b')]: 'beta' })
+      expect(h.of('flushed')).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(h.of('flushed')).toHaveLength(2)
+    })
+
+    test('a hung write still answers within 2 s, once', async () => {
+      vi.useFakeTimers()
+      const m = memoryFs({ hang: ['stuck'] })
+      const h = host({ fs: m.fs })
+      h.service.handle({ type: 'start', spec: spec({ id: 'stuck', screenFile: file('stuck') }) })
+      h.service.handle({ type: 'start', spec: spec({ id: 'fine', screenFile: file('fine') }) })
+      h.spawned[0]!.emit('x\r\n')
+      h.spawned[1]!.emit('y\r\n')
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(m.files.get(file('fine'))).toBe('y')
+      expect(h.of('flushed')).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(h.of('flushed')).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(h.of('flushed')).toHaveLength(1)
+      // A second ask answers too, within 2 s.
+      h.service.handle({ type: 'flush' })
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(h.of('flushed')).toHaveLength(2)
+    })
   })
 
   test('a spawn that throws answers spawn failed', () => {
@@ -637,6 +716,7 @@ describe('pty host service', () => {
         { type: 'list' },
         { type: 'snapshot', id: 'run-1' },
         { type: 'connect' },
+        { type: 'flush' },
         { type: 'shutdown' },
       ]) {
         w.got.length = 0
