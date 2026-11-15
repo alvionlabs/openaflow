@@ -13,4 +13,15 @@ describe('skills', () => {
       expect(isSkillId(bad)).toBe(false)
     }
   })
+
+  test('labels and lines', () => {
+    expect(SKILLS.map((s) => [s.id, s.label, s.line])).toEqual([
+      ['plan', 'Plan', 'Interview, then write a plan.'],
+      ['ship', 'Ship an idea', 'Research, plan, and build in one go.'],
+      ['task', 'One task', 'One change, one engineer, one PR.'],
+      ['research', 'Research', 'Look into a question and write a report.'],
+      ['idea', 'Park an idea', 'Save an idea for later.'],
+      ['plain', 'Plain session', 'Claude with no prompt.'],
+    ])
+  })
 })
