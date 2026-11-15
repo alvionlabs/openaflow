@@ -115,7 +115,7 @@ sequenceDiagram
 | Sprint | Goal | Status | Depends on |
 |--------|------|--------|------------|
 | host-core | The pty host, node-pty, the hooks plugin, and packaging (the Windows installer and a new Linux AppImage), proved on Windows and Linux; a session starts and replays | done | — |
-| terminal-tab | New session with the skill dropdown, the Terminal tab, and the hosted run states on the current run screen | planned | host-core |
+| terminal-tab | New session with the skill dropdown, the Terminal tab, and the hosted run states on the current run screen | active | host-core |
 | session-life | Quit, ending process trees, Resume, crashes, the heartbeat banner, and updates | planned | terminal-tab |
 | settings | The settings page: Open at login, scrollback, run wrapper, and stop command | planned | session-life |
 
