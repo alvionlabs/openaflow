@@ -10,10 +10,10 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: host-core · Status: active
 | 1 | N1 | node-pty proof: minimal pty host outside the asar, packaged, in CI on Windows and Linux | host-core-N1 | merged | done | medium | — |
 | 1 | C1 | Linux start test, the Linux test failures, config copy keeps modified times | host-core-C1 | merged | done | medium | — |
 | 1 | K1 | Hooks plugin and the hook-state reader | host-core-K1 | merged | done | medium | — |
-| 2 | H1 | Full pty host: attach, replay, input, resize, flow control, heartbeat | host-core-H1 | — | pending | — | N1 |
-| 2 | S1 | Host starter and window link in the main process | host-core-S1 | — | pending | — | N1 |
-| 2 | P1 | Linux AppImage, release workflow, Linux verify job | host-core-P1 | — | pending | — | N1, C1, K1 |
-| 2 | A1 | Start command and skill list, proved with real `claude` | host-core-A1 | — | pending | — | N1, K1 |
+| 2 | H1 | Full pty host: attach, replay, input, resize, flow control, heartbeat | host-core-H1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1 |
+| 2 | S1 | Host starter and window link in the main process | host-core-S1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1 |
+| 2 | P1 | Linux AppImage, release workflow, Linux verify job | host-core-P1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1, C1, K1 |
+| 2 | A1 | Start command and skill list, proved with real `claude` | host-core-A1 | https://github.com/alvionlabs/openaflow/pull/122 | pushed | medium | N1, K1 |
 | 3 | E1 | Electron terminal checks, unpackaged and packaged, in CI; docs | host-core-E1 | — | pending | — | H1, S1, P1 |
 
 ## Shared contract
@@ -56,6 +56,7 @@ type StartSpec = { id: string; program: string; args: string[]; cwd: string; env
 Each message is `{ type, ...fields }`. Rules:
 - `start` refuses with `start-failed` and spawns nothing: `bad id`, `id in use`, `program not absolute`, `no folder` (cwd), `bad size` (cols outside 2–500, rows outside 1–200), `spawn failed: <message>`.
 - `started` goes out only once the pty has a pid. On Linux that is the same tick; on Windows ConPTY gives the pid only after its output worker connects (about 1 s in CI), so the host checks every 10 ms and on each data and exit event. `started` always comes before `exit`, each once. A start that fails after the spawn answers `start-failed` with `spawn failed: <reason>`, frees the id, kills the pty, and sends no `exit`: `the program ended before it started (exit code N)`, `no process ID after 10 s`, `disposed before it started`, `the host is shutting down`. A session waiting for its pid sits in the map with pid 0 (`list` and `kill` must handle it). (Wave 1 fix, `c176a5d`.)
+- Flow control (H1): only `data` characters count toward a port's unacked total; `replay` never does, so a window acks only `data`. A `replay` is serialized at the session's current size: send `resize` before `attach`. A session waiting for its pid lists as `pid: 0, live: true`; `attach`, `input`, and `resize` on it answer `error` `no session`. `dispose` of a live session sends no `exit`. On Windows, ConPTY lets about 300,000 characters through after an ack resumes the pty before the pause holds again. (H1, `1c0c1ae`, `50022a6`.)
 - `ready` once, after `require('node-pty')` works; else `load-failed` and exit 1. Then a `beat` every 5 s.
 - `snapshot`: screen plus scrollback as right-trimmed plain lines; unknown id → `null`.
 - `exit` is reported once, to main and every attached port. The session stays listed (`live: false`), attachable, and snapshottable until `dispose`.
