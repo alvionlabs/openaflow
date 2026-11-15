@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoSends, buildFlow, buildPipeline, buildRepoModel, listRuns, runReplies, ENGINEER_QUIET_MS, STALE_MS, type AgentRun, type BoardRepo, type PrStatus, type RunSummary } from '@openaflow/model'
+import { autoSends, buildFlow, buildPipeline, buildRepoModel, listRuns, runReplies, ENGINEER_QUIET_MS, STALE_MS, type AgentRun, type BoardRepo, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { buildWaveBoard } from '../board/board-view.ts'
 import { elsewhere } from './elsewhere.ts'
 import { nextSteps } from './next-step.ts'
@@ -622,5 +622,52 @@ describe('the urgent banner follows the predicate', () => {
     const board = { generatedAt: NOW, gh: 'ok' as const, repos: [a, b] }
     const runs = listRuns(board, NOW)
     expect(elsewhere(runs, board, runs.find((r) => r.repoId === 'o'), NOW)?.run.repoId).toBe('r')
+  })
+})
+
+// Hosted sessions (terminal-tab M1): a session that waits for you in the terminal reads needs-you in the
+// sidebar and on the card, on the run it joins or on the repo row. The flow, Log and wave board keep the plan's own reading.
+describe('hosted sessions', () => {
+  const session = (over: Partial<HostedSession> = {}): HostedSession => ({
+    marker: 'mark-1',
+    sessionId: 'sess-1',
+    liveSession: 'sess-1',
+    sessions: ['sess-1'],
+    skill: 'plan',
+    startedAt: NOW - 2 * MIN,
+    state: 'live',
+    hooked: false,
+    prompted: false,
+    ...over,
+  })
+  const read = (repo: BoardRepo, run: RunSummary) => ({ sidebar: run.state, next: nextStatus(nextSteps(run, repo, NOW)!.card.status).label })
+  const repoRowOf = (repo: BoardRepo) => listRuns({ generatedAt: NOW, gh: 'ok', repos: [repo] }, NOW).find((r) => r.plan === undefined)
+
+  it('a hosted waiting session reads needs-you in the sidebar and the card', () => {
+    // An idle plan, its engineer quiet, dispatched from the session: the session waits, so the run needs you.
+    const idle = repoOf([DECISION], { agents: [quiet(ENGINEER_QUIET_MS)] })
+    expect(views(idle)).toMatchObject(IDLE)
+    const waiting = { ...idle, hosted: [session()] }
+    expect(read(waiting, runOf(waiting))).toEqual({ sidebar: 'needs-you', next: 'Needs you' })
+    // The same with no item on the card (the nothing card wears the run's status).
+    const bare = { ...repoOf([], { agents: [quiet(ENGINEER_QUIET_MS)] }), hosted: [session()] }
+    expect(read(bare, runOf(bare))).toEqual({ sidebar: 'needs-you', next: 'Needs you' })
+    // A running plan rises too.
+    const live = { ...repoOf([], { agents: [engineer()] }), hosted: [session()] }
+    expect(read(live, runOf(live))).toEqual({ sidebar: 'needs-you', next: 'Needs you' })
+
+    // Hooked, the session is live and changes nothing.
+    const hooked = { ...idle, hosted: [session({ hooked: true })] }
+    expect(views(hooked)).toMatchObject(IDLE)
+    // A halted plan stays blocked everywhere.
+    const halted = { ...repoOf([HALT], { agents: [quiet(ENGINEER_QUIET_MS)] }), hosted: [session()] }
+    expect(views(halted)).toMatchObject(HALTED)
+
+    // A session that joins no run waits on the repo row: needs-you there, the plan untouched.
+    const outside = { ...idle, hosted: [session({ sessionId: 'sess-x', liveSession: 'sess-x', sessions: ['sess-x'] })] }
+    expect(views(outside)).toMatchObject(IDLE)
+    const row = repoRowOf(outside)!
+    expect(row.where).toBe('session · waiting for you')
+    expect(read(outside, row)).toEqual({ sidebar: 'needs-you', next: 'Needs you' })
   })
 })

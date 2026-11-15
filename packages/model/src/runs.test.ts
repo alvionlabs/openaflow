@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as model from './index.ts'
-import type { AgentRun, Board, BoardRepo, PrStatus } from './board.ts'
+import type { AgentRun, Board, BoardRepo, HostedSession, PrStatus } from './board.ts'
+import { rowSessions } from './hosted.ts'
 import { buildRepoModel, type RepoFiles } from './run-model.ts'
 import { activeRuns, listRuns, runActivity, type RunSummary } from './runs.ts'
 
@@ -401,5 +402,130 @@ describe('runActivity and the order', () => {
     const key = (now: number) => listRuns(b, now).map((r) => `${r.repo}/${r.plan}`)
     expect(key(NOW + 10 * MIN)).toEqual(key(NOW))
     expect(key(NOW)).toEqual(['b/alpha', 'a/alpha', 'c/alpha', 'd/alpha'])
+  })
+})
+
+// Hosted sessions (terminal-tab M1): the repo row for a session that joins no run, and a waiting session on a run.
+describe('hosted sessions on the runs list', () => {
+  let marks = 0
+  const hosted = (over: Partial<HostedSession> = {}): HostedSession => {
+    marks += 1
+    const sessionId = over.sessionId ?? `sess-${marks}`
+    return { marker: `mark-${marks}`, sessionId, liveSession: sessionId, sessions: [sessionId], skill: 'plan', startedAt: NOW - 5 * MIN, state: 'live', hooked: true, prompted: true, ...over }
+  }
+  const unhooked = (over: Partial<HostedSession> = {}) => hosted({ hooked: false, prompted: false, startedAt: NOW - MIN, ...over })
+  const repoRow = (r: BoardRepo) => runsOf(r).filter((run) => run.plan === undefined)
+  const rowOf = (state: string, where: string) => ({ repoId: 'id-r', repo: 'r', where, state })
+
+  it('a repo row for an unjoined session', () => {
+    // Beside a plan run, its session joining no run: one repo row, with §4's where and state for each view.
+    const cases: [Partial<HostedSession>, string, string][] = [
+      [{ state: 'starting', hooked: false }, 'running', 'session · no plan yet'],
+      [{ state: 'live' }, 'running', 'session · no plan yet'],
+      [{ state: 'live', hooked: false, startedAt: NOW - MIN }, 'needs-you', 'session · waiting for you'],
+      [{ state: 'ended', exitCode: 0 }, 'idle', 'session ended'],
+      [{ state: 'stopped', stopReason: 'app closed' }, 'idle', 'session stopped'],
+    ]
+    for (const [over, state, where] of cases) {
+      const r = repo('r', planFiles(), { hosted: [hosted(over)] })
+      // Both rows have no activity: the tie goes to the plan slug, and the repo row has none.
+      expect(runsOf(r).map((run) => run.plan)).toEqual([undefined, 'alpha'])
+      expect(repoRow(r)).toEqual([rowOf(state, where)])
+      // The plan run beside it reads as it did.
+      expect(runsOf(r)[1]).toEqual(runsOf(repo('r', planFiles()))[0])
+    }
+
+    // Live but unhooked only 9.999 s: still running.
+    expect(repoRow(repo('r', planFiles(), { hosted: [unhooked({ startedAt: NOW - 9_999 })] }))).toEqual([rowOf('running', 'session · no plan yet')])
+
+    // Several unjoined sessions: still one repo row, from the shown one (the newest starting or live).
+    const many = repo('r', planFiles(), { hosted: [hosted({ startedAt: NOW - 9 * MIN }), hosted({ state: 'ended', startedAt: NOW - MIN })] })
+    expect(repoRow(many)).toEqual([rowOf('running', 'session · no plan yet')])
+    const stoppedAll = repo('r', planFiles(), { hosted: [hosted({ state: 'ended', startedAt: NOW - 9 * MIN }), hosted({ state: 'stopped', stopReason: 'terminals restarted', startedAt: NOW - MIN })] })
+    expect(repoRow(stoppedAll)).toEqual([rowOf('idle', 'session stopped')])
+
+    // A repo with no run: the session's row takes the place of `no active plan`.
+    const alone = repo('r', { 'pod-docs/README.md': README }, { hosted: [hosted()] })
+    expect(runsOf(alone)).toEqual([rowOf('running', 'session · no plan yet')])
+
+    // A session that joins the plan adds no repo row.
+    const joined = hosted({ sessionId: 'sess-joined' })
+    const plan = repo('r', planFiles(), { agents: [agent({ sprint: 'one', session: 'sess-joined', lastAt: NOW - 40 * MIN })], hosted: [joined] })
+    expect(runsOf(plan).map((run) => run.plan)).toEqual(['alpha'])
+
+    // An error or update-pod repo keeps its one row and its state.
+    expect(runsOf(repo('r', {}, { error: 'folder not found', hosted: [unhooked()] }))).toEqual([rowOf('error', 'folder not found')])
+    expect(runsOf(repo('r', { 'pod-docs/README.md': 'pod docs: 1\n' }, { hosted: [unhooked()] }))).toEqual([rowOf('unsupported', 'update pod')])
+
+    // Each session sits on exactly one listed row.
+    const mixed = repo('r', planFiles(), {
+      agents: [agent({ sprint: 'one', session: 'sess-joined', lastAt: NOW - 40 * MIN })],
+      hosted: [joined, hosted(), unhooked({ state: 'ended' })],
+    })
+    const rows = runsOf(mixed)
+    const placed = (mixed.hosted ?? []).map((s) => rows.filter((run) => rowSessions(mixed, run.plan, NOW).includes(s)).length)
+    expect(placed).toEqual([1, 1, 1])
+
+    // The repo row has no activity: it sorts after every run with some (spec silent; raised as PENDING).
+    const busy = repo('b', planFiles(), { agents: [agent({ sprint: 'one', lastAt: NOW - 50 * MIN })] })
+    const withSession = repo('a', { 'pod-docs/README.md': README }, { hosted: [hosted()] })
+    expect(listRuns(board(withSession, busy), NOW).map((run) => [run.repo, run.plan])).toEqual([['b', 'alpha'], ['a', undefined]])
+    expect(runActivity(withSession, runsOf(withSession)[0]!)).toBeUndefined()
+  })
+
+  it('waiting on a run', () => {
+    const own = (over: Partial<AgentRun> = {}) => agent({ sprint: 'one', session: 'sess-own', lastAt: NOW - 40 * MIN, ...over })
+    const waiting = () => unhooked({ sessionId: 'sess-own' })
+    const halt = queueLine('BLOCKED', 'orchestrator → human', 'plan: alpha', 'Gate 2 stopped the run')
+    const ask = queueLine('PENDING', 'engineer → human', 'plan: alpha · slice: B1', 'Pick a name')
+
+    // Idle and running runs rise to needs-you; the where stays.
+    expect(stateOf(repo('r', planFiles(), { agents: [own()] }))).toEqual(['idle'])
+    expect(runsOf(repo('r', planFiles(), { agents: [own()], hosted: [waiting()] }))).toEqual([{ ...runsOf(repo('r', planFiles()))[0], state: 'needs-you' }])
+    expect(stateOf(repo('r', planFiles(), { agents: [own({ lastAt: NOW - MIN, ended: false })] }))).toEqual(['running'])
+    expect(stateOf(repo('r', planFiles(), { agents: [own({ lastAt: NOW - MIN, ended: false })], hosted: [waiting()] }))).toEqual(['needs-you'])
+    // A blocked run stays blocked; a run that needs you already stays so.
+    expect(stateOf(repo('r', planFiles({ queue: [halt] }), { agents: [own()], hosted: [waiting()] }))).toEqual(['blocked'])
+    expect(stateOf(repo('r', planFiles({ queue: [ask] }), { agents: [own()], hosted: [waiting()] }))).toEqual(['needs-you'])
+
+    // Only a shown session that waits counts: live, starting, ended and stopped change nothing.
+    for (const over of [{ hooked: true }, { state: 'starting' as const }, { state: 'ended' as const }, { state: 'stopped' as const, stopReason: 'app closed' as const }]) {
+      expect(stateOf(repo('r', planFiles(), { agents: [own()], hosted: [unhooked({ sessionId: 'sess-own', ...over })] }))).toEqual(['idle'])
+    }
+    // Not yet 10 s: no raise.
+    expect(stateOf(repo('r', planFiles(), { agents: [own()], hosted: [unhooked({ sessionId: 'sess-own', startedAt: NOW - 9_999 })] }))).toEqual(['idle'])
+    // An older waiting session behind a newer starting one on the same run: the newer one shows, no raise.
+    const behind = [unhooked({ sessionId: 'sess-own', startedAt: NOW - 9 * MIN }), hosted({ sessions: ['sess-2'], state: 'starting', hooked: false, startedAt: NOW - MIN })]
+    expect(stateOf(repo('r', planFiles(), { agents: [own(), own({ session: 'sess-2' })], hosted: behind }))).toEqual(['idle'])
+    // Another run's waiting session doesn't raise this one; the repo row gets it.
+    expect(stateOf(repo('r', planFiles(), { agents: [own()], hosted: [unhooked({ sessionId: 'sess-else' })] }))).toEqual(['idle', 'needs-you'])
+
+    // A one-off run rises the same way.
+    const claims = [{ portBase: 3100, repoPath: '/r/r', plan: 'task-scroll' }]
+    const eng = agent({ branch: 'task-scroll', session: 'sess-own', ended: true, lastAt: NOW - 40 * MIN })
+    const oneOff = (hosted?: HostedSession[]) => repo('r', { 'pod-docs/README.md': README }, { claims, agents: [eng], ...(hosted ? { hosted } : {}) })
+    expect(stateOf(oneOff())).toEqual(['idle'])
+    expect(stateOf(oneOff([waiting()]))).toEqual(['needs-you'])
+  })
+
+  it('no hosted sessions', () => {
+    const halt = queueLine('BLOCKED', 'orchestrator → human', 'plan: alpha', 'Gate 2 stopped the run')
+    const repos = (extra: Partial<BoardRepo>) => [
+      repo('a', planFiles(), { agents: [agent({ sprint: 'one', lastAt: NOW - 8 * MIN })], ...extra }),
+      repo('b', planFiles({ queue: [halt] }), extra),
+      repo('c', { 'pod-docs/README.md': README }, extra),
+      repo('d', {}, { error: 'folder not found', ...extra }),
+      repo('e', { 'pod-docs/README.md': README }, { claims: [{ portBase: 3100, repoPath: '/r/e', plan: 'task-x' }], ...extra }),
+    ]
+    const today = listRuns(board(...repos({})), NOW)
+    expect(today.map((r) => [r.repo, r.where, r.state])).toEqual([
+      ['a', 'one · wave 2/2', 'running'],
+      ['b', 'one · wave 2/2', 'blocked'],
+      ['c', 'no active plan', 'idle'],
+      ['d', 'folder not found', 'error'],
+      ['e', 'build', 'idle'],
+    ])
+    // An empty list reads as no field.
+    expect(listRuns(board(...repos({ hosted: [] })), NOW)).toEqual(today)
   })
 })
