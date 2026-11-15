@@ -21,6 +21,19 @@ const PACKAGED_NAME = 'openaflow'
 /** electron-builder derives the cache folder's name from the packaged name. */
 export const UPDATER_CACHE_DIR = `${PACKAGED_NAME}-updater`
 export const EXE_NAME = `${APP_NAME}.exe`
+/** electron-builder writes it beside the AppImage, because the config has a publish provider. The updater reads it. */
+export const LINUX_UPDATE_FILE = 'latest-linux.yml'
+/** x64 only, so the name says x86_64, as AppImage names do. */
+export const appImageName = (version: string): string => `${PACKAGED_NAME}-${version}-x86_64.AppImage`
+
+export type PackageTarget = { platform: 'win32'; target: 'nsis' } | { platform: 'linux'; target: 'AppImage' }
+
+/** What `pnpm package` builds on this system. Any system but Windows and Linux stops here, before anything builds. */
+export function packageTarget(platform: NodeJS.Platform): PackageTarget {
+  if (platform === 'win32') return { platform, target: 'nsis' }
+  if (platform === 'linux') return { platform, target: 'AppImage' }
+  throw new Error(`pnpm package builds on Windows and Linux only, not ${platform}`)
+}
 
 export type BuildOptions = {
   /** The generated THIRD-PARTY-NOTICES.txt. */
@@ -72,7 +85,7 @@ function nodePtyFilter(platform: 'win32' | 'linux'): string[] {
 export function buildConfig(o: BuildOptions): Configuration {
   const version = o.version ?? manifest.version
   checkVersion(version)
-  const platform = o.platform ?? (process.platform === 'win32' ? 'win32' : 'linux')
+  const platform = o.platform ?? packageTarget(process.platform).platform
   return {
     appId: APP_ID,
     productName: APP_NAME,
@@ -87,18 +100,21 @@ export function buildConfig(o: BuildOptions): Configuration {
       // Outside the asar: a native .node file can't load from inside one. The bundle finds node_modules/node-pty beside it.
       { from: '../pty-host/dist/pty-host.cjs', to: 'pty-host/pty-host.cjs' },
       { from: o.nodePtyDir ?? realpathSync.native(NODE_PTY_LINK), to: 'pty-host/node_modules/node-pty', filter: nodePtyFilter(platform) },
+      // Outside the asar: claude reads the plugin folder, and runs its script, by path.
+      { from: '../hooks-plugin/plugin', to: 'hooks-plugin' },
     ],
     npmRebuild: false,
     nodeGypRebuild: false,
     forceCodeSigning: false,
     win: {
-      target: [{ target: 'nsis', arch: ['x64'] }],
+      target: [{ target: packageTarget('win32').target, arch: ['x64'] }],
       icon: 'assets/icon.ico',
       // Unsigned on purpose: the GitHub account is the trust boundary.
       verifyUpdateCodeSignature: false,
     },
-    // For now an unpacked folder, release/linux-unpacked/openaflow, for the pty proof. The AppImage comes later.
-    linux: { target: [{ target: 'dir', arch: ['x64'] }], executableName: PACKAGED_NAME },
+    // electron-builder fills release/linux-unpacked first, then makes the AppImage from it. The pty proof uses the folder.
+    linux: { target: [{ target: packageTarget('linux').target, arch: ['x64'] }], executableName: PACKAGED_NAME, category: 'Development' },
+    appImage: { artifactName: `${PACKAGED_NAME}-\${version}-x86_64.\${ext}` },
     nsis: {
       oneClick: true,
       perMachine: false,

@@ -20,8 +20,9 @@ export type BridgeCaller<W> = {
 
 export type BridgeReply = { path: string | null } | { error: 'forbidden' | 'dialog failed' }
 
-/** Only the app window's main frame, on the server's current origin. Before the server is ready, nobody. */
-function allowed<W>(caller: BridgeCaller<W>, origin: string | undefined, appWindow: W | undefined): boolean {
+/** Only the app window's main frame, on the server's current origin. Before the server is ready, nobody. The folder
+ * bridge and the terminal link (terminal-port.ts) both use it. */
+export function senderAllowed<W>(caller: BridgeCaller<W>, origin: string | undefined, appWindow: W | undefined): boolean {
   if (origin === undefined || appWindow === undefined || caller.window !== appWindow || !caller.isMainFrame) return false
   try {
     return new URL(caller.url).origin === origin
@@ -42,7 +43,7 @@ export function createFolderBridge<W>(o: {
   return {
     async pick(caller) {
       const parent = o.appWindow()
-      if (parent === undefined || !allowed(caller, o.origin(), parent)) return { error: 'forbidden' }
+      if (parent === undefined || !senderAllowed(caller, o.origin(), parent)) return { error: 'forbidden' }
       // A second click while the dialog is up: the first call answers.
       if (open) return { path: null }
       open = true

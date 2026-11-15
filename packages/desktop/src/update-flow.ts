@@ -42,6 +42,9 @@ export type UpdaterPort = {
 
 export type UpdateFlowOptions = {
   packaged: boolean
+  platform: NodeJS.Platform
+  /** The `APPIMAGE` env var: the AppImage's own path, which its runtime sets. On Linux the updater can only replace that file. */
+  appImage: string | undefined
   /** Called once, at the start of a packaged app. */
   updater(): UpdaterPort
   ask(version: string): Promise<'restart' | 'later'>
@@ -218,6 +221,11 @@ export function createUpdateFlow(o: UpdateFlowOptions): UpdateFlow {
     start() {
       if (!o.packaged || started) return
       started = true
+      // A packaged Linux app outside an AppImage, such as linux-unpacked: electron-updater has no file to replace.
+      if (o.platform === 'linux' && !o.appImage) {
+        o.log(`${LOG} off: not started from an AppImage`)
+        return
+      }
       try {
         port = o.updater()
         port.onDownloaded((version) => void onDownloaded(version))

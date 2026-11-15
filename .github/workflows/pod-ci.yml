@@ -13,9 +13,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The same name on Windows as before, so a required check still finds it. Linux: see pod-docs/decisions.md (2026-11-14).
   verify:
-    name: verify (windows-latest)
-    runs-on: windows-latest
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
       # Version comes from packageManager in package.json.

@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url'
 import { createPackage, extractAll } from '@electron/asar'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { builderOptions } from './build-config.ts'
-import { machineState, proofLastLine, refuseRealInstall, stateDiff, withInstallLock, type MachineState } from './install-check.ts'
+import { APPIMAGE_ROOT_PREFIX, machineState, processesUnder, proofLastLine, refuseRealInstall, stateDiff, withInstallLock, type MachineState } from './install-check.ts'
 
 // The release check's own proof: a real `pnpm package` in a temp folder, then `pnpm release:check` on that build and
-// on three builds that must fail. `pnpm test:install` runs it; `pnpm verify` skips it. Nothing here publishes.
+// on builds that must fail. Windows: three bad installers. Linux: a bad sha512, a missing file, and a test-hooks
+// AppImage. `pnpm test:install` runs it on Windows; `pnpm verify` skips it. Nothing here publishes.
 
 const here = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(here, '..', '..', '..')
@@ -179,6 +180,108 @@ describe.runIf(process.env.OPENAFLOW_REAL_INSTALL === '1' && process.platform ==
       const diff = stateDiff(before!, await machineState())
       console.log(proofLastLine(diff))
       expect(diff).toEqual([])
+    },
+    RUN_MS,
+  )
+})
+
+describe.runIf(process.env.OPENAFLOW_REAL_INSTALL === '1' && process.platform === 'linux')('the Linux release check', () => {
+  let work = ''
+  let good = ''
+  let hooked = ''
+
+  const pack = async (output: string, flags = '') => {
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    for (const name of ['GH_TOKEN', 'GITHUB_TOKEN']) delete env[name]
+    const run = await shell(`pnpm package ${flags} "--output=${output}"`.replace('  ', ' '), env)
+    if (run.status !== 0) throw new Error(`pnpm package ${flags} failed:\n${run.output}`)
+  }
+
+  /** A copy of the good output's AppImage and latest-linux.yml, changed. */
+  const copyGood = (name: string, change: (dir: string) => void) => {
+    const dir = join(work, name)
+    mkdirSync(dir)
+    for (const file of readdirSync(good).filter((n) => n.endsWith('.AppImage') || n === 'latest-linux.yml')) copyFileSync(join(good, file), join(dir, file))
+    change(dir)
+    return dir
+  }
+
+  const checkRoots = () => readdirSync(tmpdir()).filter((n) => n.startsWith(APPIMAGE_ROOT_PREFIX))
+  let rootsBefore: string[] = []
+
+  /** No process of the app is left, from an AppImage in the work folder or from a check's unpack, and no check folder. */
+  const expectNoAppLeft = async () => {
+    expect(await processesUnder(`${work}/`)).toEqual([])
+    expect(await processesUnder(join(tmpdir(), APPIMAGE_ROOT_PREFIX))).toEqual([])
+    expect(checkRoots()).toEqual(rootsBefore)
+  }
+
+  beforeAll(async () => {
+    work = realpathSync.native(mkdtempSync(join(tmpdir(), 'openaflow-release-proof-')))
+    good = join(work, 'good')
+    hooked = join(work, 'hooked')
+    rootsBefore = checkRoots()
+    await pack(good)
+    await pack(hooked, '--test-hooks')
+  }, RUN_MS)
+
+  afterAll(() => {
+    if (work) rmSync(work, { recursive: true, force: true })
+  })
+
+  test(
+    'passes a good AppImage, started with temp folders, and leaves no process',
+    async () => {
+      const run = await releaseCheck(good)
+      expect(run.status, run.output).toBe(0)
+      expect(run.output).toMatch(/the release check passed for openaflow-\d+\.\d+\.\d+-x86_64\.AppImage/)
+      expect(run.output).toMatch(/processes left: \[\]/)
+      await expectNoAppLeft()
+    },
+    RUN_MS,
+  )
+
+  test(
+    'fails a bad sha512 in latest-linux.yml',
+    async () => {
+      const dir = copyGood('bad-sha', (d) => {
+        const yml = join(d, 'latest-linux.yml')
+        writeFileSync(yml, readFileSync(yml, 'utf8').replace(/^sha512: .*$/m, `sha512: ${createHash('sha512').update('other').digest('base64')}`))
+      })
+      const run = await releaseCheck(dir)
+      expect(run.status, run.output).not.toBe(0)
+      expect(run.output).toMatch(/release check failed at update file: latest-linux\.yml has a sha512/)
+      await expectNoAppLeft()
+    },
+    RUN_MS,
+  )
+
+  test(
+    'fails a missing file',
+    async () => {
+      const noYml = copyGood('no-yml', (d) => rmSync(join(d, 'latest-linux.yml')))
+      const run = await releaseCheck(noYml)
+      expect(run.status, run.output).not.toBe(0)
+      expect(run.output).toMatch(/release check failed at update file: latest-linux\.yml is missing/)
+
+      const noImage = copyGood('no-image', (d) => {
+        for (const n of readdirSync(d).filter((n) => n.endsWith('.AppImage'))) rmSync(join(d, n))
+      })
+      const empty = await releaseCheck(noImage)
+      expect(empty.status, empty.output).not.toBe(0)
+      expect(empty.output).toMatch(/release check failed at AppImage: no AppImage in the output folder/)
+      await expectNoAppLeft()
+    },
+    RUN_MS,
+  )
+
+  test(
+    'fails a test-hooks build',
+    async () => {
+      const run = await releaseCheck(hooked)
+      expect(run.status, run.output).not.toBe(0)
+      expect(run.output).toMatch(/release check failed at test hooks: main\.cjs holds __openaflowTest/)
+      await expectNoAppLeft()
     },
     RUN_MS,
   )
