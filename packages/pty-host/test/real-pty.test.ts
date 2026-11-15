@@ -48,7 +48,8 @@ function windowPort(host: ReturnType<typeof realHost>['host']) {
   }
   host.handle({ type: 'connect' }, [port])
   const text = () => got.filter((m) => m.type === 'replay' || m.type === 'data').map((m) => (m as { data: string }).data).join('')
-  return { got, text, send: (data: unknown) => listeners.forEach((fn) => fn({ data })) }
+  const dataChars = () => got.reduce((n, m) => n + (m.type === 'data' ? m.data.length : 0), 0)
+  return { got, text, dataChars, send: (data: unknown) => listeners.forEach((fn) => fn({ data })) }
 }
 
 /** Node as the program: the same on Windows and Linux. */
@@ -135,6 +136,70 @@ describe('real pty', () => {
     expect(w.got.filter((m) => m.type === 'exit'), JSON.stringify(w.got)).toHaveLength(1)
     h.host.handle({ type: 'list' })
     expect(h.sent.at(-1), h.seen()).toMatchObject({ type: 'list', sessions: [{ id: 'real-kill', live: false }] })
+
+    h.host.handle({ type: 'shutdown' })
+    await until(() => `host exit: ${h.seen()}`, () => h.exits.length > 0, 4_000)
+  })
+  test('a real pty pauses while a window is behind, and an ack resumes it', async () => {
+    const h = realHost()
+    // Writes as fast as the pty takes it.
+    const { program, args } = node("const s = 'x'.repeat(999) + '\\n'; const go = () => { while (process.stdout.write(s)) {} process.stdout.once('drain', go) }; go()")
+    h.host.handle({ type: 'start', spec: { id: 'real-flow', program, args, cwd: tmpdir(), env: env(), cols: 80, rows: 24 } })
+    await until(() => `started: ${h.seen()}`, () => h.sent.some((m) => m.type === 'started' || m.type === 'start-failed'))
+    const w = windowPort(h.host)
+    w.send({ type: 'attach', id: 'real-flow' })
+    await until(() => `over 100,000 characters: ${w.dataChars()}`, () => w.dataChars() > 100_000)
+
+    // With no ack the count stops growing: the pty is paused.
+    const steady = async () => {
+      let last = -1
+      let since = Date.now()
+      await until(() => `the output to stop: ${w.dataChars()}`, () => {
+        const now = w.dataChars()
+        if (now !== last) [last, since] = [now, Date.now()]
+        return Date.now() - since >= 500
+      })
+      return last
+    }
+    const paused = await steady()
+    await new Promise((r) => setTimeout(r, 500))
+    expect(w.dataChars()).toBe(paused)
+
+    // One ack for everything: the output goes on until the next 100,000.
+    w.send({ type: 'ack', id: 'real-flow', chars: paused })
+    await until(() => `more output after the ack: ${w.dataChars()} vs ${paused}`, () => w.dataChars() > paused + 100_000)
+    expect(await steady()).toBeLessThan(paused + 250_000)
+
+    h.host.handle({ type: 'shutdown' })
+    await until(() => `host exit: ${h.seen()}`, () => h.exits.length > 0, 4_000)
+  })
+
+  test('dispose ends a real pty and sends no exit', async () => {
+    const h = realHost()
+    const { program, args } = node("process.stdout.write('running\\n'); setInterval(() => {}, 1000)")
+    h.host.handle({ type: 'start', spec: { id: 'real-dispose', program, args, cwd: tmpdir(), env: env(), cols: 80, rows: 24 } })
+    await until(() => `started: ${h.seen()}`, () => h.sent.some((m) => m.type === 'started' || m.type === 'start-failed'))
+    const started = h.sent.find((m) => m.type === 'started') as { pid: number } | undefined
+    expect(started, h.seen()).toBeDefined()
+    const w = windowPort(h.host)
+    w.send({ type: 'attach', id: 'real-dispose' })
+    await until(() => `output: ${JSON.stringify(w.got)}`, () => w.text().includes('running'))
+
+    h.host.handle({ type: 'dispose', id: 'real-dispose' })
+    const alive = () => {
+      try {
+        process.kill(started!.pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    await until(() => `the process to end: pid ${started!.pid}`, () => !alive(), 5_000)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(h.sent.filter((m) => m.type === 'exit'), h.seen()).toEqual([])
+    expect(w.got.filter((m) => m.type === 'exit')).toEqual([])
+    h.host.handle({ type: 'list' })
+    expect(h.sent.at(-1)).toEqual({ type: 'list', sessions: [] })
 
     h.host.handle({ type: 'shutdown' })
     await until(() => `host exit: ${h.seen()}`, () => h.exits.length > 0, 4_000)
