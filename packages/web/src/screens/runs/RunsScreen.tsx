@@ -104,6 +104,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const rowSession = repo && selected ? shownSession(rowSessions(repo, selected.plan, now)) : undefined
   const terminal = hasTerminalTab(bridge !== undefined, rowSession)
   const tabs = tabsFor({ terminal })
+  const dot = tabDot(rowSession, now)
   const shown = shownTab(stored, { view, terminal })
   // The browser build shows the session under the card; the card may already say to open the desktop app.
   const cardNote = steps !== undefined && cardTerminal(steps.card, false).note !== undefined
@@ -336,7 +337,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                     aria-controls={shown === t ? `tab-${t}` : undefined}
                     onClick={() => press(t)}
                   >
-                    {t === 'terminal' && tabDot(rowSession, now) && <span className="status s-run tab-dot" aria-hidden="true" />}
+                    {t === 'terminal' && dot && <span className={`status ${dot} tab-dot`} aria-hidden="true" />}
                     {TAB_LABELS[t]}
                     {t === 'waiting' && <span className="n">{steps?.rest.length ?? 0}</span>}
                   </button>

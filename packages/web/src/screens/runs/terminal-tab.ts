@@ -31,8 +31,12 @@ const isOpen = (s: HostedSession, now: number) => {
   return v === 'starting' || v === 'live' || v === 'waiting'
 }
 
-/** The tab's run dot: while the shown session is starting, live, or waiting for you. */
-export const tabDot = (s: HostedSession | undefined, now: number): boolean => s !== undefined && isOpen(s, now)
+/**
+ * The tab's dot class, from the session's dot (§4): the run dot while the shown session is starting or live, the
+ * needs-you dot while it waits for you (as the sidebar's row). None once it ended or stopped, or with no session.
+ */
+export const tabDot = (s: HostedSession | undefined, now: number): ChipClass | undefined =>
+  s !== undefined && isOpen(s, now) ? DOT_CLASS[sessionDot(sessionView(s, now))] : undefined
 
 const endLine = (s: HostedSession) => (s.endedAt === undefined ? ENDED_NO_TIME : `The terminal ended at ${clock(s.endedAt)}.`)
 

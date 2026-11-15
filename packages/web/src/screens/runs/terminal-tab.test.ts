@@ -3,6 +3,7 @@ import { WAITING_AFTER_MS, type HostedSession } from '@openaflow/model'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DESKTOP_TERMINAL } from './next-step.ts'
+import { runChip } from './view.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { browserView, clock, ENDED_NO_TIME, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
@@ -45,14 +46,18 @@ describe('terminal tab', () => {
   })
 
   it('tab dot', () => {
-    // A run dot while the shown session is starting, live, or waiting for you.
-    expect(tabDot(STARTING, NOW)).toBe(true)
-    expect(tabDot(LIVE, NOW)).toBe(true)
-    expect(tabDot(WAITING, START + WAITING_AFTER_MS)).toBe(true)
+    // The run dot while the shown session is starting or live.
+    expect(tabDot(STARTING, NOW)).toBe('s-run')
+    expect(tabDot(LIVE, NOW)).toBe('s-run')
+    // Waiting for you: the needs-you dot, the class the sidebar's `needs-you` row uses (`runChip`).
+    expect(tabDot(WAITING, START + WAITING_AFTER_MS)).toBe(runChip('needs-you').cls)
+    expect(tabDot(WAITING, START + WAITING_AFTER_MS)).toBe('s-you')
+    // Just before the waiting time, it is still live: the run dot.
+    expect(tabDot(WAITING, START + WAITING_AFTER_MS - 1)).toBe('s-run')
     // None once it ended or stopped, for any reason.
-    for (const s of [ENDED, ENDED_CODE, RESTARTED, APP_CLOSED, ENDED_UNTIMED]) expect(tabDot(s, NOW)).toBe(false)
+    for (const s of [ENDED, ENDED_CODE, RESTARTED, APP_CLOSED, ENDED_UNTIMED]) expect(tabDot(s, NOW)).toBeUndefined()
     // None with no session.
-    expect(tabDot(undefined, NOW)).toBe(false)
+    expect(tabDot(undefined, NOW)).toBeUndefined()
   })
 
   it('stop bar', () => {
