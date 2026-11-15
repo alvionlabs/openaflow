@@ -15,8 +15,8 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: act
 | 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | merged | done | medium | M1, D1 |
 | 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | merged | done | medium | M1 |
 | 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | merged | done | medium | M1, L1, F1 |
-| 3 | T1 | Terminal tab: xterm view, stop bar, Dismiss, browser rule | terminal-tab-T1 | — | pending | — | M1, L1, F1, S1, N1 |
-| 3 | E2 | Electron product-path checks, the `cmd.exe` route on Windows, CI, docs | terminal-tab-E2 | — | pending | — | D1, S1 |
+| 3 | T1 | Terminal tab: xterm view, stop bar, Dismiss, browser rule | terminal-tab-T1 | https://github.com/alvionlabs/openaflow/pull/130 | pushed | medium | M1, L1, F1, S1, N1 |
+| 3 | E2 | Electron product-path checks, the `cmd.exe` route on Windows, CI, docs | terminal-tab-E2 | https://github.com/alvionlabs/openaflow/pull/130 | pushed | medium | D1, S1 |
 
 ## Shared contract
 
