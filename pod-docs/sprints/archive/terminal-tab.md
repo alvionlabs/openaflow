@@ -1,7 +1,7 @@
 # Sprint: Terminal tab
 
-_From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: active · Generated: 2026-11-14_
-<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=1 waves=6 -->
+_From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: archived · Generated: 2026-11-14_
+<!-- autopilot-run: started=2026-11-14T23:07:20Z sprints=2 waves=6 -->
 
 ## Status board
 
@@ -15,8 +15,8 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: terminal-tab · Status: act
 | 2 | S1 | Server: session store, terminal channel, New session and Dismiss routes, Board | terminal-tab-S1 | merged | done | medium | M1, D1 |
 | 2 | R1 | No `-p` send to a hosted session | terminal-tab-R1 | merged | done | medium | M1 |
 | 2 | N1 | New session form, ⋯ New session, Open terminal on the Next step card | terminal-tab-N1 | merged | done | medium | M1, L1, F1 |
-| 3 | T1 | Terminal tab: xterm view, stop bar, Dismiss, browser rule | terminal-tab-T1 | https://github.com/alvionlabs/openaflow/pull/130 | pushed | medium | M1, L1, F1, S1, N1 |
-| 3 | E2 | Electron product-path checks, the `cmd.exe` route on Windows, CI, docs | terminal-tab-E2 | https://github.com/alvionlabs/openaflow/pull/130 | pushed | medium | D1, S1 |
+| 3 | T1 | Terminal tab: xterm view, stop bar, Dismiss, browser rule | terminal-tab-T1 | merged | done | medium | M1, L1, F1, S1, N1 |
+| 3 | E2 | Electron product-path checks, the `cmd.exe` route on Windows, CI, docs | terminal-tab-E2 | merged | done | medium | D1, S1 |
 
 ## Shared contract
 
@@ -261,3 +261,26 @@ type HostedSession = {
 - **Depends on:** D1, S1
 - **One-way door:** none
 - **Model:** opus
+
+## Sprint summary
+
+- **Synced with merge-target:** up to date (`pod-staging` has no commits the plan branch lacks).
+- **Slices shipped:** M1, D1, X1, L1, F1, S1, R1, N1, T1, E2, plus the wave 2 and wave 3 fixes.
+- **Waves:** wave 1 PR #125, wave 2 PR #126, wave 3 PR #130 — all auto-merged (no one-way doors).
+- **Queue entries:** resolved 1 this sprint (M1's BLOCKED, answered by the human), plus the `cmd.exe` route part of a host-core entry (E2); deferred 16 — the pending `sprint: terminal-tab` entries in [handoff-queue.md](../../handoff-queue.md): human tasks (sign in once in `~/.openaflow-test-claude` for X1's real proofs; the trust-prompt check by hand), copy and Look decisions (waiting card words, New session errors, stop bar and Dismiss words, the full path under the terminal, two popup styles, light-theme ANSI contrast set to 4.5), behaviour decisions (where a new session sits, repo row order, the session store's five choices, a 504 that blocks the repo, main silent after quit), and notes for session-life (`WaitingTab.tsx` hosted rows, untested tab paths, `real-tests.mjs` substring match).
+- **Slice log:**
+  - M1: opus · medium · test-first yes · runtime production start with a fixture · 2 NOTEs · time lost: a BLOCKED one-line chip in a file it didn't own (human said yes)
+  - D1: opus · medium · test-first yes · runtime `pnpm desktop`, messages posted on the server's real `parentPort` · 6 NOTEs · time lost none
+  - X1: opus · medium · test-first partly — the gate only; the three real proofs skip until the signed-in test folder exists · runtime six skip runs · 2 NOTEs · time lost none
+  - L1: opus · medium · test-first yes · runtime a scratch page with the real Listbox, Modal, and xterm, 1280 and 375 px, light and dark · 3 NOTEs · time lost none
+  - F1: sonnet · medium · test-first yes · runtime none (no screen; fake ports) · 4 NOTEs · time lost none (removed its worktree with `--force`)
+  - S1: opus · medium · test-first yes · runtime `pnpm desktop` with a fake `claude`: start, hook, exit, Dismiss, quit, server and host crash · 3 NOTEs · time lost none
+  - R1: opus · medium · test-first partly — two tests red only with the model line removed · runtime a production server with the fake `claude` · 3 NOTEs · time lost none
+  - N1: opus · medium · test-first partly — render tests written after the code · runtime the real `electron .` window, form, list, and modal at 1280 and 375 px · 7 NOTEs · time lost a few minutes (a fake `claude` path, the 785 px minimum width)
+  - Wave 2 fix: opus · medium · test-first yes · runtime the real window and the browser build · the repo row read "Nothing to do" while a session ran
+  - T1: opus · medium · test-first partly — the form-by-keys test had no red · runtime the real window, the browser build, an app restart · 3 NOTEs · time lost none
+  - E2: opus · medium · test-first partly — the Windows shims test never went red · runtime `pnpm desktop` and `server.mjs` with a fake `claude`; CI on both systems · 2 NOTEs · time lost about 10 min (a second CI round)
+  - Wave 3 fix: opus · medium · test-first yes · runtime real Electron focus checks, a temporary no-hook run for the waiting dot · no focus after Open terminal, a blue waiting dot
+  - No stalls. Orchestrator: the wave 2 check drove New session in the real window with Playwright and a fake `claude`.
+- **Agent context at hand-back:** 2,117,149 tokens over the 12 engineer runs — *each agent's final context size, not tokens billed*.
+
