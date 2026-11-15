@@ -2,7 +2,7 @@ import { realpathSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildRepoModel, type AgentRun, type Board, type BoardRepo, type NewActionEntry, type PrStatus, type RepoFiles, type ResumeResult } from '@openaflow/model'
+import { buildRepoModel, type AgentRun, type Board, type BoardRepo, type HostedSession, type NewActionEntry, type PrStatus, type RepoFiles, type ResumeResult } from '@openaflow/model'
 import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createApp } from './app.ts'
@@ -155,6 +155,40 @@ describe('resume route', () => {
       expect(x.logged).toEqual([])
       expect(x.events).toEqual([])
     }
+  })
+
+  test('hosted session', async () => {
+    // The session runs in the app's terminal host, in any state: no -p send, for continue or go.
+    const states: [HostedSession['state'], Partial<HostedSession>][] = [
+      ['starting', {}],
+      ['live', {}],
+      ['ended', { exitCode: 0 }],
+      ['stopped', { stopReason: 'app closed' }],
+    ]
+    for (const [state, over] of states) {
+      // A continue stop, a fresh plan (go), and a run whose agent writes under the id the session got after /clear.
+      const board = boardOf(
+        hostedIn(planRepo(SPRINT_DONE), state, ['sess-1'], over),
+        hostedIn(planRepo(FRESH, { id: 'id-f' }), state, ['sess-1'], over),
+        hostedIn(planRepo(SPRINT_DONE, { id: 'id-c', session: 'sess-new' }), state, ['sess-start', 'sess-new'], over),
+      )
+      // Checked before busy: a hosted session is refused even while its files are active.
+      const s = setup({ board, idle: false })
+      await s.store.set('/r', 'alpha', true)
+      await expectRes(await s.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 409, { error: 'hosted session' }, state)
+      await expectRes(await s.resume({ repoId: 'id-f', run: 'alpha', reply: 'go' }), 409, { error: 'hosted session' }, state)
+      await expectRes(await s.resume({ repoId: 'id-c', run: 'alpha', reply: 'continue' }), 409, { error: 'hosted session' }, state)
+      // Nothing ran, nothing was logged or rebuilt, no lock was held, and the toggle's stop is still due.
+      expect(s.starts, state).toEqual([])
+      expect(s.logged, state).toEqual([])
+      expect(s.events, state).toEqual([])
+      expect(s.idleAsked, state).toEqual([])
+      expect(s.inFlight.size, state).toBe(0)
+      expect(s.store.list(), state).toEqual([{ path: '/r', run: 'alpha' }])
+    }
+    // The same run with no hosted session sends, as before.
+    const free = setup({ board: boardOf(planRepo(SPRINT_DONE)) })
+    await expectRes(await free.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
   })
 
   test('sends only sendable replies', async () => {
@@ -498,3 +532,9 @@ function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string 
 }
 
 const boardOf = (...repos: BoardRepo[]): Board => ({ generatedAt: NOW, gh: 'ok', repos })
+
+/** `repo` with one hosted session in `state`, holding `sessions`. */
+function hostedIn(repo: BoardRepo, state: HostedSession['state'], sessions: string[], over: Partial<HostedSession> = {}): BoardRepo {
+  const hosted: HostedSession = { marker: `m-${repo.id}`, sessionId: sessions[0]!, liveSession: sessions.at(-1)!, sessions, skill: 'plan', startedAt: NOW - 30 * MIN, state, hooked: true, prompted: true, ...over }
+  return { ...repo, hosted: [hosted] }
+}
