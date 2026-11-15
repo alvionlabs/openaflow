@@ -1,6 +1,6 @@
 # Sprint: Session life
 
-_From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: active · Generated: 2026-11-15_
+_From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: archived · Generated: 2026-11-15_
 <!-- autopilot-run: started=2026-11-15T09:51:09Z sprints=0 waves=3 -->
 
 ## Status board
@@ -16,8 +16,8 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: act
 | 2 | D2 | Main: quit dialog, ending sessions, leftovers, window events | session-life-D2 | merged | done | medium | H2, E1, J1 |
 | 2 | W2 | Terminal tab: Resume, can't resume, saved screen, untested paths | session-life-W2 | merged | done | medium | M2 |
 | 2 | W3 | Host banner, Ending overlay, hosted Waiting rows, reply card | session-life-W3 | merged | done | medium | M2 |
-| 3 | U2 | Restart now asks the quit question | session-life-U2 | https://github.com/alvionlabs/openaflow/pull/145 | pushed | medium | D2 |
-| 3 | X2 | Electron checks for quit, crashes, and Resume; CI; docs | session-life-X2 | https://github.com/alvionlabs/openaflow/pull/145 | pushed | medium | H2, C2, S3, D2, W2, W3 |
+| 3 | U2 | Restart now asks the quit question | session-life-U2 | merged | done | medium | D2 |
+| 3 | X2 | Electron checks for quit, crashes, and Resume; CI; docs | session-life-X2 | merged | done | medium | H2, C2, S3, D2, W2, W3 |
 
 ## Shared contract
 
@@ -265,3 +265,27 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: session-life · Status: act
 - **Depends on:** H2, C2, S3, D2, W2, W3
 - **One-way door:** none
 - **Model:** opus
+
+## Sprint summary
+
+- **Synced with merge-target:** up to date (`pod-staging` has no commits the plan branch lacks).
+- **Slices shipped:** H2, E1, J1, M2, C2, S3, D2, W2, W3, U2, X2, plus the wave 2 fix and the wave 3 fix (two rounds).
+- **Waves:** wave 1 PR #135 and wave 2 PR #141 — one-way doors, merged by the human after gate 6 (wave 2 after a hands-on check in the desktop app); wave 3 PR #145 — auto-merged after a gate 1 halt (GPG signing timed out) and a gate 4 halt (Windows CI red; the human chose to fix it now).
+- **Queue entries:** resolved 13 this sprint (the two wave 2 one-way doors and the two wave 1 doors, the gate 1, gate 4, and gate 6 halts, the harness `cmd.exe` note, and notes); deferred 15 — the pending `sprint: session-life` entries in [handoff-queue.md](../../handoff-queue.md): human checks (real `claude` Resume after a host kill on Linux; on Windows, a session's background command ends at quit), behaviour decisions (SIGTERM asks the quit box, a failed box counts as Cancel, Windows helper exit ends leftovers, a late `started` after a Resume 504 leaves two rows, the 504 row on "Starting", the window before the first Windows job assign, the stale-port reading, E1's three choices, J1's 2 s `close`, the main-silent-after-quit rules), copy decisions (Resume error words and the one alert box, the banner hidden on `failed`), and the silent-port hang (before hosting).
+- **Slice log:**
+  - H2: opus · medium · test-first yes · runtime real node-pty and the real Electron host, a never-acking port stalled then moved · 2 NOTEs · time lost none
+  - E1: opus · medium · test-first yes (guards proved by mutation) · runtime a real tree with a SIGHUP/SIGTERM-ignoring child and a `setsid` orphan ended in about 6.5 s · 3 NOTEs · time lost none
+  - J1: opus · medium · test-first yes · runtime Node processes in a Job Object on `windows-latest` · 1 NOTE · time lost none
+  - M2: opus · medium · test-first yes (one case by mutation) · runtime n/a (types and labels) · 2 NOTEs · time lost none
+  - C2: opus · medium · test-first yes · runtime a fake `claude` in `openaflow-run-<marker>.scope`, ended by the stop argv · 1 NOTE · time lost none
+  - S3: opus · medium · test-first yes · runtime `pnpm desktop` with a fake `claude`: New session in a scope, the screen route, Resume, a restart sweep, Dismiss · 5 NOTEs · time lost none
+  - D2: opus · medium · test-first partly — two tests green before the code, one red a TypeError · runtime the Electron harness: Cancel, a SIGTERM quit that ended a signal-ignoring child, a restart reading `app closed` · 3 NOTEs, 1 SOLVED · time lost none
+  - W2: opus · medium · test-first yes (some reds via stubs or a removed gate) · runtime the real Electron app on a trial merge with S3: end, Resume, host kill with the saved screen, can't resume, Dismiss · 3 NOTEs, 2 SOLVED · time lost about 10 min on script loading
+  - W3: sonnet · medium · test-first yes · runtime the banner in the real app via SIGSTOP; the overlay on a fake bridge · 4 NOTEs · time lost none
+  - U2: opus · medium · test-first yes · runtime a packaged Linux AppImage with a test feed: Restart now Cancel and confirm · 2 NOTEs · time lost a GPG block and about 27 min on a relaunched AppImage that kept its proof running
+  - X2: opus · medium · test-first yes (two tests on merged code shown to fail by flipping preconditions; the real-`claude` proof never ran) · runtime the Electron harness: quit, crash leftovers, Resume, banner · 4 NOTEs · time lost a GPG block and 2 CI rounds on a fixture child that crashed itself
+  - Wave 2 fix: opus · medium · test-first yes (first red a TypeError) · runtime the harness: Cancel, then the tray's Open shows the window · 3 NOTEs · time lost none
+  - Wave 3 fix, round 1: opus · low · showed X2's "server outlives main" finding was the test killing Playwright's `cmd.exe` · 3 CI rounds · time lost about 30 min
+  - Wave 3 fix, round 2 (human-approved): opus · medium · test-first yes · cause from CI logs (the Windows job helper's cold start let a child start before the assign) · 3 CI rounds · time lost about 7 min on a C# compiler container
+  - Stalls: none. Halts: gate 6 twice (wave 1, wave 2), gate 1 (GPG), gate 4 (Windows CI).
+- **Agent context at hand-back:** about 2.51 M tokens — the sum of each agent's final context size (wave 1 0.72 M, wave 2 1.05 M, wave 3 0.75 M), not tokens billed.
