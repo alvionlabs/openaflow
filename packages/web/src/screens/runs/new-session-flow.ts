@@ -151,11 +151,17 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
   }
 }
 
+/** After a reload the line is gone, but the Board's `typeYourself` flag still asks for it. */
+export const TYPE_UNKNOWN = 'Type your start line in the terminal.'
+
 /** The lines a started session asked you to type yourself (`typeYourself`), by marker, until its Board shows `prompted`. */
 export type TypedLines = {
   remember(marker: string, line: string): void
-  /** The words to show for `s`, or undefined: once prompted, or for a session that ended or stopped. */
-  line(s: HostedSession): string | undefined
+  /**
+   * What to ask for `s`: `{ line }`, the raw line (the card puts it whole in one code span, as it may hold a backtick);
+   * `{}` when only the Board's flag is left (TYPE_UNKNOWN); undefined once prompted, or for a session that ended or stopped.
+   */
+  line(s: HostedSession): { line?: string } | undefined
 }
 
 export function createTypedLines(): TypedLines {
@@ -169,9 +175,9 @@ export function createTypedLines(): TypedLines {
       }
       if (s.state !== 'starting' && s.state !== 'live') return undefined
       const line = lines.get(s.marker)
-      if (line !== undefined) return `Type \`${line}\` in the terminal.`
+      if (line !== undefined) return { line }
       // After a reload only the Board's flag is left; the line itself was never stored.
-      return s.typeYourself ? 'Type your start line in the terminal.' : undefined
+      return s.typeYourself ? {} : undefined
     },
   }
 }

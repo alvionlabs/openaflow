@@ -178,18 +178,22 @@ describe('new session flow', () => {
     const { flow, typed, reply } = setup()
     flow.start(input())
     await reply(ok({ typeYourself: '/pod:plan add tags to notes' }))
-    // Shown on the session's row until the next Board shows it prompted.
-    expect(typed.line(session())).toBe('Type `/pod:plan add tags to notes` in the terminal.')
-    expect(typed.line(session({ state: 'starting' }))).toBe('Type `/pod:plan add tags to notes` in the terminal.')
+    // Shown on the session's row until the next Board shows it prompted: the raw line, for the card to put in one code span.
+    expect(typed.line(session())).toEqual({ line: '/pod:plan add tags to notes' })
+    expect(typed.line(session({ state: 'starting' }))).toEqual({ line: '/pod:plan add tags to notes' })
     expect(typed.line(session({ prompted: true }))).toBeUndefined()
     // Gone for good once prompted.
     expect(typed.line(session())).toBeUndefined()
+    // A line with a backtick stays whole.
+    const ticks = createTypedLines()
+    ticks.remember(MARKER, '/pod:task fix `npm ci`')
+    expect(ticks.line(session())).toEqual({ line: '/pod:task fix `npm ci`' })
     // An ended or stopped session asks nothing.
     const again = createTypedLines()
     again.remember(MARKER, '/pod:plan x')
     expect(again.line(session({ state: 'ended' }))).toBeUndefined()
-    // After a reload the line is gone, but the Board still says to type it: a line with no text.
-    expect(createTypedLines().line(session({ typeYourself: true }))).toBe('Type your start line in the terminal.')
+    // After a reload the line is gone, but the Board still says to type it: no line, so the card says it in words.
+    expect(createTypedLines().line(session({ typeYourself: true }))).toEqual({})
     expect(createTypedLines().line(session({ typeYourself: true, prompted: true }))).toBeUndefined()
     // No typeYourself in the answer: nothing to show.
     const plain = setup()

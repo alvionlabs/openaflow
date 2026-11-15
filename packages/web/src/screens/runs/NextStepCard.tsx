@@ -8,7 +8,7 @@ import { INITIAL, createAnswerFlow, formView, type AnswerState } from './answer-
 import { MergeConfirm, mergeButtonId, useMergeFlow } from './MergeConfirm.tsx'
 import { cardTerminal, codeParts, type NextItem } from './next-step.ts'
 import { NewSessionForm, useNewSession } from './NewSessionForm.tsx'
-import { TYPED } from './new-session-flow.ts'
+import { TYPE_UNKNOWN, TYPED } from './new-session-flow.ts'
 import { answerNote } from './queue-view.ts'
 import { ReplyPanel } from './ReplyPanel.tsx'
 import { INITIAL_RESOLVE, createResolveFlow, triageTarget, type ResolveState } from './resolve-flow.ts'
@@ -115,7 +115,13 @@ export function NextStepCard({ repo, run, card }: Props) {
         )}
         {typeLine && (
           <p className="next-detail next-type">
-            <CodeText text={typeLine} />
+            {typeLine.line === undefined ? (
+              TYPE_UNKNOWN
+            ) : (
+              <>
+                Type <code className="mono">{typeLine.line}</code> in the terminal.
+              </>
+            )}
           </p>
         )}
         {a.kind === 'answer' && card.entry && <TriageLine row={card.entry} />}
