@@ -43,7 +43,11 @@ export type ActionLogRow = { key: string; time: string; repo: string; target: st
 
 const isAuto = (e: ActionEntry): boolean => e.action === 'resume' && e.auto
 
-const SESSION_WORDS: Partial<Record<ActionEntry['action'], string>> = { 'new-session': 'New session', 'dismiss-session': 'Dismissed session' }
+const SESSION_WORDS: Partial<Record<ActionEntry['action'], string>> = {
+  'new-session': 'New session',
+  'dismiss-session': 'Dismissed session',
+  'resume-session': 'Resumed session',
+}
 
 /** A skill's command (`/pod:plan`) or `plain` as its label (`Plan`, `Plain session`); any other word as it is. */
 function skillWords(word: string): string {
