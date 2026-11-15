@@ -22,8 +22,8 @@ import {
 const MARKER = '6f1c2a9e-1111-4222-8333-944455556666'
 const MAIN = process.pid
 const PARENT = process.ppid
-const HOST = 900
-const SERVER = 901
+const HOST = 5000900
+const SERVER = 5000901
 
 type Proc = {
   pid: number
@@ -95,10 +95,10 @@ function fakeOs(procs: Proc[]) {
 const tree = (o: { ignore?: Signal[] } = {}): Proc[] => [
   { pid: 1, ppid: 0, pgid: 1, start: 1 },
   { pid: HOST, ppid: MAIN, pgid: HOST, start: 50 },
-  { pid: 1000, ppid: HOST, pgid: 1000, start: 100, env: marked },
-  { pid: 1001, ppid: 1000, pgid: 1000, start: 101, env: marked, ignores: o.ignore?.filter((s) => s === 'SIGHUP') },
-  { pid: 1002, ppid: 1000, pgid: 1002, start: 102, env: marked, ignores: o.ignore },
-  { pid: 1004, ppid: 1, pgid: 1004, start: 104, env: marked, ignores: o.ignore },
+  { pid: 5001000, ppid: HOST, pgid: 5001000, start: 100, env: marked },
+  { pid: 5001001, ppid: 5001000, pgid: 5001000, start: 101, env: marked, ignores: o.ignore?.filter((s) => s === 'SIGHUP') },
+  { pid: 5001002, ppid: 5001000, pgid: 5001002, start: 102, env: marked, ignores: o.ignore },
+  { pid: 5001004, ppid: 1, pgid: 5001004, start: 104, env: marked, ignores: o.ignore },
 ]
 
 function setup(procs: Proc[], o: { platform?: NodeJS.Platform; jobs?: JobControl } = {}) {
@@ -132,20 +132,20 @@ describe('fake OS', () => {
 
   test('linux order', async () => {
     const { os, stopCall, log, ender } = setup(tree({ ignore: ['SIGHUP', 'SIGTERM'] }))
-    const p = ender.end(MARKER, 1000, ['/usr/bin/systemctl', '--user', 'stop', 'x.scope'])
+    const p = ender.end(MARKER, 5001000, ['/usr/bin/systemctl', '--user', 'stop', 'x.scope'])
     stopCall()?.resolve()
     const ms = await timed(p)
     const order = os.calls.filter((c, i, all) => c !== 'scan' || all.indexOf('scan') === i)
-    expect(order.slice(0, 3)).toEqual(['stop /usr/bin/systemctl --user stop x.scope', 'scan', 'SIGHUP -1000'])
+    expect(order.slice(0, 3)).toEqual(['stop /usr/bin/systemctl --user stop x.scope', 'scan', 'SIGHUP -5001000'])
     const firstTerm = order.findIndex((c) => c.startsWith('SIGTERM'))
     const firstKill = order.findIndex((c) => c.startsWith('SIGKILL'))
     expect(firstTerm).toBeGreaterThan(2)
     expect(firstKill).toBeGreaterThan(firstTerm)
-    expect(order).toContain('SIGTERM -1000')
-    expect(order).toContain('SIGTERM 1004')
-    expect(order).toContain('SIGKILL 1002')
-    expect(order).toContain('SIGKILL 1004')
-    expect(os.table.has(1002) || os.table.has(1004)).toBe(false)
+    expect(order).toContain('SIGTERM -5001000')
+    expect(order).toContain('SIGTERM 5001004')
+    expect(order).toContain('SIGKILL 5001002')
+    expect(order).toContain('SIGKILL 5001004')
+    expect(os.table.has(5001002) || os.table.has(5001004)).toBe(false)
     expect(ms).toBeGreaterThanOrEqual(HUP_WAIT_MS + TERM_WAIT_MS)
     expect(ms).toBeLessThanOrEqual(HUP_WAIT_MS + TERM_WAIT_MS + LEFT_CHECK_MS + 200)
     expect(log).not.toHaveBeenCalled()
@@ -153,17 +153,17 @@ describe('fake OS', () => {
 
   test('linux order: all gone after SIGHUP ends the waits early and sends nothing more', async () => {
     const { os, ender } = setup([
-      { pid: 1000, ppid: HOST, pgid: 1000, start: 100, env: marked },
-      { pid: 1001, ppid: 1000, pgid: 1000, start: 101 },
+      { pid: 5001000, ppid: HOST, pgid: 5001000, start: 100, env: marked },
+      { pid: 5001001, ppid: 5001000, pgid: 5001000, start: 101 },
     ])
-    const ms = await timed(ender.end(MARKER, 1000))
-    expect(signals(os.calls)).toEqual(['SIGHUP -1000'])
+    const ms = await timed(ender.end(MARKER, 5001000))
+    expect(signals(os.calls)).toEqual(['SIGHUP -5001000'])
     expect(ms).toBeLessThan(500)
   })
 
   test('linux order: a group that ends at SIGTERM sends no SIGKILL', async () => {
     const { os, ender } = setup(tree({ ignore: ['SIGHUP'] }))
-    const ms = await timed(ender.end(MARKER, 1000))
+    const ms = await timed(ender.end(MARKER, 5001000))
     expect(signals(os.calls).some((c) => c.startsWith('SIGKILL'))).toBe(false)
     expect(ms).toBeGreaterThanOrEqual(HUP_WAIT_MS)
     expect(ms).toBeLessThan(HUP_WAIT_MS + 500)
@@ -174,7 +174,7 @@ describe('fake OS', () => {
     const { os, log, ender } = setup(procs)
     // A process in uninterruptible sleep: no signal ends it.
     os.kill = vi.fn((pid: number, sig: Signal) => void os.calls.push(`${sig} ${pid}`))
-    await timed(ender.end(MARKER, 1000))
+    await timed(ender.end(MARKER, 5001000))
     expect(log.mock.calls).toEqual([['openaflow desktop: session 6f1c2a9e left 4 processes']])
   })
 
@@ -185,76 +185,102 @@ describe('fake OS', () => {
       { pid: PARENT, ppid: 1, pgid: PARENT, start: 3, env: marked },
       { pid: HOST, ppid: MAIN, pgid: MAIN, start: 4, env: marked },
       { pid: SERVER, ppid: MAIN, pgid: MAIN, start: 5, env: marked },
-      { pid: 1000, ppid: HOST, pgid: 1000, start: 100, env: marked, ignores: ['SIGHUP', 'SIGTERM'] },
-      { pid: 1005, ppid: 1, pgid: 1005, start: 105, env: marked },
+      { pid: 5001000, ppid: HOST, pgid: 5001000, start: 100, env: marked, ignores: ['SIGHUP', 'SIGTERM'] },
+      { pid: 5001005, ppid: 1, pgid: 5001005, start: 105, env: marked },
     ])
-    // 1005 ends after the snapshot, and a new process takes its pid.
-    const p = ender.end(MARKER, 1000)
-    os.table.set(1005, { pid: 1005, ppid: 1, pgid: 1005, start: 999, env: marked })
+    // 5001005 ends after the snapshot, and a new process takes its pid.
+    const p = ender.end(MARKER, 5001000)
+    os.table.set(5001005, { pid: 5001005, ppid: 1, pgid: 5001005, start: 999, env: marked })
     await timed(p)
     const hit = signals(os.calls).map((c) => Number(c.split(' ')[1]))
-    for (const pid of [1, -1, 0, MAIN, -MAIN, PARENT, -PARENT, HOST, -HOST, SERVER, -SERVER, 1005, -1005]) expect(hit).not.toContain(pid)
-    expect(hit).toContain(1000)
+    for (const pid of [1, -1, 0, MAIN, -MAIN, PARENT, -PARENT, HOST, -HOST, SERVER, -SERVER, 5001005, -5001005]) expect(hit).not.toContain(pid)
+    expect(hit).toContain(5001000)
   })
 
   test('never signals: a root in main’s group, or pid 1, gets no group signal', async () => {
     const { os, ender } = setup([
       { pid: MAIN, ppid: PARENT, pgid: MAIN, start: 2 },
-      { pid: 1000, ppid: MAIN, pgid: MAIN, start: 100, env: marked },
+      { pid: 5001000, ppid: MAIN, pgid: MAIN, start: 100, env: marked },
     ])
-    await timed(ender.end(MARKER, 1000))
+    await timed(ender.end(MARKER, 5001000))
     expect(signals(os.calls).every((c) => !c.includes(' -'))).toBe(true)
-    expect(signals(os.calls)).toContain('SIGHUP 1000')
+    expect(signals(os.calls)).toContain('SIGHUP 5001000')
     const one = setup([{ pid: 1, ppid: 0, pgid: 1, start: 1, env: marked }])
     await timed(one.ender.end(MARKER, 1))
     expect(signals(one.os.calls)).toEqual([])
   })
 
+  test('never signals: a group that holds a kept pid goes one by one', async () => {
+    // The server sits in the root's own group: the group is never signalled, the root alone is.
+    const { os, ender } = setup([
+      { pid: 5001000, ppid: HOST, pgid: 5001000, start: 100, env: marked, ignores: ['SIGHUP'] },
+      { pid: SERVER, ppid: MAIN, pgid: 5001000, start: 5 },
+    ])
+    await timed(ender.end(MARKER, 5001000))
+    expect(signals(os.calls)).toEqual(['SIGHUP 5001000', 'SIGTERM 5001000'])
+  })
+
+  test('never signals: a group id taken by a stranger after the snapshot', async () => {
+    const { os, ender } = setup([
+      { pid: 5001000, ppid: HOST, pgid: 5001000, start: 100, env: marked },
+      { pid: 5001004, ppid: 1, pgid: 5001004, start: 104, env: marked, ignores: ['SIGHUP'] },
+    ])
+    // The root ends at SIGHUP; a new process gets its pid and leads a group of the same id.
+    const kill = os.kill
+    os.kill = (pid, sig) => {
+      kill(pid, sig)
+      if (sig === 'SIGHUP') os.table.set(5001000, { pid: 5001000, ppid: 1, pgid: 5001000, start: 999 })
+    }
+    await timed(ender.end(MARKER, 5001000))
+    expect(signals(os.calls)).toEqual(['SIGHUP -5001000', 'SIGTERM 5001004'])
+    expect(os.table.has(5001000)).toBe(true)
+  })
+
   test('stop command edges', async () => {
     // Fails: one line, and the signals go on.
     const a = setup(tree())
-    const pa = a.ender.end(MARKER, 1000, ['/bin/false'])
+    const pa = a.ender.end(MARKER, 5001000, ['/bin/false'])
     a.stopCall()?.reject(new Error('exit 1'))
     await timed(pa)
-    expect(signals(a.os.calls)[0]).toBe('SIGHUP -1000')
+    expect(signals(a.os.calls)[0]).toBe('SIGHUP -5001000')
     expect(a.log.mock.calls).toEqual([['openaflow desktop: session 6f1c2a9e stop command failed: exit 1']])
     // Hangs: the runner is told to give up at 6 s, and the end is done within 7 s.
     const b = setup(tree({ ignore: ['SIGHUP', 'SIGTERM'] }))
-    const pb = b.ender.end(MARKER, 1000, ['/usr/bin/sleep', '60'])
+    const pb = b.ender.end(MARKER, 5001000, ['/usr/bin/sleep', '60'])
     const call = b.stopCall()
     expect(call?.limit).toBe(STOP_LIMIT_MS)
     setTimeout(() => call?.reject(new Error('no exit in 6 s')), STOP_LIMIT_MS)
     const ms = await timed(pb)
     expect(ms).toBeLessThanOrEqual(7_000)
-    expect(signals(b.os.calls)).toContain('SIGKILL 1004')
+    expect(signals(b.os.calls)).toContain('SIGKILL 5001004')
     expect(b.log.mock.calls).toEqual([['openaflow desktop: session 6f1c2a9e stop command failed: no exit in 6 s']])
     // A runner that throws at once counts as a failure too.
     const c = setup(tree())
     c.os.runStop = () => {
       throw new Error('ENOENT')
     }
-    await timed(c.ender.end(MARKER, 1000, ['/missing']))
+    await timed(c.ender.end(MARKER, 5001000, ['/missing']))
     expect(c.log.mock.calls).toEqual([['openaflow desktop: session 6f1c2a9e stop command failed: ENOENT']])
-    expect(signals(c.os.calls)[0]).toBe('SIGHUP -1000')
+    expect(signals(c.os.calls)[0]).toBe('SIGHUP -5001000')
   })
 
   test('no pid', async () => {
     const a = setup(tree())
     await timed(a.ender.end(MARKER, 0))
     expect(signals(a.os.calls).some((c) => c.startsWith('SIGHUP'))).toBe(false)
-    expect(signals(a.os.calls).sort()).toEqual(['SIGTERM 1000', 'SIGTERM 1001', 'SIGTERM 1002', 'SIGTERM 1004'])
+    expect(signals(a.os.calls).sort()).toEqual(['SIGTERM 5001000', 'SIGTERM 5001001', 'SIGTERM 5001002', 'SIGTERM 5001004'])
 
-    const b = setup(tree({ ignore: ['SIGTERM'] }).filter((p) => p.pid !== 1000 && p.pid !== 1001))
+    const b = setup(tree({ ignore: ['SIGTERM'] }).filter((p) => p.pid !== 5001000 && p.pid !== 5001001))
     const pb = b.ender.sweep(MARKER, ['/usr/bin/systemctl', '--user', 'stop', 'x.scope'])
     b.stopCall()?.resolve()
     const ms = await timed(pb)
     expect(b.os.calls[0]).toBe('stop /usr/bin/systemctl --user stop x.scope')
-    expect(signals(b.os.calls)).toEqual(['SIGTERM 1002', 'SIGTERM 1004', 'SIGKILL 1002', 'SIGKILL 1004'])
+    expect(signals(b.os.calls)).toEqual(['SIGTERM 5001002', 'SIGTERM 5001004', 'SIGKILL 5001002', 'SIGKILL 5001004'])
     expect(ms).toBeGreaterThanOrEqual(TERM_WAIT_MS)
     expect(ms).toBeLessThanOrEqual(TERM_WAIT_MS + LEFT_CHECK_MS + 200)
 
     // Nothing holds the marker: no signal, no line, no wait.
-    const c = setup([{ pid: 2000, ppid: 1, pgid: 2000, start: 200 }])
+    const c = setup([{ pid: 5002000, ppid: 1, pgid: 5002000, start: 200 }])
     expect(await timed(c.ender.sweep(MARKER))).toBeLessThan(100)
     expect(signals(c.os.calls)).toEqual([])
     expect(c.log).not.toHaveBeenCalled()
@@ -267,20 +293,20 @@ describe('fake OS', () => {
       close: vi.fn(async (id: string) => void order.push(`close ${id}`)),
       dispose: vi.fn(),
     }
-    const a = setup([{ pid: 4000, ppid: 1, pgid: 4000, start: 1 }], { platform: 'win32', jobs })
+    const a = setup([{ pid: 5004000, ppid: 1, pgid: 5004000, start: 1 }], { platform: 'win32', jobs })
     a.os.taskkill = vi.fn(async (pid: number) => {
       order.push(`taskkill ${pid}`)
       a.os.table.delete(pid)
     })
-    await timed(a.ender.end(MARKER, 4000, ['/usr/bin/systemctl']))
-    expect(order).toEqual([`close ${MARKER}`, 'taskkill 4000'])
+    await timed(a.ender.end(MARKER, 5004000, ['/usr/bin/systemctl']))
+    expect(order).toEqual([`close ${MARKER}`, 'taskkill 5004000'])
     expect(a.os.calls.some((c) => c.startsWith('stop') || c === 'scan' || c.startsWith('SIG'))).toBe(false)
     expect(a.log).not.toHaveBeenCalled()
 
     // A survivor: taskkill ends nothing; one line after 3 s.
-    const b = setup([{ pid: 4001, ppid: 1, pgid: 4001, start: 1 }], { platform: 'win32', jobs })
+    const b = setup([{ pid: 5004001, ppid: 1, pgid: 5004001, start: 1 }], { platform: 'win32', jobs })
     b.os.taskkill = vi.fn(async () => {})
-    const ms = await timed(b.ender.end(MARKER, 4001))
+    const ms = await timed(b.ender.end(MARKER, 5004001))
     expect(ms).toBeGreaterThanOrEqual(WINDOWS_WAIT_MS)
     expect(ms).toBeLessThan(WINDOWS_WAIT_MS + 300)
     expect(b.log.mock.calls).toEqual([['openaflow desktop: session 6f1c2a9e left 1 processes']])
@@ -292,9 +318,9 @@ describe('fake OS', () => {
     await timed(c.ender.sweep(MARKER))
     expect(order).toEqual([`close ${MARKER}`, `close ${MARKER}`])
     expect(c.os.taskkill).not.toHaveBeenCalled()
-    const d = setup([{ pid: 4002, ppid: 1, pgid: 4002, start: 1 }], { platform: 'win32', jobs })
+    const d = setup([{ pid: 5004002, ppid: 1, pgid: 5004002, start: 1 }], { platform: 'win32', jobs })
     d.os.taskkill = () => new Promise(() => {})
-    expect(await timed(d.ender.end(MARKER, 4002))).toBeLessThan(WINDOWS_WAIT_MS + 300)
+    expect(await timed(d.ender.end(MARKER, 5004002))).toBeLessThan(WINDOWS_WAIT_MS + 300)
 
     // A job close that fails logs one line and the taskkill goes on; a protected pid is never taken.
     const e = setup([{ pid: SERVER, ppid: 1, pgid: SERVER, start: 1 }], {
@@ -317,7 +343,7 @@ import { fileURLToPath } from 'node:url'
 const me = fileURLToPath(import.meta.url)
 const [role, out, clear] = process.argv.slice(2)
 const report = (o) => appendFileSync(out, JSON.stringify({ role, pid: process.pid, ...o }) + '\\n')
-const listen = () => new Promise((r) => { const s = createServer((c) => c.end()); s.listen(0, '127.0.0.1', () => r(s.address().port)) })
+const listen = () => new Promise((r) => { const s = createServer((c) => c.end(out)); s.listen(0, '127.0.0.1', () => r(s.address().port)) })
 const keep = () => setInterval(() => {}, 1000)
 const env = clear === 'clear' ? {} : process.env
 if (role === 'leader') {
@@ -364,14 +390,19 @@ function probeScope(): { ok: true; run: string; ctl: string } | { ok: false; rea
   return { ok: true, run, ctl }
 }
 
-const portRefused = (port: number) =>
+/**
+ * True when our listener on the port is gone: the connect is refused, or another program that took the port since
+ * answers. Each fixture listener answers with its own out-file path, which no other program knows.
+ */
+const portClosed = (port: number, token: string) =>
   new Promise<boolean>((resolve) => {
     const s = connect(port, '127.0.0.1')
-    s.once('connect', () => {
-      s.destroy()
-      resolve(false)
-    })
-    s.once('error', () => resolve(true))
+    let got = ''
+    s.setEncoding('utf8')
+    s.on('data', (d) => (got += d))
+    s.setTimeout(2_000, () => s.destroy())
+    s.once('close', () => resolve(got !== token))
+    s.once('error', () => {})
   })
 
 describe.runIf(process.platform === 'linux')('real processes', () => {
@@ -440,6 +471,9 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
     })
     const t = await ready(['leader', 'child', 'stubborn', 'launcher', 'orphan'])
     expect(readStat(proc, t.orphan!.pid)?.ppid).not.toBe(t.leader!.pid)
+    // The check sees our listeners while they run.
+    expect(await portClosed(t.stubborn!.port!, join(dir, 'out.jsonl'))).toBe(false)
+    expect(await portClosed(t.orphan!.port!, join(dir, 'out.jsonl'))).toBe(false)
     const os = realEnderOs()
     const sent: string[] = []
     const kill = os.kill
@@ -451,14 +485,31 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
     const ender = createSessionEnder({ platform: 'linux', os, protectedPids: () => [], log })
     const t0 = Date.now()
     await ender.end(marker, leader.pid!)
-    expect(Date.now() - t0).toBeLessThan(7_500)
+    // About 7 s by the steps; the margin is for a loaded machine (the fake-timer cases hold the 7 s rule).
+    expect(Date.now() - t0).toBeLessThan(10_000)
     for (const role of ['leader', 'child', 'stubborn', 'orphan']) expect(gone(t[role]!.pid), role).toBe(true)
     expect(sent).toContain(`SIGHUP -${t.leader!.pid}`)
     expect(sent).toContain(`SIGKILL ${t.stubborn!.pid}`)
-    expect(await portRefused(t.stubborn!.port!)).toBe(true)
-    expect(await portRefused(t.orphan!.port!)).toBe(true)
+    expect(await portClosed(t.stubborn!.port!, join(dir, 'out.jsonl'))).toBe(true)
+    expect(await portClosed(t.orphan!.port!, join(dir, 'out.jsonl'))).toBe(true)
     expect(log).not.toHaveBeenCalled()
   }, 30_000)
+
+  test('stop command edges: the real runner', async () => {
+    const os = realEnderOs()
+    await expect(os.runStop([process.execPath, '-e', 'process.exit(0)'], 5_000)).resolves.toBeUndefined()
+    await expect(os.runStop([process.execPath, '-e', 'process.exit(3)'], 5_000)).rejects.toThrow('exit 3')
+    await expect(os.runStop([join(dir, 'missing')], 5_000)).rejects.toThrow('ENOENT')
+    // A hung command is killed at its limit.
+    const pidFile = join(dir, 'hung.pid')
+    const hung = os.runStop([process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`], 1_500)
+    await expect(hung).rejects.toThrow('no exit in 1.5 s')
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    expect(pid).toBeGreaterThan(1)
+    const until = Date.now() + 2_000
+    while (readStat(proc, pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 50))
+    expect(readStat(proc, pid)).toBeNull()
+  })
 
   const scope = probeScope()
   if (!scope.ok) console.log(`session-ender › real scope skipped: ${scope.reason}`)
@@ -484,7 +535,7 @@ describe.runIf(process.platform === 'linux')('real processes', () => {
       const until = Date.now() + 2_000
       while (!gone(t.orphan!.pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 50))
       for (const role of ['leader', 'child', 'orphan']) expect(gone(t[role]!.pid), role).toBe(true)
-      expect(await portRefused(t.orphan!.port!)).toBe(true)
+      expect(await portClosed(t.orphan!.port!, join(dir, 'out.jsonl'))).toBe(true)
       expect(log).not.toHaveBeenCalled()
     } finally {
       spawnSync(scope.ctl, ['--user', 'stop', unit], { timeout: 5_000, stdio: 'ignore', windowsHide: true })
