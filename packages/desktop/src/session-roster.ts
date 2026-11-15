@@ -47,6 +47,10 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
   let labels = new Map<string, string>()
   /** Ids already ended or swept here, so none is taken twice. */
   const taken = new Set<string>()
+  /** Ids ended while they waited for their pid: a late `started` ends them again, with the pid. */
+  const pidless = new Set<string>()
+  /** Ends and sweeps under way; `endAll` waits for all of them. */
+  const inflight = new Set<Promise<void>>()
   let ending: Promise<void> | undefined
 
   const prefix = (id: string) => `openaflow desktop: session ${id.slice(0, 8)}`
@@ -55,11 +59,19 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
   /** The ender never rejects; this keeps a broken one from rejecting a quit. */
   const settle = (p: Promise<void>) => p.catch((err) => o.log(`openaflow desktop: session end failed: ${String(err)}`))
 
+  const track = (run: () => Promise<void>) => {
+    const p = settle(Promise.resolve().then(run))
+    inflight.add(p)
+    void p.finally(() => inflight.delete(p))
+    return p
+  }
+
   const take = (id: string, run: () => Promise<void>) => {
     taken.add(id)
     const e = entries.get(id)
+    if (e?.state === 'starting') pidless.add(id)
     if (e) e.state = 'ended'
-    return settle(Promise.resolve().then(run))
+    return track(run)
   }
 
   const flushed = async () => {
@@ -82,6 +94,8 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
       runs.push(take(id, () => (state === 'ended' ? o.ender.sweep(id, stop) : o.ender.end(id, state === 'live' ? pid : 0, stop))))
     }
     await Promise.all(runs)
+    // A late pid, a lost sweep, or a server sweep that began meanwhile.
+    while (inflight.size > 0) await Promise.all([...inflight])
   }
 
   return {
@@ -92,7 +106,14 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
     started(id, pid) {
       const e = entries.get(id) ?? { id, pid: 0, state: 'starting' as RosterState }
       entries.set(id, e)
-      if (taken.has(id)) return
+      if (taken.has(id)) {
+        // Ended at pid 0 before its program ran: end it once more, now with the pid. No job: it ends now.
+        if (pidless.delete(id)) {
+          e.pid = pid
+          void track(() => o.ender.end(id, pid, e.stop))
+        }
+        return
+      }
       e.pid = pid
       e.state = 'live'
       const jobs = o.platform === 'win32' ? o.jobs : undefined

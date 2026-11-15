@@ -109,10 +109,31 @@ describe('end all', () => {
   })
 
   test('an ender that throws still lets endAll resolve', async () => {
-    const { roster, ender } = setup()
+    const { roster, ender, log } = setup()
     vi.mocked(ender.end).mockImplementation(() => Promise.reject(new Error('boom')))
     roster.started(A, 1000)
     await expect(roster.endAll()).resolves.toBeUndefined()
+    expect(ender.end).toHaveBeenCalledOnce()
+    expect(log.mock.calls).toEqual([['openaflow desktop: session end failed: Error: boom']])
+  })
+
+  test('a pid that arrives after its session was ended at pid 0 is ended once with it', async () => {
+    const jobs = { assign: vi.fn(async () => true), close: vi.fn(async () => {}), dispose: vi.fn() }
+    const { roster, calls, finish } = setup({ platform: 'win32', jobs })
+    roster.starting(C, STOP(C))
+    const p = roster.endAll()
+    await vi.advanceTimersByTimeAsync(0)
+    roster.started(C, 3000)
+    roster.started(C, 3000)
+    await vi.advanceTimersByTimeAsync(0)
+    finish()
+    await vi.advanceTimersByTimeAsync(0)
+    finish()
+    await p
+    expect(calls).toEqual(['flush', 'end c 0 stop', 'end c 3000 stop'])
+    // It ends now, so a job would come too late.
+    expect(jobs.assign).not.toHaveBeenCalled()
+    expect(roster.live()).toEqual([])
   })
 })
 
