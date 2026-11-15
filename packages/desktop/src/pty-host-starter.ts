@@ -143,6 +143,7 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
     run = undefined
     if (r) dropAnswers(r, EXITED)
     const lost = live.splice(0)
+    o.log(`${LOG} lost sessions: ${lost.length === 0 ? 'none' : lost.join(', ')}`)
     if (restartsLeft === 0) {
       emit({ type: 'crashed', lost, restartsLeft: 0 })
       state = 'failed'
@@ -160,7 +161,8 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
   const onMessage = (r: Run, m: unknown) => {
     const line = hostLogLine(m)
     if (line !== undefined) o.log(line)
-    if (run !== r || !isRecord(m)) return
+    // During a stop only the exit counts: a beat or a late ready must not report a host that is going away.
+    if (run !== r || stopping || !isRecord(m)) return
     if (m.type === 'ready' && !r.ready) {
       r.ready = true
       clearTimeout(readyTimer)
