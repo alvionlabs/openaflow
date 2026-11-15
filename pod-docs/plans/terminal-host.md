@@ -117,7 +117,7 @@ sequenceDiagram
 | host-core | The pty host, node-pty, the hooks plugin, and packaging (the Windows installer and a new Linux AppImage), proved on Windows and Linux; a session starts and replays | done | — |
 | terminal-tab | New session with the skill dropdown, the Terminal tab, and the hosted run states on the current run screen | done | host-core |
 | session-life | Quit, ending process trees, Resume, crashes, the heartbeat banner, and updates | done | terminal-tab |
-| settings | The settings page: Open at login, scrollback, run wrapper, and stop command | planned | session-life |
+| settings | The settings page: Open at login, scrollback, run wrapper, and stop command | active | session-life |
 
 ## Look
 No new look. The human checked the new screens in the current look on 2026-11-13 ("The rest design looks very nice to me") and asked for one change: a skill dropdown in New session, now drawn in the draft.
