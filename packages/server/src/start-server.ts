@@ -28,6 +28,7 @@ import { createResumeRoutes } from './resume-routes.ts'
 import { createIdleCheck } from './session-activity.ts'
 import { createOwnerFile } from './owner-file.ts'
 import { createStopPath, guardOutput, linkParent, type ParentChannel } from './parent-link.ts'
+import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createHookReader, createSessionStore, followChannel, reconcileSessions } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
@@ -144,6 +145,7 @@ export async function startServer(
       source: watcher,
       web,
       tools,
+      screens: createScreenRoutes({ store: sessions, configDir }),
       addRepo: (p) => addRepo(configFile, p, platform),
       timeline: createTimelineSource({ board: () => watcher.board(), ...settings, now: Date.now }).timeline,
       actions: new Hono()
