@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { CLOSED, TYPEAHEAD_MS, closeListbox, hoverAt, listboxKey, pickAt, toggleListbox, type ListboxItem, type ListboxKey, type ListboxState } from './listbox.ts'
+import { CLOSED, TYPEAHEAD_MS, closeListbox, hoverAt, listPlacement, listboxKey, pickAt, toggleListbox, type ListboxItem, type ListboxKey, type ListboxState } from './listbox.ts'
 
 // The "Start with" listbox (sprint terminal-tab §8): a button that opens a list of options, Plain session after a
 // divider. Focus stays on the button; the keys follow the select-only combobox pattern, with wrap.
@@ -216,6 +216,31 @@ describe('listbox', () => {
     expect(none.press('ArrowDown').handled).toBe(false)
     expect(none.state.open).toBe(false)
     expect(toggleListbox([], 'x', CLOSED).open).toBe(false)
+  })
+})
+
+describe('list placement', () => {
+  // The list is fixed to the viewport, so a modal panel's overflow never clips it.
+  const button = { top: 100, bottom: 140, left: 40, width: 320 }
+  const vp = { width: 1280, height: 900 }
+
+  it('under the button, as wide, 4 px below, with the room left as its height cap', () => {
+    expect(listPlacement(button, vp, 360)).toEqual({ top: 144, left: 40, width: 320, maxHeight: 420 })
+    expect(listPlacement({ ...button, top: 500, bottom: 540 }, vp, 300)).toEqual({ top: 544, left: 40, width: 320, maxHeight: 900 - 544 - 8 })
+  })
+
+  it('above the button when the list fits there and not below', () => {
+    const low = { ...button, top: 700, bottom: 740 }
+    expect(listPlacement(low, vp, 360)).toEqual({ bottom: 900 - 700 + 4, left: 40, width: 320, maxHeight: 420 })
+  })
+
+  it('stays below when neither side fits and below has more room, and never leaves the viewport', () => {
+    const mid = { top: 200, bottom: 240, left: 300, width: 320 }
+    const short = { width: 375, height: 600 }
+    const p = listPlacement(mid, short, 900)
+    expect(p).toEqual({ top: 244, left: 375 - 8 - 320, width: 320, maxHeight: 600 - 244 - 8 })
+    // A button wider than the viewport keeps the margin on the left.
+    expect(listPlacement({ ...mid, left: 0, width: 400 }, short, 100).left).toBe(8)
   })
 })
 

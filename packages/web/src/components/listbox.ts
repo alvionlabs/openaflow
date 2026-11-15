@@ -142,3 +142,25 @@ export function pickAt(items: readonly ListboxItem[], state: ListboxState, index
 export function hoverAt(items: readonly ListboxItem[], state: ListboxState, index: number): ListboxState {
   return isOption(items, index) && index !== state.active ? { ...state, active: index } : state
 }
+
+export type Rect = { top: number; bottom: number; left: number; width: number }
+export type Placement = { top?: number; bottom?: number; left: number; width: number; maxHeight: number }
+
+const GAP = 4
+const MARGIN = 8
+const MAX_HEIGHT = 420
+
+/**
+ * Where the open list goes, fixed to the viewport: as wide as the button, 4 px under it, or over it when the list
+ * fits there and not under it. Its height cap is the room on that side, less an 8 px margin, and 420 px at most.
+ */
+export function listPlacement(button: Rect, viewport: { width: number; height: number }, listHeight: number): Placement {
+  const below = viewport.height - button.bottom - GAP - MARGIN
+  const above = button.top - GAP - MARGIN
+  const under = listHeight <= below || (listHeight > above && below >= above)
+  const left = Math.max(MARGIN, Math.min(button.left, viewport.width - MARGIN - button.width))
+  const maxHeight = Math.max(0, Math.min(MAX_HEIGHT, under ? below : above))
+  return under
+    ? { top: button.bottom + GAP, left, width: button.width, maxHeight }
+    : { bottom: viewport.height - button.top + GAP, left, width: button.width, maxHeight }
+}

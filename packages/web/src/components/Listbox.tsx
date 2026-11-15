@@ -1,8 +1,8 @@
 // A listbox button: a field-styled button that opens a list of options (label, slash command, one muted line).
 // Focus stays on the button. The rules are in listbox.ts; this file only wires them.
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Icon } from '../theme/icons.tsx'
-import { CLOSED, closeListbox, hoverAt, listboxKey, pickAt, toggleListbox, type ListboxItem, type ListboxStep } from './listbox.ts'
+import { CLOSED, closeListbox, hoverAt, listboxKey, listPlacement, pickAt, toggleListbox, type ListboxItem, type ListboxStep } from './listbox.ts'
 import './listbox.css'
 
 export type ListboxProps = {
@@ -21,11 +21,32 @@ export function Listbox({ id, labelledBy, items, value, onChange, disabled }: Li
   const optionId = (i: number) => `${listId}-${i}`
   const [state, setState] = useState(CLOSED)
   const listRef = useRef<HTMLUListElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   const apply = (step: ListboxStep) => {
     setState(step.state)
     if (step.pick !== undefined && step.pick !== value) onChange(step.pick)
   }
+
+  // While open, the list is fixed to the viewport by the button, so a modal panel's overflow never clips it.
+  // It follows the button on any scroll and on resize.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    const button = buttonRef.current
+    if (!state.open || !list || !button) return
+    const place = () => {
+      const p = listPlacement(button.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight }, list.scrollHeight)
+      const px = (n: number | undefined) => (n === undefined ? '' : `${n}px`)
+      Object.assign(list.style, { top: px(p.top), bottom: px(p.bottom), left: px(p.left), width: px(p.width), maxHeight: px(p.maxHeight) })
+    }
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [state.open])
 
   // Keep the active option in view as the keys move it.
   useEffect(() => {
@@ -42,6 +63,7 @@ export function Listbox({ id, labelledBy, items, value, onChange, disabled }: Li
   return (
     <div className="listbox">
       <button
+        ref={buttonRef}
         id={id}
         type="button"
         role="combobox"
@@ -81,7 +103,7 @@ export function Listbox({ id, labelledBy, items, value, onChange, disabled }: Li
         id={listId}
         role="listbox"
         aria-labelledby={labelledBy}
-        className="menu listbox-list"
+        className="listbox-list"
         hidden={!state.open}
         // A press anywhere in the list keeps focus on the button, so no blur closes it before the click lands.
         onMouseDown={(e) => e.preventDefault()}
