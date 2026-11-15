@@ -29,6 +29,8 @@ export type StarterEvent =
   /** The host ended outside a stop. `lost`: the sessions that were live in it. */
   | { type: 'crashed'; lost: string[]; restartsLeft: number }
   | { type: 'failed' }
+  /** A session ended: once per id, and only for one that was live. */
+  | { type: 'exit'; id: string; exitCode: number }
 
 export type StarterState = 'idle' | 'starting' | 'ready' | 'unresponsive' | 'failed' | 'stopped'
 export type StopResult = 'stopped' | 'killed' | 'not running'
@@ -46,6 +48,8 @@ export type PtyHostStarter = {
   list(): Promise<SessionInfo[]>
   /** Resolves once sent; the `exit` follows. */
   kill(id: string): Promise<void>
+  /** Removes the session from a ready host, with no `exit`. With no ready host, nothing: no host holds it. */
+  dispose(id: string): void
   /** Hands a window's port to the ready host. False when no host is ready. */
   connect(port: unknown): boolean
   /** The ids between `started` and `exit`, in start order. */
@@ -118,6 +122,13 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
     }
     for (const w of r.lists.splice(0)) w.reject(new Error(error))
   }
+  /** Takes an id out of the live set; true if it was there. */
+  const leave = (id: string) => {
+    const at = live.indexOf(id)
+    if (at < 0) return false
+    live.splice(at, 1)
+    return true
+  }
   const dropWaiting = () => {
     for (const w of waiting.splice(0)) w.reject(new Error(UNAVAILABLE))
   }
@@ -182,9 +193,9 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
       take(r.starts, m.id)?.resolve({ pid: m.pid })
     } else if (m.type === 'start-failed' && typeof m.id === 'string') {
       take(r.starts, m.id)?.reject(new Error(typeof m.error === 'string' ? m.error : 'start failed'))
-    } else if (m.type === 'exit' && typeof m.id === 'string') {
-      const at = live.indexOf(m.id)
-      if (at >= 0) live.splice(at, 1)
+    } else if (m.type === 'exit' && typeof m.id === 'string' && typeof m.exitCode === 'number') {
+      // Only an id that leaves the live set reports, so each exit reaches the listeners once.
+      if (leave(m.id)) emit({ type: 'exit', id: m.id, exitCode: m.exitCode })
     } else if (m.type === 'snapshot' && typeof m.id === 'string' && (m.text === null || typeof m.text === 'string')) {
       take(r.snapshots, m.id)?.resolve(m.text)
     } else if (m.type === 'list' && Array.isArray(m.sessions) && m.sessions.every(isSession)) {
@@ -285,6 +296,12 @@ export function createPtyHostStarter(o: { fork(): HostProcess; log(line: string)
         post(r, { type: 'kill', id })
         w.resolve()
       }),
+    dispose(id) {
+      if (!run?.ready || stopping) return
+      // The host kills a live session on dispose and sends no exit, so it leaves the live set here.
+      leave(id)
+      post(run, { type: 'dispose', id })
+    },
     connect(port) {
       if (!run?.ready || stopping) return false
       post(run, { type: 'connect' }, [port])
