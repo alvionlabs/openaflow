@@ -72,6 +72,20 @@ The desktop app runs terminals for `claude` sessions in its own process, the pty
 - **Windows shims** (Windows only): a readable npm shim runs the fake with the shim's `node.exe` and the prompt whole (its `&` shows no `cmd.exe` read it). Then the shim is rewritten with no `"%dp0%\…" %*` line: the start goes through `cmd.exe`, the args are `--session-id` and `--plugin-dir` with no prompt, the answer's `typeYourself` is the prompt, and the Board's record has `typeYourself: true`.
 - **Packaged:** only the new session and the Windows shims.
 
+`packages/desktop/src/real-quit.test.ts` and `real-resume.test.ts` (session-life §10) start sessions through the New session route with `packages/desktop/test/fixtures/life-claude.mjs` as `claude`, set up as for `real-session`. The fake records each start (with its `/proc/self/cgroup` on Linux) in `starts.jsonl`, prints `life-claude args: <JSON>`, writes its `SessionStart` line at once for `--session-id` (`startup`) or `--resume` (`resume`), and echoes input. When the test writes a `child-gate` file beside it, the fake starts a detached child with the session's env, and on Linux, if asked, a `setsid -f` child with an empty env (no child of the fake, outside its group, no `OPENAFLOW_RUN`). Each child listens on `127.0.0.1` and records its pid and port in `children.jsonl`. The test writes the transcript Resume needs. Shared helpers sit in `electron-harness.ts` (`makeLifeWorld` and the rest).
+
+- **No session, no question:** a quit with no session logs no question, and the app ends.
+- **Cancel keeps everything:** `quit.answer('cancel')`, then a quit: the log says `cancel`, and 3 s later the app, the server, the live record, the fake, the child, and the child's port are all still there.
+- **Quit ends the session tree:** a confirmed quit leaves no fake, no child, and no open port within 10 s, and `<config dir>/screens/<marker>.txt` holds the fake's output.
+- **Scope** (Linux): runs only when the fake's cgroup is `openaflow-run-<marker>.scope`, else skips and prints why. The env-cleared child is checked to be outside the fake's tree, group, and env, so only the scope's stop can end it; a confirmed quit ends it within 10 s.
+- **Host crash leftovers:** a SIGKILL on the host; the detached child and its port are gone within 10 s.
+- **App crash leftovers:** a SIGKILL on main, a wait for main and the server to go, and the child still runs (Linux). The next start on the same folders reads `stopped · app closed`, ends the child, starts nothing, and its host holds no session.
+- **Resume through the route:** after a host kill, `resume-session` answers `200 started` with a new marker; the fake's args are `--resume <session> --plugin-dir <dir>`; the old record, hook file, and screen file are gone; the new record is live and hooked on the same session; a repeat is `404 no session`.
+- **Resume from the tab:** after an app restart, the Terminal tab shows the saved screen, faded, under **Resume** and **Dismiss**; Resume brings up the resumed fake in xterm, and typed text echoes.
+- **Can't resume:** with no transcript, the Board reads `resume: 'no conversation'`, the route answers `409 can't resume: no conversation`, and the stop bar reads `Can't resume` with Dismiss only.
+- **Host banner** (Linux): SIGSTOP on the host shows `Terminals are not responding.` (after the 11 s beat limit); SIGCONT hides it, with the same host.
+- **Packaged:** `real-resume` runs all four on a `pnpm package --test-hooks` build; `real-quit` runs unpackaged only.
+
 CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see [codebase-structure.md](../codebase-structure.md#ci)).
 
 ## Why it's this way
@@ -86,7 +100,8 @@ CI runs these in `electron (ubuntu-latest)` and `electron (windows-latest)` (see
 
 - On Windows, ConPTY lets about 300,000 characters through after an ack resumes the pty, before the pause holds again. Flow control limits memory, not the exact count.
 - A kill on Windows while the session waits for its pid may let the program run for a moment (see Proved where).
-- After a host crash, the sessions' programs are no longer the host's. In the spike, real `claude` ended in about 1 s from the closed pty's SIGHUP ([terminal-host-spike.md](../research/terminal-host-spike.md)). The session ender that ends leftovers comes with the session-life work in the plan. The test fixture ends itself after 5 minutes for this reason.
+- After a host crash, the sessions' programs are no longer the host's. In the spike, real `claude` ended in about 1 s from the closed pty's SIGHUP ([terminal-host-spike.md](../research/terminal-host-spike.md)). Main's session ender then sweeps what is left (`real-quit` › `host crash leftovers`). The test fixtures still end themselves after 5 minutes, so a leftover from a failed test never runs on.
+- `real-quit` ends only the pids the fixture recorded. Never stop `openaflow-run-*` scopes by wildcard: your own sessions use that prefix.
 - Three `real-*` files in one `pnpm test:electron` call run side by side. CI runs one file a step.
 - `pnpm test:electron <name>` runs every `real-*` file whose name holds `<name>`: `real-terminal` also runs `real-terminal-tab`. Use `real-terminal.test` for the first alone.
 - `real-start` runs Electron's own binary on `dist/main.cjs`, not the harness, so it has no packaged run.

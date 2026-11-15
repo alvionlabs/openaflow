@@ -79,14 +79,16 @@ describe('pod-ci.yml', () => {
     // One file a step: vitest runs files side by side, and three Electron apps at once make the timings flaky.
     // real-start runs Electron's own binary on dist/main.cjs, so it has no packaged run. `real-terminal.test`, since
     // `pnpm test:electron` runs every file whose name holds the word, and `real-terminal` is in `real-terminal-tab`.
-    const unpackaged = ['real-start', 'real-pty-proof', 'real-terminal.test', 'real-session', 'real-terminal-tab'].map((name) => at(new RegExp(`test:electron ${name}$`), false))
-    const packaged = ['real-pty-proof', 'real-terminal.test', 'real-session'].map((name) => at(new RegExp(`test:electron ${name}$`), true))
+    // real-quit and real-resume (session-life §10): both unpackaged, then real-resume on the packaged build too.
+    const unpackaged = ['real-start', 'real-pty-proof', 'real-terminal.test', 'real-session', 'real-terminal-tab', 'real-quit', 'real-resume'].map((name) => at(new RegExp(`test:electron ${name}$`), false))
+    const packaged = ['real-pty-proof', 'real-terminal.test', 'real-session', 'real-resume'].map((name) => at(new RegExp(`test:electron ${name}$`), true))
     expect([...unpackaged, ...packaged].every((i) => i >= 0), JSON.stringify({ unpackaged, packaged })).toBe(true)
     expect(at(/test:electron real-start/, true)).toBe(-1)
     expect(at(/test:electron real-terminal-tab/, true)).toBe(-1)
+    expect(at(/test:electron real-quit/, true)).toBe(-1)
     for (const i of [...unpackaged, ...packaged]) expect(steps[i]?.run).toMatch(/^\$\{\{ matrix\.display \}\} pnpm test:electron real-[a-z-]+(\.test)?$/)
-    // Each step's name picks exactly one file: today's, and the Terminal tab's, which comes in the same wave.
-    const files = new Set([...readdirSync(join(ROOT, 'packages', 'desktop', 'src')).filter((f) => /^real-.*\.test\.ts$/.test(f)), 'real-terminal-tab.test.ts'])
+    // Each step's name picks exactly one file.
+    const files = new Set(readdirSync(join(ROOT, 'packages', 'desktop', 'src')).filter((f) => /^real-.*\.test\.ts$/.test(f)))
     for (const s of steps) {
       const name = /test:electron (\S+)$/.exec(s.run ?? '')?.[1]
       if (name !== undefined) expect([...files].filter((f) => f.includes(name)), s.run).toHaveLength(1)
