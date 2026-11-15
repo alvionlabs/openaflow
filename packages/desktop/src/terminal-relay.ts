@@ -132,7 +132,9 @@ export function startTerminalRelay(o: {
     const { id } = spec
     const problem = stop === undefined ? undefined : stopProblem(stop)
     if (problem !== undefined) o.log(`${STOP_LOG}: ${problem}`)
-    o.roster.starting(id, problem === undefined ? (stop as string[] | undefined) : undefined)
+    // A start for an id main already holds is the host's `id in use`: the roster keeps the session it has.
+    const fresh = !starting.has(id) && !o.starter.held().includes(id)
+    if (fresh) o.roster.starting(id, problem === undefined ? (stop as string[] | undefined) : undefined)
     starting.set(id, undefined)
     const done = (m: Answer, sendHeldExit: boolean) => {
       const held = starting.get(id)
@@ -148,7 +150,7 @@ export function startTerminalRelay(o: {
         done({ op: 'started', req, id, pid }, true)
       },
       (err: unknown) => {
-        o.roster.ended(id)
+        if (fresh) o.roster.ended(id)
         done({ op: 'start-failed', req, id, error: errorText(err) }, false)
       },
     )
@@ -174,7 +176,12 @@ export function startTerminalRelay(o: {
         (sessions) => answer(reply, { op: 'list', req: op.req, sessions }),
         (err: unknown) => answer(reply, { op: 'list-failed', req: op.req, error: errorText(err) }),
       )
-    } else o.starter.dispose(op.id)
+    } else {
+      // The host ends a disposed session with no `exit`. From here the roster only sweeps its marker: its pid may
+      // be another program's by the quit.
+      o.starter.dispose(op.id)
+      o.roster.ended(op.id)
+    }
   })
 
   const offStarter = o.starter.onEvent((e) => {

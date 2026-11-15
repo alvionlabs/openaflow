@@ -481,4 +481,38 @@ describe('the terminal relay', () => {
     expect(t.roster.live()).toEqual([])
     expect(t.roster.sessions()).toEqual([{ id: 'run-a', pid: 5, state: 'ended' }])
   })
+
+  test('dispose and a repeated start keep the roster right', async () => {
+    const s = setup()
+    s.starter.start()
+    s.ready()
+    s.ask({ op: 'start', req: 1, spec: spec('run-a'), stop: STOP })
+    await settle()
+    s.host().message({ type: 'started', id: 'run-a', pid: 5 })
+    await settle()
+    // The host ends a disposed session with no exit: the roster hears it here, so a quit never ends pid 5 again
+    // (it may be another program by then); it only sweeps the marker.
+    s.ask({ op: 'dispose', id: 'run-a' })
+    expect(s.roster.live()).toEqual([])
+    const all = s.roster.endAll()
+    // The host's flushed never comes here: the flush ends at its 2 s.
+    await vi.advanceTimersByTimeAsync(2_000)
+    await all
+    expect(s.ender.end).not.toHaveBeenCalled()
+    expect(s.ender.sweep.mock.calls).toEqual([['run-a', STOP]])
+
+    // A second start for a live id: the host refuses it, and the live one stays live in the roster.
+    const t = setup()
+    t.starter.start()
+    t.ready()
+    t.ask({ op: 'start', req: 1, spec: spec('run-b'), stop: STOP })
+    await settle()
+    t.host().message({ type: 'started', id: 'run-b', pid: 6 })
+    await settle()
+    t.ask({ op: 'start', req: 2, spec: spec('run-b') })
+    await settle()
+    t.host().message({ type: 'start-failed', id: 'run-b', error: 'id in use' })
+    await settle()
+    expect(t.roster.live()).toEqual([{ id: 'run-b', pid: 6, stop: STOP, state: 'live' }])
+  })
 })
