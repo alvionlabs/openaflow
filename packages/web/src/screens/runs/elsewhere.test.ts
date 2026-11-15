@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRepoModel, listRuns, type Board, type BoardRepo, type Claim, type PrStatus, type RunSummary } from '@openaflow/model'
+import { buildRepoModel, listRuns, type Board, type BoardRepo, type Claim, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
 import { hashFor } from '../../selection.ts'
 import { elsewhere, type Elsewhere } from './elsewhere.ts'
@@ -333,5 +333,37 @@ describe('elsewhere after Remove repo', () => {
   it('the banner goes away when the removed repo was the only one that outranked the open run', () => {
     expect(winner(selected, gone)).toBe('b')
     expect(pick(selected)).toBeUndefined()
+  })
+})
+
+// Hosted sessions (terminal-tab N1): the start card and the waiting card never raise the banner.
+describe('hosted cards', () => {
+  const waitingSession: HostedSession = {
+    marker: 'mark-1',
+    sessionId: 'sess-x',
+    liveSession: 'sess-x',
+    sessions: ['sess-x'],
+    skill: 'plan',
+    startedAt: NOW - 120_000,
+    state: 'live',
+    hooked: false,
+    prompted: false,
+  }
+  const files = { 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': '' }
+  const bare = (id: string, extra: Partial<BoardRepo> = {}): BoardRepo => ({ id, name: id, path: `/${id}`, source: 'registered', model: buildRepoModel(files), agents: [], prs: [], claims: [], ...extra })
+
+  it('raise no urgent banner', () => {
+    const calm = repoOf('calm', [onlyQueue(), manual])
+    const start = bare('start')
+    const waiting = bare('wait', { hosted: [waitingSession] })
+    const board: Board = { generatedAt: NOW, gh: 'ok', repos: [calm, start, waiting] }
+    const runs = listRuns(board, NOW)
+    const of = (id: string) => runs.find((r) => r.repoId === id)!
+    // The cards are there.
+    expect(nextSteps(of('start'), start, NOW)?.card.action.kind).toBe('new-session')
+    expect(nextSteps(of('wait'), waiting, NOW)?.card.key).toBe('waiting:mark-1')
+    // From a calm run, neither raises the banner.
+    expect(elsewhere(runs, board, of('calm'), NOW)).toBeUndefined()
+    expect(elsewhere(runs, board, of('start'), NOW)).toBeUndefined()
   })
 })

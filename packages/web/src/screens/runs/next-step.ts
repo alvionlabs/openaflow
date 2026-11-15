@@ -4,9 +4,26 @@
 // the pending tier sorted by stops first (the model's `stopsRun`), then by kind (entry-kind.ts).
 // An entry that doesn't stop the run wears the run's own status; an entry that joins no plan stays
 // listed but never takes a run's card (a repo row keeps a real stop as its card).
+// Hosted sessions (terminal-tab N1): a repo row with no open session gets the start card (the New session form);
+// a row whose shown session waits for you gets the waiting card (Open terminal), ranked as a pending entry pod goes on
+// without, so it raises no toast and no urgent banner; a hosted run's reply says to type the word in the terminal.
 // Pure; the card and the tab only render these.
 
-import { haltGate, holdsRun, isAnswerable, stopsRun, waitingPrs, type BoardRepo, type QueueItem, type RunSummary, type WaitingPr } from '@openaflow/model'
+import {
+  haltGate,
+  holdsRun,
+  isAnswerable,
+  rowSessions,
+  sessionView,
+  shownSession,
+  stopsRun,
+  waitingPrs,
+  type BoardRepo,
+  type HostedSession,
+  type QueueItem,
+  type RunSummary,
+  type WaitingPr,
+} from '@openaflow/model'
 import { KIND_ORDER } from './entry-kind.ts'
 import { waitingEntries, waitingRows, type WaitingRow } from './queue-view.ts'
 import { kindChip } from './waiting-tab.ts'
@@ -18,6 +35,10 @@ export type NextAction =
   | { kind: 'answer'; repoId: string; line: string }
   | { kind: 'merge'; repoId: string; number: number }
   | { kind: 'reply'; panel: ReplyPanelView }
+  /** The start card: the New session form for this repo. */
+  | { kind: 'new-session'; repoId: string }
+  /** The waiting card: Open terminal on this row's Terminal tab. */
+  | { kind: 'open-terminal' }
   | { kind: 'none' }
 export type NextItem = {
   /** Stable across Boards: `entry:<line>`, `pr:<number>`, `reply:<run>`; a repeated line gets `#2`, `#3`. */
@@ -46,6 +67,15 @@ export const BLOCKED_DETAIL = 'The run is stopped until you answer.'
 export const PENDING_DETAIL = 'pod goes on with the value in use until you answer.'
 /** A gate or hand-back that holds nothing right now: an engineer works past it (`holdsRun`). */
 export const AT_WORK_DETAIL = 'An engineer is at work on this run. Answer when you can.'
+
+export const START_TITLE = 'No active plan'
+export const START_DETAIL = 'Pick what to start, then describe it.'
+export const WAITING_TITLE = 'Claude waits for you in the terminal'
+export const WAITING_DETAIL = 'It may ask you to trust this folder or to sign in. The app never answers for you.'
+export const HOSTED_STOPPED = "This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before."
+/** The browser build's words in place of the form, and of Open terminal (sprint terminal-tab §7's browser rule). */
+export const DESKTOP_START = 'Open the desktop app to start a session.'
+export const DESKTOP_TERMINAL = 'Open the desktop app to use the terminal.'
 
 const TITLE_MAX = 80
 
@@ -111,10 +141,15 @@ const prItem = (pr: WaitingPr, repoId: string): NextItem => ({
   action: { kind: 'merge', repoId, number: pr.number },
 })
 
-/** One item for the whole panel, worded by its first sendable row, else its first row. */
+/** One item for the whole panel, worded by its first sendable row, else its first row. A hosted run's says to type it in the terminal. */
 function replyItem(panel: ReplyPanelView): NextItem | undefined {
   const row = panel.rows.find((r) => r.send !== undefined) ?? panel.rows[0]
   if (!row) return undefined
+  if (panel.hosted) {
+    const { word, stopped } = panel.hosted
+    const detail = stopped ? HOSTED_STOPPED : `Open the terminal and type \`${word}\`.`
+    return { key: `reply:${panel.target.run}`, tier: 'reply', status: 'needs-you', title: `Send ${word}`, detail, action: { kind: 'reply', panel } }
+  }
   return {
     key: `reply:${panel.target.run}`,
     tier: 'reply',
@@ -128,6 +163,32 @@ function replyItem(panel: ReplyPanelView): NextItem | undefined {
 /** What the run does, for a card that isn't asking you to stop anything. */
 const runStatus = (run: RunSummary): NextStatus =>
   run.state === 'blocked' || run.state === 'needs-you' || run.state === 'running' ? run.state : 'idle'
+
+/** The waiting card: pending, but pod goes on without it, so it outranks nothing elsewhere and sends no toast. */
+const waitingItem = (s: HostedSession): NextItem => ({
+  key: `waiting:${s.marker}`,
+  tier: 'pending',
+  status: 'needs-you',
+  goesOn: true,
+  title: WAITING_TITLE,
+  detail: WAITING_DETAIL,
+  action: { kind: 'open-terminal' },
+})
+
+/** A readable repo row whose shown session isn't starting or live: the place to start a new session. */
+function canStart(run: RunSummary, shown: HostedSession | undefined): boolean {
+  if (run.plan !== undefined || run.state === 'error' || run.state === 'unsupported') return false
+  return shown === undefined || (shown.state !== 'starting' && shown.state !== 'live')
+}
+
+const startCard = (run: RunSummary, repo: BoardRepo): NextItem => ({
+  key: 'new-session',
+  tier: 'nothing',
+  status: runStatus(run),
+  title: START_TITLE,
+  detail: START_DETAIL,
+  action: { kind: 'new-session', repoId: repo.id },
+})
 
 function nothingCard(run: RunSummary, repo: BoardRepo): NextItem {
   const status = runStatus(run)
@@ -158,11 +219,40 @@ export function nextSteps(run: RunSummary | undefined, repo: BoardRepo | undefin
   const panel = replyPanel(run, repo, now)
   const reply = panel && replyItem(panel)
   if (reply) items.push(reply)
+  const shown = shownSession(rowSessions(repo, run.plan, now))
+  if (shown && sessionView(shown, now) === 'waiting') items.push(waitingItem(shown))
   // A stable sort: list order holds within a tier, and within a kind in the pending tier.
   const sorted = items.sort(byTier)
   const first = sorted.find((i) => !unjoined.has(i.key))
   if (first && ACTION_TIERS.has(first.tier)) return { card: first, rest: sorted.filter((i) => i !== first) }
-  return { card: nothingCard(run, repo), rest: sorted }
+  return { card: canStart(run, shown) ? startCard(run, repo) : nothingCard(run, repo), rest: sorted }
+}
+
+/**
+ * What the card draws for a terminal: `detail` (in place of the item's), the New session `form`, the Open terminal
+ * button, or the desktop `note` in its place. `terminals`: the desktop app's terminal bridge is there.
+ */
+export type CardTerminal = { detail?: string; form: boolean; openTerminal: boolean; note?: string }
+
+export function cardTerminal(card: NextItem, terminals: boolean): CardTerminal {
+  const a = card.action
+  if (a.kind === 'new-session') return terminals ? { detail: START_DETAIL, form: true, openTerminal: false } : { detail: DESKTOP_START, form: false, openTerminal: false }
+  if (a.kind !== 'open-terminal' && !(a.kind === 'reply' && a.panel.hosted)) return { form: false, openTerminal: false }
+  const detail = card.detail === undefined ? {} : { detail: card.detail }
+  return terminals ? { ...detail, form: false, openTerminal: true } : { ...detail, form: false, openTerminal: false, note: DESKTOP_TERMINAL }
+}
+
+/** `text` cut at its backticks: the parts between a pair show as code. An unpaired backtick stays text. */
+export function codeParts(text: string): { code: boolean; text: string }[] {
+  const out: { code: boolean; text: string }[] = []
+  let at = 0
+  for (const m of text.matchAll(/`([^`]+)`/g)) {
+    if (m.index > at) out.push({ code: false, text: text.slice(at, m.index) })
+    out.push({ code: true, text: m[1]! })
+    at = m.index + m[0].length
+  }
+  if (at < text.length) out.push({ code: false, text: text.slice(at) })
+  return out
 }
 
 export type GateTitle = { title: string; link?: { text: string; href: string } }
@@ -211,3 +301,4 @@ function entryTitle(body: string): Pick<NextItem, 'title' | 'titleLink'> {
   if (!gate) return { title: short(body) }
   return gate.link ? { title: gate.title, titleLink: gate.link } : { title: gate.title }
 }
+

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { buildRepoModel, listRuns, type AgentRun, type Board, type BoardRepo, type Claim, type PrStatus } from '@openaflow/model'
+import { buildRepoModel, listRuns, type AgentRun, type Board, type BoardRepo, type Claim, type HostedSession, type PrStatus } from '@openaflow/model'
+import { nextSteps } from '@openaflow/web/next-step'
 import { hashFor } from '@openaflow/web/selection'
 import { loadFixture } from '../../model/test/load-fixture.ts'
 import { attentionItems } from './attention.ts'
@@ -242,5 +243,44 @@ describe('attention items', () => {
     expect(blocked).toMatchObject([{ title: "T1 can't reach the rates file." }])
     expect(blocked[0]?.run).toBe(chess().model.plans.find((p) => p.slug === PLAN)?.title)
     expect(items(sendable())).toMatchObject([{ title: 'Send continue' }])
+  })
+
+  // Hosted sessions (terminal-tab N1): the start card and the waiting card are calm; a hosted run's reply still counts.
+  test('hosted cards send no toast', () => {
+    const session = (over: Partial<HostedSession> = {}): HostedSession => ({
+      marker: 'mark-1',
+      sessionId: 'sess-x',
+      liveSession: 'sess-x',
+      sessions: ['sess-x'],
+      skill: 'plan',
+      startedAt: NOW - 2 * MIN,
+      state: 'live',
+      hooked: false,
+      prompted: false,
+      ...over,
+    })
+    const files = { 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': '' }
+    const bare = (extra: Partial<BoardRepo> = {}): BoardRepo => ({ id: 'notes', name: 'notes-app', path: '/n', source: 'registered', model: buildRepoModel(files), agents: [], prs: [], claims: [], ...extra })
+    const card = (repo: BoardRepo) => {
+      const row = listRuns(boardOf([repo]), NOW).find((r) => r.repoId === repo.id && r.plan === undefined)
+      return nextSteps(row, repo, NOW)?.card
+    }
+
+    // The start card on a repo with no plan: no item.
+    const start = bare()
+    expect(card(start)?.action.kind).toBe('new-session')
+    expect(items(start)).toEqual([])
+    // The waiting card on the repo row: no item.
+    const waiting = bare({ hosted: [session()] })
+    expect(card(waiting)).toMatchObject({ key: 'waiting:mark-1', tier: 'pending' })
+    expect(items(waiting)).toEqual([])
+    // The waiting card on a plan run: no item either.
+    const run = chess([manual, onlyQueue()], { agents: [engineer({ session: 'sess-x' })], hosted: [session()] })
+    expect(nextSteps(listRuns(boardOf([run]), NOW).find((r) => r.plan === PLAN), run, NOW)?.card.key).toBe('waiting:mark-1')
+    expect(items(run)).toEqual([])
+
+    // A hosted run's reply keeps its tier and its stop key: you type it in the terminal, so it still needs you.
+    const hosted = { ...sendable(), hosted: [session({ sessionId: 'sess-1', liveSession: 'sess-1', sessions: ['sess-1'], hooked: true })] }
+    expect(items(hosted)).toMatchObject([{ id: 'chess\nwave-merged:78', tier: 'reply', title: 'Send continue' }])
   })
 })
