@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test, type TestContext } from 'vitest'
 import {
@@ -8,6 +8,7 @@ import {
   healthy,
   hostedOf,
   launchLife,
+  LIFE_SIZE,
   lifeChildren,
   lifeChildrenUp,
   lifeDetails,
@@ -18,6 +19,7 @@ import {
   makeLifeWorld,
   packagedApp,
   portOpen,
+  postAction,
   removeWithRetry,
   sleep,
   testHooks,
@@ -194,6 +196,35 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const at = Date.now()
         process.kill(host!, 'SIGKILL')
         await lifeUntil('the leftover child ended', () => allGone(children.map((c) => c.pid), children), at + GONE_MS - Date.now(), w)
+        expect(await healthy(h)).toBe(true)
+      }),
+    )
+  }, RUN_MS)
+
+  test('host crash before the job', async (ctx) => {
+    await inWorld(ctx, (w) =>
+      withApp(w, async (h) => {
+        await lifeUntil('the repo on the Board', async () => (await lifeRepo(h, w)) !== undefined, 60_000, w)
+        await lifeUntil('the test hook', () => testHooks(h).ready(), 60_000, w)
+        const host = await testHooks(h).hostPid()
+        expect(host).toBeGreaterThan(0)
+        // The fake starts its child first thing, and the crash comes as soon as the child is up. On Windows the
+        // program then ends before the job helper's first assign (about 0.4 s), as in CI run 43779514743.
+        writeFileSync(join(w.bin, 'early-gate'), JSON.stringify(['detached']))
+        const answer = await postAction(h, 'new-session', { repoId: (await lifeRepo(h, w))!.id, skill: 'plain', text: '', ...LIFE_SIZE })
+        expect(answer.status, JSON.stringify(answer)).toBe(200)
+        const until = Date.now() + 15_000
+        while (lifeChildren(w).length === 0) {
+          if (Date.now() > until) throw new Error(`timed out waiting for the early child\n${lifeDetails(w)}`)
+          await sleep(10)
+        }
+        const at = Date.now()
+        process.kill(host!, 'SIGKILL')
+        const children = lifeChildren(w)
+        const pids = children.map((c) => c.pid)
+        await lifeUntil('the leftover child ended', () => allGone(pids, children), at + GONE_MS - Date.now(), w).catch(async (err: Error) => {
+          throw new Error(`${err.message}\nleft: ${await leftovers(pids, children)}`)
+        })
         expect(await healthy(h)).toBe(true)
       }),
     )

@@ -491,6 +491,50 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     await gone(early, 'the child it started before the assign')
   }, 60_000)
 
+  /** Starts a session that starts its child, then ends the session's program: the child's parent is gone. */
+  async function goneSession(name: string) {
+    const since = Date.now()
+    const a = await startSession(name)
+    const child = await a.go()
+    process.kill(a.self.pid)
+    await waitFor(() => !alive(a.self.pid), `${name} ends`)
+    expect(alive(child.pid) && (await portOpen(child.port))).toBe(true)
+    return { since, pid: a.self.pid, child }
+  }
+
+  test('a program gone before its assign: close still ends the child it started', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    // As in CI (real-quit, host crash): the program ends before the cold helper's first assign lands.
+    const a = await goneSession('a')
+    expect(await jobs.assign('a', a.pid, a.since)).toBe(false)
+    console.log(`windows-jobs: assign of a gone program: ${log.at(-1) ?? 'no log'}`)
+    await jobs.close('a')
+    await gone(a.child, `the child of the gone program. Log:\n${log.join('\n')}`)
+    expect(log).toEqual([`openaflow desktop: session a not in a job: error 87 at OpenProcess; 1 processes it started joined its job`])
+    jobs.dispose()
+  }, 60_000)
+
+  test('a program gone before its assign: helper exit ends the child it started', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await goneSession('a')
+    expect(await jobs.assign('a', a.pid, a.since)).toBe(false)
+    helpers[0]!.kill()
+    await gone(a.child, `the child of the gone program. Log:\n${log.join('\n')}`)
+  }, 60_000)
+
+  test('a gone program never pulls in a process born before its session', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await goneSession('a')
+    // A later session that the OS gave the same pid: what the old holder started is older than it.
+    await new Promise((r) => setTimeout(r, BIRTH_SLACK_MS + 500))
+    expect(await jobs.assign('later', a.pid, Date.now())).toBe(false)
+    expect(log).toEqual([`openaflow desktop: session later not in a job: error 87 at OpenProcess`])
+    await jobs.close('later')
+    helpers[0]!.kill()
+    await new Promise((r) => setTimeout(r, 1_000))
+    expect(alive(a.child.pid) && (await portOpen(a.child.port))).toBe(true)
+  }, 60_000)
+
   test('a failed assign answers false and keeps the helper for the next session', async () => {
     const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
     const done = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true })
@@ -498,7 +542,7 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     await new Promise((r) => done.once('exit', r))
     expect(await jobs.assign('gone', pid)).toBe(false)
     expect(log).toHaveLength(1)
-    expect(log[0]).toMatch(/^openaflow desktop: session gone not in a job: error \d+$/)
+    expect(log[0]).toMatch(/^openaflow desktop: session gone not in a job: error \d+ at OpenProcess$/)
 
     const a = await startSession('a')
     await assignTimed(jobs, 'a', a.self.pid)

@@ -11,6 +11,8 @@
 //   with an empty env, so it has its own session, is no child of the fake, and holds no OPENAFLOW_RUN. Each child
 //   listens on 127.0.0.1 and appends `{kind, pid, port, spawnedAt}` to `children.jsonl` (`spawnedAt`: the fake's
 //   clock at the spawn call, so a test can compare it with when the session joined its Windows job).
+// - An `early-gate` file in the same form, there before the fake starts: the fake takes it and starts those children
+//   first thing, before the session's Windows job can be made.
 // Everything ends on its own after 5 minutes, so a leftover never runs on. The fake also ends when its input ends.
 
 import { spawn } from 'node:child_process'
@@ -46,6 +48,7 @@ function fake() {
     cgroup = undefined
   }
   appendFileSync(join(here, 'starts.jsonl'), JSON.stringify({ pid: process.pid, execPath: process.execPath, args, cgroup }) + '\n')
+  takeGate(join(here, 'early-gate'), here)
   setTimeout(() => process.exit(0), LIFE_MS)
   process.stdout.write(`life-claude args: ${JSON.stringify(args)}\r\n`)
 
@@ -60,18 +63,7 @@ function fake() {
   }
 
   const gate = join(here, 'child-gate')
-  setInterval(() => {
-    if (!existsSync(gate)) return
-    const taken = `${gate}.${process.pid}`
-    try {
-      renameSync(gate, taken)
-    } catch {
-      return // Another start took it.
-    }
-    const kinds = JSON.parse(readFileSync(taken, 'utf8'))
-    for (const kind of kinds) startChild(kind, here)
-    process.stdout.write(`children asked: ${kinds.join(', ')}\r\n`)
-  }, 100)
+  setInterval(() => takeGate(gate, here), 100)
 
   let typed = ''
   process.stdin.setEncoding('utf8')
@@ -83,6 +75,20 @@ function fake() {
     for (const line of lines) process.stdout.write(`got:${line}\r\n`)
   })
   process.stdin.on('end', () => process.exit(0))
+}
+
+/** Takes the gate file, if there, and starts each child it lists. */
+function takeGate(gate, here) {
+  if (!existsSync(gate)) return
+  const taken = `${gate}.${process.pid}`
+  try {
+    renameSync(gate, taken)
+  } catch {
+    return // Another start took it.
+  }
+  const kinds = JSON.parse(readFileSync(taken, 'utf8'))
+  for (const kind of kinds) startChild(kind, here)
+  process.stdout.write(`children asked: ${kinds.join(', ')}\r\n`)
 }
 
 function startChild(kind, here) {
