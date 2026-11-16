@@ -1,10 +1,11 @@
-// Glue: the window, the tray, and the folder bridge's IPC. The rules are in window-rules, window-state, tray-menu,
-// login-item (the --hidden start), and folder-bridge.
+// Glue: the window, the tray, the folder bridge's IPC, and Open at login's. The rules are in window-rules,
+// window-state, tray-menu, login-item (the --hidden start and Open at login), and folder-bridge.
 
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { createFolderBridge, PICK_FOLDER_CHANNEL } from './folder-bridge.ts'
 import { isLoginStart } from './login-item.ts'
+import { startLoginItem } from './login-item-main.ts'
 import { APP_NAME } from './shell-config.ts'
 import type { ShellContext } from './shell-main.ts'
 import { trayMenu } from './tray-menu.ts'
@@ -106,12 +107,13 @@ export function startWindow(ctx: ShellContext): void {
     }
     return bridge.pick({ window: BrowserWindow.fromWebContents(e.sender) ?? undefined, isMainFrame: frame?.isMain ?? false, url: frame?.url ?? '' })
   })
+  startLoginItem({ env: ctx.env, origin: () => flow.origin(), appWindow: () => (appWindow?.isDestroyed() === false ? appWindow : undefined) })
 
   // Tray first: a login start has nothing else on the screen.
   tray = new Tray(icon('tray.png'))
   tray.setToolTip(APP_NAME)
   tray.on('click', () => bus.showWindow())
-  tray.setContextMenu(Menu.buildFromTemplate(trayMenu({ onOpen: () => bus.showWindow(), onQuit: () => app.quit() })))
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu({ onOpen: () => bus.showWindow(), onSettings: () => bus.showWindow('#settings'), onQuit: () => app.quit() })))
   bus.onAttention((on) => tray?.setImage(icon(on ? 'tray-dot.png' : 'tray.png')))
 
   // The window closes, and a show does nothing, only once the quit goes through: after a Cancel, Open still shows it.

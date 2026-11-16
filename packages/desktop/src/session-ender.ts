@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { procReader, readStat, snapshot, type ProcReader, type Snapshot } from './proc-scan.ts'
 
 /** J1 builds it (windows-jobs.ts); the same shape is declared here so this slice stands alone. */
-export type JobControl = { assign(id: string, pid: number): Promise<boolean>; close(id: string): Promise<void>; dispose(): void }
+export type JobControl = { assign(id: string, pid: number, since?: number): Promise<boolean>; close(id: string): Promise<void>; dispose(): void }
 
 export const STOP_LIMIT_MS = 6_000
 export const HUP_WAIT_MS = 3_000

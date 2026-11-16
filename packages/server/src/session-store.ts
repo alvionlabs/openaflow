@@ -8,6 +8,7 @@ import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isSkillId, type HostedSession, type SessionResume, type SkillId, type StopReason, type StoredSessionState } from '@openaflow/model'
 import { readHookState, type HookState } from './hook-state.ts'
+import { isScrollback } from './settings-store.ts'
 import type { SessionInfo, TerminalEvent } from './terminal-channel.ts'
 import { sessionFileOf } from './transcript-files.ts'
 
@@ -27,6 +28,10 @@ export type StoredSession = {
   typeYourself?: true
   /** The marker of the session this one resumes. Only while `starting`: every change out of it drops it. */
   resumedFrom?: string
+  /** The scrollback its start used: an integer from 100 to 100,000. */
+  scrollback?: number
+  /** The stop command its start used, filled with its marker: main runs it when it ends or sweeps the session. */
+  stop?: string[]
 }
 
 export type SessionsFile = { v: 1; sessions: StoredSession[] }
@@ -65,11 +70,14 @@ const UNAVAILABLE = 'terminals unavailable'
 const isOpen = (r: StoredSession) => r.state === 'starting' || r.state === 'live'
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+/** A stop command (session-life §3): 1 to 32 strings, each 1,024 characters at most, the first absolute. */
+const isStop = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.length >= 1 && v.length <= 32 && v.every((s) => typeof s === 'string' && s.length <= 1024) && path.isAbsolute(v[0] as string)
 
 /** One stored record, or `undefined` for one that breaks a rule. Unknown keys are dropped. */
 function readRecord(v: unknown): StoredSession | undefined {
   if (!isRecord(v)) return undefined
-  const { marker, repoPath, sessionId, skill, startedAt, state, pid, endedAt, exitCode, stopReason, typeYourself, resumedFrom } = v
+  const { marker, repoPath, sessionId, skill, startedAt, state, pid, endedAt, exitCode, stopReason, typeYourself, resumedFrom, scrollback, stop } = v
   if (typeof marker !== 'string' || !UUID_V4.test(marker) || typeof sessionId !== 'string' || !UUID_V4.test(sessionId)) return undefined
   if (typeof repoPath !== 'string' || repoPath === '' || !isSkillId(skill) || !isTime(startedAt) || !STATES.has(state)) return undefined
   if (pid !== undefined && !(Number.isSafeInteger(pid) && (pid as number) > 0)) return undefined
@@ -84,6 +92,9 @@ function readRecord(v: unknown): StoredSession | undefined {
   if (typeYourself) out.typeYourself = true
   // A bad one, or one on a record past `starting`, is dropped; the record itself is still good.
   if (state === 'starting' && typeof resumedFrom === 'string' && UUID_V4.test(resumedFrom)) out.resumedFrom = resumedFrom
+  // The same for what its start used.
+  if (isScrollback(scrollback)) out.scrollback = scrollback
+  if (isStop(stop)) out.stop = [...stop]
   return out
 }
 
@@ -315,6 +326,7 @@ export function hostedSession(r: StoredSession, hook: HookState | undefined): Ho
   if (r.endedAt !== undefined) out.endedAt = r.endedAt
   if (r.exitCode !== undefined) out.exitCode = r.exitCode
   if (r.typeYourself) out.typeYourself = true
+  if (r.scrollback !== undefined) out.scrollback = r.scrollback
   return out
 }
 

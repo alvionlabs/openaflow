@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { SCOPE_PROBE_MS, scopeProbe, wrapStart, type ScopeProbe } from './run-wrapper.ts'
+import { applyPlan, commandTextError, createRunWrapper, fillWords, resolveProgram, SCOPE_PROBE_MS, scopeProbe, splitCommand, wrapStart, type ScopeProbe, type WrapperPlan } from './run-wrapper.ts'
+import { UUID_V4 } from './session-command.ts'
 
 const WIN = process.platform === 'win32'
 const MARKER = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d'
@@ -264,5 +265,206 @@ describe.runIf(process.platform === 'linux')('real scope', () => {
       spawnSync(probe.systemctl, ['--user', 'stop', unit], { timeout: 6000, windowsHide: true })
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     }
+  })
+})
+
+describe('command text', () => {
+  test('splits command text', () => {
+    // Only a space separates words; quotes group and go, with no escapes; touching parts make one word.
+    expect(splitCommand('systemd-run --user  --scope')).toEqual({ words: ['systemd-run', '--user', '--scope'] })
+    expect(splitCommand(`a "b c" 'd "e' f\\g`)).toEqual({ words: ['a', 'b c', 'd "e', 'f\\g'] })
+    expect(splitCommand('a"b c"')).toEqual({ words: ['ab c'] })
+    expect(splitCommand(`x'y'"z" w`)).toEqual({ words: ['xyz', 'w'] })
+    expect(splitCommand('run ""')).toEqual({ words: ['run', ''] })
+    // Empty or all-space text is none.
+    expect(splitCommand('')).toEqual({ words: [] })
+    expect(splitCommand('    ')).toEqual({ words: [] })
+    expect(splitCommand('  lead trail  ')).toEqual({ words: ['lead', 'trail'] })
+    // The errors.
+    expect(splitCommand('a "b c')).toEqual({ error: 'unclosed quote' })
+    expect(splitCommand("a 'b")).toEqual({ error: 'unclosed quote' })
+    expect(splitCommand(Array.from({ length: 33 }, (_, i) => `w${i}`).join(' '))).toEqual({ error: 'too many words' })
+    expect(splitCommand(Array.from({ length: 32 }, (_, i) => `w${i}`).join(' '))).toHaveProperty('words')
+    expect(splitCommand('a'.repeat(1025))).toEqual({ error: 'too long' })
+    expect(splitCommand('a'.repeat(1024))).toEqual({ words: ['a'.repeat(1024)] })
+    for (const c of ['\u0000', '\t', '\n', '\u001f', '\u007f']) expect(splitCommand(`a${c}b`), JSON.stringify(c)).toEqual({ error: 'bad text' })
+    expect(splitCommand('run {nope}')).toEqual({ error: 'unknown placeholder {nope}' })
+    expect(splitCommand('run "x{RunId}"')).toEqual({ error: 'unknown placeholder {RunId}' })
+    expect(splitCommand('"" --x')).toEqual({ error: 'no program' })
+    // Other braces are literal.
+    expect(splitCommand('run {} {1} {a-b} {{runId}} {unit}')).toEqual({ words: ['run', '{}', '{1}', '{a-b}', '{{runId}}', '{unit}'] })
+  })
+
+  test('fills placeholders per word', () => {
+    const { words } = splitCommand('run --unit={unit} --id {runId} "{runId}-{runId}"') as { words: string[] }
+    // A filled value never makes a new word, even one with a space.
+    expect(fillWords(words, 'a b')).toEqual(['run', '--unit=openaflow-run-a b.scope', '--id', 'a b', 'a b-a b'])
+    expect(fillWords(words, MARKER)).toEqual(['run', `--unit=openaflow-run-${MARKER}.scope`, '--id', MARKER, `${MARKER}-${MARKER}`])
+    expect(words[1]).toBe('--unit={unit}') // the input is left alone
+    // A filled word over 1,024 characters is too long, checked with a sample run id.
+    expect(commandTextError(`run ${'{unit}'.repeat(20)}`)).toBe('too long')
+    expect(commandTextError(`run ${'{runId}'.repeat(28)}`)).toBe(undefined) // 28 × 36 = 1,008
+    expect(commandTextError(`run ${'{runId}'.repeat(29)}`)).toBe('too long')
+    expect(commandTextError('run "x')).toBe('unclosed quote')
+    expect(commandTextError('')).toBe(undefined)
+  })
+
+  test.skipIf(WIN)('resolves the program', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'oaf-program-')))
+    try {
+      writeFileSync(join(dir, 'wrap'), '#!/bin/sh\nexec "$@"\n')
+      chmodSync(join(dir, 'wrap'), 0o755)
+      mkdirSync(join(dir, 'a'))
+      writeFileSync(join(dir, 'a', 'b'), '#!/bin/sh\n')
+      chmodSync(join(dir, 'a', 'b'), 0o755)
+      const env = { PATH: `rel:${dir}` }
+      // A bare name is found on PATH; an absolute file is itself.
+      expect(resolveProgram('wrap', env, 'linux')).toEqual({ program: join(dir, 'wrap') })
+      expect(resolveProgram(join(dir, 'wrap'), env, 'linux')).toEqual({ program: join(dir, 'wrap') })
+      // A missing absolute file, a bare name not on PATH, and a relative path with a folder are not found,
+      // even when the relative one exists under the server's own folder.
+      expect(resolveProgram(join(dir, 'gone'), env, 'linux')).toEqual({ error: `${join(dir, 'gone')} not found` })
+      expect(resolveProgram('nowhere', env, 'linux')).toEqual({ error: 'nowhere not found' })
+      const cwd = process.cwd()
+      process.chdir(dir)
+      try {
+        expect(resolveProgram('a/b', env, 'linux')).toEqual({ error: 'a/b not found' })
+        expect(resolveProgram('./wrap', env, 'linux')).toEqual({ error: './wrap not found' })
+      } finally {
+        process.chdir(cwd)
+      }
+      // A folder is not a program.
+      expect(resolveProgram(dir, env, 'linux')).toEqual({ error: `${dir} not found` })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe.skipIf(WIN)('settings at a start', () => {
+  let root: string
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'oaf-run-wrapper-plan-')))
+  })
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  /** A folder with `true` and a `wrap` script that notes each run's args, then does what `body` says. */
+  const wrapTools = (name: string, body: string, o: { true?: boolean } = {}) => {
+    const dir = join(root, name)
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'wrap'), `#!/bin/sh\necho "$*" >> '${dir}/runs'\n${body}\n`)
+    chmodSync(join(dir, 'wrap'), 0o755)
+    writeFileSync(join(dir, 'stopper'), `#!/bin/sh\ntouch '${dir}/stopped'\n`)
+    chmodSync(join(dir, 'stopper'), 0o755)
+    if (o.true !== false) {
+      writeFileSync(join(dir, 'true'), '#!/bin/sh\nexit 0\n')
+      chmodSync(join(dir, 'true'), 0o755)
+    }
+    return { dir, env: { PATH: dir, HOME: '/home/me' }, runs: () => (existsSync(join(dir, 'runs')) ? readFileSync(join(dir, 'runs'), 'utf8').trim().split('\n') : []) }
+  }
+  const wrapper = (o: { platform?: NodeJS.Platform; timeoutMs?: number } = {}) => {
+    const lines: string[] = []
+    return { lines, w: createRunWrapper({ platform: o.platform ?? 'linux', log: (l) => lines.push(l), ...(o.timeoutMs ? { timeoutMs: o.timeoutMs } : {}) }) }
+  }
+  const OFF: ScopeProbe = { on: false, reason: 'exit 1' }
+
+  test('resolves wrapper and stop per setting', async () => {
+    const t = wrapTools('matrix', 'exit 0')
+    const changedWrap = `wrap --name "u {runId}" --unit={unit}`
+    const changedStop = `stopper {unit}`
+    const unit = `openaflow-run-${MARKER}.scope`
+    const defaultWrap = ['/usr/bin/systemd-run', '--user', '--scope', '--quiet', `--unit=${unit}`]
+    const defaultStop = ['/usr/bin/systemctl', '--user', 'stop', unit]
+    const wrapWords = [join(t.dir, 'wrap'), '--name', `u ${MARKER}`, `--unit=${unit}`]
+    const stopWords = [join(t.dir, 'stopper'), unit]
+    const { w } = wrapper()
+    for (const probe of [ON, OFF]) {
+      for (const runWrapper of [undefined, changedWrap, '', '   ']) {
+        for (const stopCommand of [undefined, changedStop, '']) {
+          const name = `probe ${probe.on ? 'on' : 'off'}, wrapper ${JSON.stringify(runWrapper)}, stop ${JSON.stringify(stopCommand)}`
+          const plan = await w.plan({ ...(runWrapper !== undefined ? { runWrapper } : {}), ...(stopCommand !== undefined ? { stopCommand } : {}) }, probe, t.env)
+          expect(plan, name).not.toHaveProperty('error')
+          const start = applyPlan(plan as WrapperPlan, CMD, MARKER)
+          const defaultOn = runWrapper === undefined && probe.on
+          const wrap = defaultOn ? defaultWrap : runWrapper === changedWrap ? wrapWords : []
+          expect(start.program, name).toBe(wrap[0] ?? CMD.program)
+          expect(start.args, name).toEqual([...wrap.slice(1), ...(wrap.length > 0 ? [CMD.program] : []), ...CMD.args])
+          const stop = stopCommand === changedStop ? stopWords : stopCommand === undefined && defaultOn ? defaultStop : undefined
+          expect(start.stop, name).toEqual(stop)
+        }
+      }
+    }
+    // The default with the probe on matches the scope probe's own wrapper.
+    expect(applyPlan((await w.plan({}, ON, t.env)) as WrapperPlan, CMD, MARKER)).toEqual(wrapStart(CMD, MARKER, ON))
+
+    // Windows and macOS defaults; Windows ignores stored texts.
+    const win = wrapper({ platform: 'win32' }).w
+    expect(await win.plan({ runWrapper: changedWrap, stopCommand: changedStop }, OFF, t.env)).toEqual({})
+    expect(await win.plan({}, OFF, t.env)).toEqual({})
+    const mac = wrapper({ platform: 'darwin' }).w
+    expect(await mac.plan({}, { on: false, reason: 'not on Linux (darwin)' }, t.env)).toEqual({})
+    const macPlan = (await mac.plan({ runWrapper: changedWrap, stopCommand: changedStop }, { on: false, reason: 'not on Linux (darwin)' }, t.env)) as WrapperPlan
+    expect(applyPlan(macPlan, CMD, MARKER)).toEqual({ program: wrapWords[0], args: [...wrapWords.slice(1), CMD.program, ...CMD.args], stop: stopWords })
+
+    // A program not found refuses, the wrapper first.
+    expect(await w.plan({ runWrapper: 'nowhere --x', stopCommand: 'nostop' }, ON, t.env)).toEqual({ error: 'run wrapper: nowhere not found' })
+    expect(await w.plan({ runWrapper: '/no/such/wrap' }, ON, t.env)).toEqual({ error: 'run wrapper: /no/such/wrap not found' })
+    expect(await w.plan({ stopCommand: 'nostop {unit}' }, ON, t.env)).toEqual({ error: 'stop command: nostop not found' })
+    expect(await w.plan({ runWrapper: '', stopCommand: 'a/b' }, OFF, t.env)).toEqual({ error: 'stop command: a/b not found' })
+    // The stop command is never run as a check.
+    expect(existsSync(join(t.dir, 'stopped'))).toBe(false)
+  })
+
+  test('checks a changed wrapper', async () => {
+    const t = wrapTools('check', `read mode < '${root}/check-mode'\n[ "$mode" = fail ] && { echo 'bad option' >&2; echo 'more' >&2; exit 3; }\n[ "$mode" = hang ] && exec ${sys('sleep')} 30\nexit 0`)
+    const text = 'wrap --id {runId}'
+    const { w, lines } = wrapper({ timeoutMs: 300 })
+
+    // Exit 0 passes, and that exact text is not checked again in this server's life.
+    writeFileSync(join(root, 'check-mode'), 'ok')
+    const plan = await w.plan({ runWrapper: text }, OFF, t.env)
+    expect(plan).not.toHaveProperty('error')
+    expect(t.runs()).toHaveLength(1)
+    // The check is `<program> <filled args…> <true>`, with a fresh run id: never the session's marker.
+    const [checked] = t.runs()
+    const [flag, id, last] = checked!.split(' ')
+    expect(flag).toBe('--id')
+    expect(id).toMatch(UUID_V4)
+    expect(id).not.toBe(MARKER)
+    expect(last).toBe(join(t.dir, 'true'))
+    expect(applyPlan(plan as WrapperPlan, CMD, MARKER).args.slice(0, 2)).toEqual(['--id', MARKER])
+    await w.plan({ runWrapper: text }, OFF, t.env)
+    expect(t.runs()).toHaveLength(1)
+
+    // Another text is checked; a failure gives its exit and stderr's first line, and is checked again next time.
+    writeFileSync(join(root, 'check-mode'), 'fail')
+    expect(await w.plan({ runWrapper: 'wrap --other {runId}' }, OFF, t.env)).toEqual({ error: 'run wrapper: exit 3: bad option' })
+    expect(await w.plan({ runWrapper: 'wrap --other {runId}' }, OFF, t.env)).toEqual({ error: 'run wrapper: exit 3: bad option' })
+    expect(t.runs()).toHaveLength(3)
+    expect(t.runs()[1]!.split(' ')[1]).not.toBe(t.runs()[2]!.split(' ')[1]) // a fresh id each check
+    // The passed text still needs no check.
+    await w.plan({ runWrapper: text }, OFF, t.env)
+    expect(t.runs()).toHaveLength(3)
+
+    // A hang: no answer at the limit.
+    writeFileSync(join(root, 'check-mode'), 'hang')
+    const started = Date.now()
+    expect(await w.plan({ runWrapper: 'wrap --hang' }, OFF, t.env)).toEqual({ error: 'run wrapper: no answer in 0.3 s' })
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(lines).toEqual([])
+
+    // A new server checks again.
+    writeFileSync(join(root, 'check-mode'), 'ok')
+    await wrapper().w.plan({ runWrapper: text }, OFF, t.env)
+    expect(t.runs()).toHaveLength(5)
+  }, 15_000)
+
+  test('no true, no check', async () => {
+    const t = wrapTools('no-true', 'exit 3', { true: false })
+    const { w, lines } = wrapper()
+    const plan = await w.plan({ runWrapper: 'wrap' }, OFF, t.env)
+    expect(applyPlan(plan as WrapperPlan, CMD, MARKER).program).toBe(join(t.dir, 'wrap'))
+    expect(t.runs()).toEqual([])
+    expect(lines).toEqual(['openaflow: true not found; the run wrapper starts with no check'])
   })
 })

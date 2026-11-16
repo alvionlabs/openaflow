@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { unlink } from 'node:fs/promises'
 import path from 'node:path'
 import {
+  SETTINGS_SCROLLBACK,
   skillCommand,
   type Board,
   type BoardRepo,
@@ -18,9 +19,10 @@ import {
 } from '@openaflow/model'
 import { Hono, type Context } from 'hono'
 import { normalizeRepoPath, sameRepoPath } from './guard.ts'
-import { wrapStart, type ScopeProbe } from './run-wrapper.ts'
+import { applyPlan, createRunWrapper, type RunWrapper, type ScopeProbe, type WrappedStart } from './run-wrapper.ts'
 import { resumeCommand, sessionCommand, type SessionCommand, type SessionCommandInput } from './session-command.ts'
 import { hostedSession, resumeFacts, resumeOf, type HookReader, type SessionStore, type StoredSession } from './session-store.ts'
+import type { SettingsStore } from './settings-store.ts'
 import { NoAnswer, type TerminalChannel } from './terminal-channel.ts'
 
 export type SessionRouteDeps = {
@@ -51,6 +53,12 @@ export type SessionRouteDeps = {
   /** A UUID v4. Left out: `crypto.randomUUID`. */
   newId?: () => string
   windows?: SessionCommandInput['windows']
+  /** The settings file, read at each start. Left out: the defaults. */
+  settings?: Pick<SettingsStore, 'read'>
+  /** The run wrapper's checks, one per server start. Left out: a new one for these routes. */
+  wrapper?: RunWrapper
+  /** The console. Left out: `console.log`. */
+  logLine?: (line: string) => void
 }
 
 /** At most this many sessions `starting` or `live`, in all repos. */
@@ -58,6 +66,7 @@ export const MAX_OPEN_SESSIONS = 10
 const SIZE = { cols: { min: 2, max: 500, default: 120 }, rows: { min: 1, max: 200, default: 30 } }
 
 const PROBE_OFF: ScopeProbe = { on: false, reason: 'no probe' }
+const DEFAULT_SETTINGS: Pick<SettingsStore, 'read'> = { read: async () => ({ scrollback: SETTINGS_SCROLLBACK.default }) }
 
 /** Where the host saves a session's screen text. Only ever built from a marker the store holds or just made. */
 export const screenFileOf = (configDir: string, marker: string) => path.join(configDir, 'screens', `${marker}.txt`)
@@ -97,9 +106,28 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
   const newId = deps.newId ?? randomUUID
   const inRepo = (repo: BoardRepo, r: StoredSession) => sameRepoPath(repo.path, normalizeRepoPath(r.repoPath, deps.platform), deps.platform, repo.caseless === true)
   const probe = () => deps.probe?.() ?? Promise.resolve(PROBE_OFF)
+  const logLine = deps.logLine ?? ((line: string) => console.log(line))
+  const wrapper = deps.wrapper ?? createRunWrapper({ platform: deps.platform, log: logLine })
+  const settingsFile = deps.settings ?? DEFAULT_SETTINGS
 
   /**
-   * Starts `cmd` as session `marker`, in its scope when the probe is on, with its screen file. `failure` is the
+   * The settings in force and this start's wrapper plan, or the refusal: `409 run wrapper: …` or `409 stop command: …`,
+   * with one console line and no log entry. Reads the file now, so a change applies to the next start.
+   */
+  const startSettings = async (scope: ScopeProbe) => {
+    const settings = await settingsFile.read()
+    const plan = await wrapper.plan(settings, scope, deps.env())
+    if ('error' in plan) {
+      logLine(`openaflow: session start refused: ${plan.error}`)
+      return { error: plan.error }
+    }
+    return { scrollback: settings.scrollback, plan }
+  }
+  /** What the record keeps of its start: the scrollback, and the stop when there is one. */
+  const used = (scrollback: number, w: WrappedStart) => ({ scrollback, ...(w.stop ? { stop: w.stop } : {}) })
+
+  /**
+   * Starts `cmd` as session `marker`, wrapped as `w` says, with its screen file and scrollback. `failure` is the
    * answer and log message for a refused start (the record goes) or no answer (the record stays `starting`).
    */
   const startSession = async (
@@ -107,12 +135,12 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     marker: string,
     cmd: Omit<SessionCommand, 'typeYourself'>,
     size: { cols: number; rows: number },
-    scope: ScopeProbe,
+    w: WrappedStart,
+    scrollback: number,
   ): Promise<{ status: 502 | 504; error: string; message: string } | undefined> => {
-    const w = wrapStart(cmd, marker, scope)
     try {
       const { pid } = await terminals.start(
-        { id: marker, program: w.program, args: w.args, cwd: cmd.cwd, env: cmd.env, ...size, screenFile: screenFileOf(deps.configDir, marker) },
+        { id: marker, program: w.program, args: w.args, cwd: cmd.cwd, env: cmd.env, ...size, screenFile: screenFileOf(deps.configDir, marker), scrollback },
         w.stop,
       )
       // The channel's event has done this already; a start without one (a test's fake) still lands here.
@@ -150,6 +178,8 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     if (claude === undefined) return c.json({ error: 'claude not found' }, 409)
     // Before the checks below: the server start began it, so this waits only for its first answer.
     const scope = await probe()
+    const start = await startSettings(scope)
+    if ('error' in start) return c.json({ error: start.error }, 409)
 
     // From here to the store's add, nothing waits: a second request sees this one's record.
     const records = deps.store.list()
@@ -173,11 +203,21 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     })
     if (typeof cmd === 'string') return c.json({ error: cmd }, 400)
 
-    const record: StoredSession = { marker, repoPath: repo.path, sessionId, skill, startedAt: deps.now(), state: 'starting', ...(cmd.typeYourself ? { typeYourself: true as const } : {}) }
+    const { typeYourself, ...run } = cmd
+    const w = applyPlan(start.plan, run, marker)
+    const record: StoredSession = {
+      marker,
+      repoPath: repo.path,
+      sessionId,
+      skill,
+      startedAt: deps.now(),
+      state: 'starting',
+      ...(cmd.typeYourself ? { typeYourself: true as const } : {}),
+      ...used(start.scrollback, w),
+    }
     await deps.store.add(record)
     const base = { action: 'new-session', repoId: repo.id, repo: repo.name, target: targetOf(skill, marker) } as const
-    const { typeYourself, ...run } = cmd
-    const failure = await startSession(terminals, marker, run, { cols, rows }, scope)
+    const failure = await startSession(terminals, marker, run, { cols, rows }, w, start.scrollback)
     const logged = await settle(() => deps.log.append(failure ? { ...base, result: 'failed', message: failure.message } : { ...base, result: 'started' }))
     await settle(deps.rebuild)
     if (failure) return c.json({ error: failure.error }, failure.status)
@@ -220,6 +260,8 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
 
     // What the check needs from disk, read now. Every record's sessions, for `in use`; the old one's live session.
     const scope = await probe()
+    const start = await startSettings(scope)
+    if ('error' in start) return c.json({ error: start.error }, 409)
     const held = new Map(await Promise.all(deps.store.list().map(async (r) => [r.marker, hostedSession(r, await deps.hooks.read(r.marker)).sessions] as const)))
     const liveSession = hostedSession(first, await deps.hooks.read(first.marker)).liveSession
     const facts = await resumeFacts(repo.path, liveSession, deps.claudeDir)
@@ -251,10 +293,20 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     })
     if (typeof cmd === 'string') return c.json({ error: cmd }, 400)
 
-    await deps.store.add({ marker, repoPath: repo.path, sessionId: liveSession, skill: old.skill, startedAt: deps.now(), state: 'starting', resumedFrom: old.marker })
-    const base = { action: 'resume-session', repoId: repo.id, repo: repo.name, target: targetOf(old.skill, marker) } as const
     const { typeYourself: _none, ...run } = cmd
-    const failure = await startSession(terminals, marker, run, { cols, rows }, scope)
+    const w = applyPlan(start.plan, run, marker)
+    await deps.store.add({
+      marker,
+      repoPath: repo.path,
+      sessionId: liveSession,
+      skill: old.skill,
+      startedAt: deps.now(),
+      state: 'starting',
+      resumedFrom: old.marker,
+      ...used(start.scrollback, w),
+    })
+    const base = { action: 'resume-session', repoId: repo.id, repo: repo.name, target: targetOf(old.skill, marker) } as const
+    const failure = await startSession(terminals, marker, run, { cols, rows }, w, start.scrollback)
     let kept: { message?: string } = {}
     if (!failure) {
       // The new session holds the conversation now: the old record, its files, and the host's copy go.

@@ -5,7 +5,7 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ANSWER_MS, CLOSE_MS, createJobControl, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
+import { ANSWER_MS, BIRTH_SLACK_MS, CLOSE_MS, createJobControl, helperCommand, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
 
 // Node's own spawn is what main passes in.
 const realSpawn: SpawnHelper = spawn
@@ -112,6 +112,33 @@ describe('helper protocol', () => {
     expect(log.mock.calls).toEqual([
       ['openaflow desktop: session s-1 in a job after 1250 ms; 2 processes it started before joined too'],
       ['openaflow desktop: session s-2 in a job after 0 ms'],
+    ])
+  })
+
+  test('an assign sends when its session started, less the birth slack; with no start time it sends none', async () => {
+    const { jobs, helpers } = setup()
+    const since = 1_794_788_430_229
+    void jobs.assign('s-1', 4242, since)
+    void jobs.assign('s-2', 77)
+    void jobs.assign('s-3', 78, Number.NaN)
+    void jobs.assign('s-4', 79, -5)
+    expect(BIRTH_SLACK_MS).toBe(1_000)
+    expect(helpers[0]!.lines()).toEqual([`assign s-1 4242 ${since - BIRTH_SLACK_MS}`, 'assign s-2 77', 'assign s-3 78', 'assign s-4 79'])
+  })
+
+  test('a fail names the call that failed, and how many processes the program started joined its job anyway', async () => {
+    const { jobs, helpers, log } = setup()
+    const a = track(jobs.assign('s-1', 7932, 1_000_000))
+    helpers[0]!.say('fail s-1 87 OpenProcess 1\r\n')
+    await settle()
+    expect(a).toEqual({ done: true, value: false })
+    const b = track(jobs.assign('s-2', 77))
+    helpers[0]!.say('fail s-2 5 AssignProcessToJobObject 0\r\n')
+    await settle()
+    expect(b).toEqual({ done: true, value: false })
+    expect(log.mock.calls).toEqual([
+      ['openaflow desktop: session s-1 not in a job: error 87 at OpenProcess; 1 processes it started joined its job'],
+      ['openaflow desktop: session s-2 not in a job: error 5 at AssignProcessToJobObject'],
     ])
   })
 
@@ -299,6 +326,15 @@ describe('hidden and Windows only', () => {
     expect(await b).toBe(true)
   })
 
+  test('the helper command line fits Windows with room to spare, and carries no C# comments', () => {
+    const { file, args } = helperCommand('C:\\Windows')
+    // CreateProcess refuses a command line over 32,767 characters: spawn ENAMETOOLONG (CI, settings W1-fix round 2).
+    expect([file, ...args].join(' ').length).toBeLessThanOrEqual(24_000)
+    const script = Buffer.from(args[3]!, 'base64').toString('utf16le')
+    expect(script).not.toMatch(/^\s*\/\//m)
+    expect(script).toContain('JoinEarlier(record.Handle, record.Root, record.Born)')
+  })
+
   test.each(['linux', 'darwin'] as const)('on %s nothing starts: assign is false, close and dispose do nothing', async (platform) => {
     const { jobs, calls, log } = setup(platform)
     expect(await jobs.assign('s-1', 10)).toBe(false)
@@ -464,6 +500,50 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     await gone(early, 'the child it started before the assign')
   }, 60_000)
 
+  /** Starts a session that starts its child, then ends the session's program: the child's parent is gone. */
+  async function goneSession(name: string) {
+    const since = Date.now()
+    const a = await startSession(name)
+    const child = await a.go()
+    process.kill(a.self.pid)
+    await waitFor(() => !alive(a.self.pid), `${name} ends`)
+    expect(alive(child.pid) && (await portOpen(child.port))).toBe(true)
+    return { since, pid: a.self.pid, child }
+  }
+
+  test('a program gone before its assign: close still ends the child it started', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    // As in CI (real-quit, host crash): the program ends before the cold helper's first assign lands.
+    const a = await goneSession('a')
+    expect(await jobs.assign('a', a.pid, a.since)).toBe(false)
+    console.log(`windows-jobs: assign of a gone program: ${log.at(-1) ?? 'no log'}`)
+    await jobs.close('a')
+    await gone(a.child, `the child of the gone program. Log:\n${log.join('\n')}`)
+    expect(log).toEqual([`openaflow desktop: session a not in a job: error 87 at OpenProcess; 1 processes it started joined its job`])
+    jobs.dispose()
+  }, 60_000)
+
+  test('a program gone before its assign: helper exit ends the child it started', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await goneSession('a')
+    expect(await jobs.assign('a', a.pid, a.since)).toBe(false)
+    helpers[0]!.kill()
+    await gone(a.child, `the child of the gone program. Log:\n${log.join('\n')}`)
+  }, 60_000)
+
+  test('a gone program never pulls in a process born before its session', async () => {
+    const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
+    const a = await goneSession('a')
+    // A later session that the OS gave the same pid: what the old holder started is older than it.
+    await new Promise((r) => setTimeout(r, BIRTH_SLACK_MS + 500))
+    expect(await jobs.assign('later', a.pid, Date.now())).toBe(false)
+    expect(log).toEqual([`openaflow desktop: session later not in a job: error 87 at OpenProcess`])
+    await jobs.close('later')
+    helpers[0]!.kill()
+    await new Promise((r) => setTimeout(r, 1_000))
+    expect(alive(a.child.pid) && (await portOpen(a.child.port))).toBe(true)
+  }, 60_000)
+
   test('a failed assign answers false and keeps the helper for the next session', async () => {
     const jobs = createJobControl({ spawn: spawnHelper, log: (l) => log.push(l) })
     const done = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true })
@@ -471,7 +551,7 @@ describe.runIf(process.platform === 'win32')('real jobs on Windows', () => {
     await new Promise((r) => done.once('exit', r))
     expect(await jobs.assign('gone', pid)).toBe(false)
     expect(log).toHaveLength(1)
-    expect(log[0]).toMatch(/^openaflow desktop: session gone not in a job: error \d+$/)
+    expect(log[0]).toMatch(/^openaflow desktop: session gone not in a job: error \d+ at OpenProcess$/)
 
     const a = await startSession('a')
     await assignTimed(jobs, 'a', a.self.pid)

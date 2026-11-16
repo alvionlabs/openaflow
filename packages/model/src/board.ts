@@ -120,6 +120,8 @@ export type HostedSession = {
   typeYourself?: true
   /** Whether Resume can start this session again, and why not. Only with state `ended` or `stopped`. */
   resume?: SessionResume
+  /** The scrollback its start used (100 to 100,000). Absent on a session started before the setting. */
+  scrollback?: number
 }
 
 /**

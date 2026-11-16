@@ -7,16 +7,25 @@
 // pod-docs/sprints/session-life.md (§7, J1).
 //
 // Lines, one request at a time, answered in order:
-//   main → helper: `assign <id> <pid>`  `close <id>`
-//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error>`  `closed <id>`
+//   main → helper: `assign <id> <pid> [<since>]`  `close <id>`
+//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error> <call> <joined>`  `closed <id>`
+// `since`: Unix ms, less BIRTH_SLACK_MS, when main asked the host for the session; nothing the session started is
+// older. `call`: the Win32 call that failed.
 // `joined`: how many processes the session's program started before the assign, and their children, the helper put in
 // the job after it. Without that, a child started while the helper was still starting stays outside the job (CI,
 // session-life wave 3): close and the helper's exit never end it, and once its parent has ended, taskkill /T can't
 // find it either. `close` puts such children in the job once more before it ends the job.
+// A `fail` keeps the job when the helper made it: the program's own children join it, found by their parent pid even
+// when the program is gone (`OpenProcess` error 87: a program that ended with its crashed host before the cold
+// helper's first assign, CI run 43779514743). Only a process born after `since` counts as the gone program's child,
+// so a stranger's orphan never joins.
 
 export type JobControl = {
-  /** Puts a running process in the session's job. False on any failure: the caller falls back to a tree kill. */
-  assign(id: string, pid: number): Promise<boolean>
+  /**
+   * Puts a running process in the session's job. `since`: when main asked for the session (Unix ms). False on any
+   * failure: the caller falls back to a tree kill.
+   */
+  assign(id: string, pid: number, since?: number): Promise<boolean>
   /** Ends every process in the session's job and drops the job. Never rejects; waits at most CLOSE_MS. */
   close(id: string): Promise<void>
   /** Ends the helper's input, so it exits and Windows ends every job's processes. */
@@ -44,6 +53,8 @@ export type SpawnHelper = (
 export const ANSWER_MS = 10_000
 /** A close with no answer for this long resolves anyway, so a quit never waits on a stuck helper. */
 export const CLOSE_MS = 2_000
+/** Taken off `since`: Windows may stamp a process's start up to a clock tick before Node's clock reads it. */
+export const BIRTH_SLACK_MS = 1_000
 
 const LOG = 'openaflow desktop:'
 const ID = /^[A-Za-z0-9._-]{1,128}$/
@@ -146,6 +157,21 @@ public static class OpenAFlowJobs
     // Passes of JoinEarlier: a process outside the job may start another one between two passes.
     const int JOIN_PASSES = 5;
 
+    // A session's job, its program's pid, and that program's start time; when the program was gone at the assign,
+    // the time main gave (since), or 0 when main gave none.
+    class Job
+    {
+        public IntPtr Handle;
+        public uint Root;
+        public long Born;
+    }
+
+    // Unix ms to Windows' FILETIME, the unit of GetProcessTimes.
+    static long FromUnixMs(long ms)
+    {
+        return (ms + 11644473600000L) * 10000L;
+    }
+
     // A process's start time, or -1 when it is gone or can't be read.
     static long Started(uint pid)
     {
@@ -157,13 +183,16 @@ public static class OpenAFlowJobs
         return read ? creation : -1;
     }
 
-    // The processes that descend from root now, by parent pid. A process that started before the parent it names
-    // is the child of an earlier holder of that pid, and is left out with its own children.
-    static List<uint> Descendants(uint root)
+    // The processes that descend from root now, by parent pid. born: root's start time, as the job recorded it. A
+    // process that started before the parent it names is the child of an earlier holder of that pid, and is left out
+    // with its own children. When root is gone, its children still name it; when a later process holds root's pid
+    // now, root's own children are the ones born before that process.
+    static List<uint> Descendants(uint root, long born)
     {
         List<uint> found = new List<uint>();
-        long rootStart = Started(root);
-        if (rootStart < 0) return found;
+        if (born <= 0) return found;
+        long holder = Started(root);
+        long until = holder < 0 || holder == born ? long.MaxValue : holder;
         List<uint> pids = new List<uint>();
         List<uint> parents = new List<uint>();
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -179,7 +208,7 @@ public static class OpenAFlowJobs
         }
         CloseHandle(snapshot);
         Dictionary<uint, long> start = new Dictionary<uint, long>();
-        start[root] = rootStart;
+        start[root] = born;
         Queue<uint> todo = new Queue<uint>();
         todo.Enqueue(root);
         while (todo.Count > 0)
@@ -189,9 +218,9 @@ public static class OpenAFlowJobs
             {
                 uint pid = pids[i];
                 if (parents[i] != parent || pid == 0 || start.ContainsKey(pid)) continue;
-                long born = Started(pid);
-                if (born < 0 || born < start[parent]) continue;
-                start[pid] = born;
+                long at = Started(pid);
+                if (at < 0 || at < start[parent] || (parent == root && at >= until)) continue;
+                start[pid] = at;
                 found.Add(pid);
                 todo.Enqueue(pid);
             }
@@ -201,13 +230,13 @@ public static class OpenAFlowJobs
 
     // Puts in the job each of root's descendants that is not in it: the ones root started before it joined the job,
     // and theirs. What root starts after it joined is in the job already. Answers how many joined.
-    static int JoinEarlier(IntPtr job, uint root)
+    static int JoinEarlier(IntPtr job, uint root, long born)
     {
         int joined = 0;
         for (int pass = 0; pass < JOIN_PASSES; pass++)
         {
             int added = 0;
-            foreach (uint pid in Descendants(root))
+            foreach (uint pid in Descendants(root, born))
             {
                 IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
                 if (process == IntPtr.Zero) continue;
@@ -241,63 +270,85 @@ public static class OpenAFlowJobs
         return list;
     }
 
-    static string Assign(Dictionary<string, IntPtr> jobs, string id, uint pid)
+    static string Fail(string id, int error, string call, int joined)
     {
+        return "fail " + id + " " + error + " " + call + " " + joined;
+    }
+
+    // floor: FILETIME of main's since, or 0.
+    static string Assign(Dictionary<string, Job> jobs, string id, uint pid, long floor)
+    {
+        Job record;
         IntPtr job;
-        bool made = false;
-        if (!jobs.TryGetValue(id, out job))
+        long started = Started(pid);
+        long born = started >= 0 ? started : floor;
+        if (jobs.TryGetValue(id, out record)) job = record.Handle;
+        else
         {
             job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero) return "fail " + id + " " + Marshal.GetLastWin32Error();
+            if (job == IntPtr.Zero) return Fail(id, Marshal.GetLastWin32Error(), "CreateJobObject", 0);
             ExtendedLimit info = new ExtendedLimit();
             info.Basic.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(ExtendedLimit))))
             {
                 int setError = Marshal.GetLastWin32Error();
                 CloseHandle(job);
-                return "fail " + id + " " + setError;
+                return Fail(id, setError, "SetInformationJobObject", 0);
             }
-            made = true;
+            record = new Job();
+            record.Handle = job;
+            record.Root = pid;
+            record.Born = born;
+            jobs[id] = record;
         }
         int error = 0;
+        string call = null;
         IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid);
-        if (process == IntPtr.Zero) error = Marshal.GetLastWin32Error();
+        if (process == IntPtr.Zero)
+        {
+            error = Marshal.GetLastWin32Error();
+            call = "OpenProcess";
+        }
         else
         {
-            if (!AssignProcessToJobObject(job, process)) error = Marshal.GetLastWin32Error();
+            if (!AssignProcessToJobObject(job, process))
+            {
+                error = Marshal.GetLastWin32Error();
+                call = "AssignProcessToJobObject";
+            }
             CloseHandle(process);
         }
-        if (error != 0)
-        {
-            if (made) CloseHandle(job);
-            return "fail " + id + " " + error;
-        }
-        if (made) jobs[id] = job;
-        return "ok " + id + " " + JoinEarlier(job, pid);
+        // Kept on a fail too: what the program started joins, and close or the helper's exit ends it.
+        int joined = JoinEarlier(job, pid, born);
+        return error != 0 ? Fail(id, error, call, joined) : "ok " + id + " " + joined;
     }
 
     public static void Run()
     {
-        Dictionary<string, IntPtr> jobs = new Dictionary<string, IntPtr>();
+        Dictionary<string, Job> jobs = new Dictionary<string, Job>();
         string line;
         while ((line = Console.In.ReadLine()) != null)
         {
             string[] p = line.Trim().Split(' ');
             string answer = null;
-            if (p.Length == 3 && p[0] == "assign")
+            if ((p.Length == 3 || p.Length == 4) && p[0] == "assign")
             {
                 uint pid;
-                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid) : "fail " + p[1] + " 87";
+                long since;
+                long floor = p.Length == 4 && Int64.TryParse(p[3], out since) && since > 0 ? FromUnixMs(since) : 0;
+                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid, floor) : Fail(p[1], 87, "parse", 0);
             }
             else if (p.Length == 2 && p[0] == "close")
             {
-                IntPtr job;
-                if (jobs.TryGetValue(p[1], out job))
+                Job record;
+                if (jobs.TryGetValue(p[1], out record))
                 {
-                    // A child that a process outside the job started after the assign's last pass.
-                    foreach (uint member in Members(job)) JoinEarlier(job, member);
-                    TerminateJobObject(job, 1);
-                    CloseHandle(job);
+                    // A child that a process outside the job started after the assign's last pass, and one of a
+                    // program that never joined.
+                    JoinEarlier(record.Handle, record.Root, record.Born);
+                    foreach (uint member in Members(record.Handle)) JoinEarlier(record.Handle, member, Started(member));
+                    TerminateJobObject(record.Handle, 1);
+                    CloseHandle(record.Handle);
                     jobs.Remove(p[1]);
                 }
                 answer = "closed " + p[1];
@@ -312,9 +363,18 @@ public static class OpenAFlowJobs
 }
 `
 
+/**
+ * The C# with no comment lines, indents, or blank lines: `-EncodedCommand` grows the script about 2.7 times, and
+ * Windows refuses a command line over 32,767 characters (spawn ENAMETOOLONG). The C# has no comment after code.
+ */
+const COMPACT = CSHARP.split('\n')
+  .map((l) => l.trim())
+  .filter((l) => l !== '' && !l.startsWith('//'))
+  .join('\n')
+
 const SCRIPT = `$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
-${CSHARP}
+${COMPACT}
 '@
 [OpenAFlowJobs]::Run()
 `
@@ -368,12 +428,16 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
   }
 
   function onLine(h: Helper, line: string) {
-    const [word, id, code] = line.trim().split(' ')
+    const [word, id, code, call, joinedText] = line.trim().split(' ')
     const head = h.queue[0]
     if (!head || head.id !== id) return
     if (head.kind === 'assign' && (word === 'ok' || word === 'fail')) {
       h.queue.shift()
-      if (word === 'fail' && head.settle) o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}`)
+      if (word === 'fail' && head.settle) {
+        const joined = Number(joinedText ?? 0)
+        const note = joined > 0 ? `; ${joined} processes it started joined its job` : ''
+        o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}${call ? ` at ${call}` : ''}${note}`)
+      }
       if (word === 'ok' && head.settle) {
         const joined = Number(code ?? 0)
         const note = joined > 0 ? `; ${joined} processes it started before joined too` : ''
@@ -427,7 +491,7 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
   }
 
   return {
-    assign(id, pid) {
+    assign(id, pid, since) {
       if (!onWindows || disposed || !ID.test(id) || !Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff) {
         return Promise.resolve(false)
       }
@@ -449,7 +513,8 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
             resolve(ok)
           },
         }
-        send(h, `assign ${id} ${pid}`, r)
+        const floor = since !== undefined && Number.isSafeInteger(since) && since > BIRTH_SLACK_MS ? ` ${since - BIRTH_SLACK_MS}` : ''
+        send(h, `assign ${id} ${pid}${floor}`, r)
       })
     },
     close(id) {

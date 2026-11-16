@@ -182,10 +182,13 @@ describe('jobs', () => {
   test('started assigns the job on Windows only', async () => {
     const win = jobsFake(async () => true)
     const w = setup({ platform: 'win32', jobs: win })
+    vi.setSystemTime(1_794_788_430_229)
     w.roster.starting(A)
+    await vi.advanceTimersByTimeAsync(300)
     w.roster.started(A, 1000)
     await vi.advanceTimersByTimeAsync(0)
-    expect(win.assign.mock.calls).toEqual([[A, 1000]])
+    // The time main asked for the start: the helper finds what the program started by it, even once the program is gone.
+    expect(win.assign.mock.calls).toEqual([[A, 1000, 1_794_788_430_229]])
     expect(w.log).not.toHaveBeenCalled()
 
     const lin = jobsFake(async () => true)
@@ -199,11 +202,11 @@ describe('jobs', () => {
     const refused = setup({ platform: 'win32', jobs: jobsFake(async () => false) })
     refused.roster.started(A, 1000)
     await vi.advanceTimersByTimeAsync(0)
-    expect(refused.log.mock.calls).toEqual([['openaflow desktop: session aaaaaaaa has no job; quit ends it by taskkill only']])
+    expect(refused.log.mock.calls).toEqual([['openaflow desktop: session aaaaaaaa program not in its job; an end uses taskkill too']])
     const failed = setup({ platform: 'win32', jobs: jobsFake(() => Promise.reject(new Error('helper gone'))) })
     failed.roster.started(A, 1000)
     await vi.advanceTimersByTimeAsync(0)
-    expect(failed.log.mock.calls).toEqual([['openaflow desktop: session aaaaaaaa has no job; quit ends it by taskkill only']])
+    expect(failed.log.mock.calls).toEqual([['openaflow desktop: session aaaaaaaa program not in its job; an end uses taskkill too']])
     expect(failed.roster.live().map((s) => s.id)).toEqual([A])
   })
 })
