@@ -113,7 +113,7 @@ export function startWindow(ctx: ShellContext): void {
   tray = new Tray(icon('tray.png'))
   tray.setToolTip(APP_NAME)
   tray.on('click', () => bus.showWindow())
-  tray.setContextMenu(Menu.buildFromTemplate(trayMenu({ onOpen: () => bus.showWindow(), onQuit: () => app.quit() })))
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenu({ onOpen: () => bus.showWindow(), onSettings: () => bus.showWindow('#settings'), onQuit: () => app.quit() })))
   bus.onAttention((on) => tray?.setImage(icon(on ? 'tray-dot.png' : 'tray.png')))
 
   // The window closes, and a show does nothing, only once the quit goes through: after a Cancel, Open still shows it.
