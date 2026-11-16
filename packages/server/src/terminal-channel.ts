@@ -20,6 +20,8 @@ export type StartSpec = {
   rows: number
   /** Where the host saves the session's screen text: `<config dir>/screens/<id>.txt`. */
   screenFile?: string
+  /** Scrollback lines, 100 to 100,000 (sprint settings §6). Absent: the host's own value. */
+  scrollback?: number
 }
 /** A session the reconcile set to `stopped · app closed`, with the stop command its start had (session-life §6). */
 export type SweepSession = { id: string; stop?: string[] }
