@@ -66,7 +66,7 @@ export const MAX_OPEN_SESSIONS = 10
 const SIZE = { cols: { min: 2, max: 500, default: 120 }, rows: { min: 1, max: 200, default: 30 } }
 
 const PROBE_OFF: ScopeProbe = { on: false, reason: 'no probe' }
-const DEFAULT_SETTINGS = { read: async () => ({ scrollback: SETTINGS_SCROLLBACK.default }) }
+const DEFAULT_SETTINGS: Pick<SettingsStore, 'read'> = { read: async () => ({ scrollback: SETTINGS_SCROLLBACK.default }) }
 
 /** Where the host saves a session's screen text. Only ever built from a marker the store holds or just made. */
 export const screenFileOf = (configDir: string, marker: string) => path.join(configDir, 'screens', `${marker}.txt`)
