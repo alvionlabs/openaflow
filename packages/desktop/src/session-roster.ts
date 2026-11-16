@@ -119,7 +119,7 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
       e.state = 'live'
       const jobs = o.platform === 'win32' ? o.jobs : undefined
       if (!jobs) return
-      const noJob = () => o.log(`${prefix(id)} has no job; quit ends it by taskkill only`)
+      const noJob = () => o.log(`${prefix(id)} program not in its job; an end uses taskkill too`)
       Promise.resolve()
         .then(() => jobs.assign(id, pid, e.since))
         .then((ok) => ok || noJob(), noJob)

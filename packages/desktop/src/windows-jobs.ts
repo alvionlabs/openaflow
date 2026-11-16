@@ -15,6 +15,10 @@
 // the job after it. Without that, a child started while the helper was still starting stays outside the job (CI,
 // session-life wave 3): close and the helper's exit never end it, and once its parent has ended, taskkill /T can't
 // find it either. `close` puts such children in the job once more before it ends the job.
+// A `fail` keeps the job when the helper made it: the program's own children join it, found by their parent pid even
+// when the program is gone (`OpenProcess` error 87: a program that ended with its crashed host before the cold
+// helper's first assign, CI run 43779514743). Only a process born after `since` counts as the gone program's child,
+// so a stranger's orphan never joins.
 
 export type JobControl = {
   /**
@@ -153,6 +157,21 @@ public static class OpenAFlowJobs
     // Passes of JoinEarlier: a process outside the job may start another one between two passes.
     const int JOIN_PASSES = 5;
 
+    // A session's job, its program's pid, and that program's start time; when the program was gone at the assign,
+    // the time main gave (since), or 0 when main gave none.
+    class Job
+    {
+        public IntPtr Handle;
+        public uint Root;
+        public long Born;
+    }
+
+    // Unix ms to Windows' FILETIME, the unit of GetProcessTimes.
+    static long FromUnixMs(long ms)
+    {
+        return (ms + 11644473600000L) * 10000L;
+    }
+
     // A process's start time, or -1 when it is gone or can't be read.
     static long Started(uint pid)
     {
@@ -164,13 +183,16 @@ public static class OpenAFlowJobs
         return read ? creation : -1;
     }
 
-    // The processes that descend from root now, by parent pid. A process that started before the parent it names
-    // is the child of an earlier holder of that pid, and is left out with its own children.
-    static List<uint> Descendants(uint root)
+    // The processes that descend from root now, by parent pid. born: root's start time, as the job recorded it. A
+    // process that started before the parent it names is the child of an earlier holder of that pid, and is left out
+    // with its own children. When root is gone, its children still name it; when a later process holds root's pid
+    // now, root's own children are the ones born before that process.
+    static List<uint> Descendants(uint root, long born)
     {
         List<uint> found = new List<uint>();
-        long rootStart = Started(root);
-        if (rootStart < 0) return found;
+        if (born <= 0) return found;
+        long holder = Started(root);
+        long until = holder < 0 || holder == born ? long.MaxValue : holder;
         List<uint> pids = new List<uint>();
         List<uint> parents = new List<uint>();
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -186,7 +208,7 @@ public static class OpenAFlowJobs
         }
         CloseHandle(snapshot);
         Dictionary<uint, long> start = new Dictionary<uint, long>();
-        start[root] = rootStart;
+        start[root] = born;
         Queue<uint> todo = new Queue<uint>();
         todo.Enqueue(root);
         while (todo.Count > 0)
@@ -196,9 +218,9 @@ public static class OpenAFlowJobs
             {
                 uint pid = pids[i];
                 if (parents[i] != parent || pid == 0 || start.ContainsKey(pid)) continue;
-                long born = Started(pid);
-                if (born < 0 || born < start[parent]) continue;
-                start[pid] = born;
+                long at = Started(pid);
+                if (at < 0 || at < start[parent] || (parent == root && at >= until)) continue;
+                start[pid] = at;
                 found.Add(pid);
                 todo.Enqueue(pid);
             }
@@ -208,13 +230,13 @@ public static class OpenAFlowJobs
 
     // Puts in the job each of root's descendants that is not in it: the ones root started before it joined the job,
     // and theirs. What root starts after it joined is in the job already. Answers how many joined.
-    static int JoinEarlier(IntPtr job, uint root)
+    static int JoinEarlier(IntPtr job, uint root, long born)
     {
         int joined = 0;
         for (int pass = 0; pass < JOIN_PASSES; pass++)
         {
             int added = 0;
-            foreach (uint pid in Descendants(root))
+            foreach (uint pid in Descendants(root, born))
             {
                 IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
                 if (process == IntPtr.Zero) continue;
@@ -253,11 +275,15 @@ public static class OpenAFlowJobs
         return "fail " + id + " " + error + " " + call + " " + joined;
     }
 
-    static string Assign(Dictionary<string, IntPtr> jobs, string id, uint pid)
+    // floor: FILETIME of main's since, or 0.
+    static string Assign(Dictionary<string, Job> jobs, string id, uint pid, long floor)
     {
+        Job record;
         IntPtr job;
-        bool made = false;
-        if (!jobs.TryGetValue(id, out job))
+        long started = Started(pid);
+        long born = started >= 0 ? started : floor;
+        if (jobs.TryGetValue(id, out record)) job = record.Handle;
+        else
         {
             job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) return Fail(id, Marshal.GetLastWin32Error(), "CreateJobObject", 0);
@@ -269,7 +295,11 @@ public static class OpenAFlowJobs
                 CloseHandle(job);
                 return Fail(id, setError, "SetInformationJobObject", 0);
             }
-            made = true;
+            record = new Job();
+            record.Handle = job;
+            record.Root = pid;
+            record.Born = born;
+            jobs[id] = record;
         }
         int error = 0;
         string call = null;
@@ -288,18 +318,14 @@ public static class OpenAFlowJobs
             }
             CloseHandle(process);
         }
-        if (error != 0)
-        {
-            if (made) CloseHandle(job);
-            return Fail(id, error, call, 0);
-        }
-        if (made) jobs[id] = job;
-        return "ok " + id + " " + JoinEarlier(job, pid);
+        // Kept on a fail too: what the program started joins, and close or the helper's exit ends it.
+        int joined = JoinEarlier(job, pid, born);
+        return error != 0 ? Fail(id, error, call, joined) : "ok " + id + " " + joined;
     }
 
     public static void Run()
     {
-        Dictionary<string, IntPtr> jobs = new Dictionary<string, IntPtr>();
+        Dictionary<string, Job> jobs = new Dictionary<string, Job>();
         string line;
         while ((line = Console.In.ReadLine()) != null)
         {
@@ -308,17 +334,21 @@ public static class OpenAFlowJobs
             if ((p.Length == 3 || p.Length == 4) && p[0] == "assign")
             {
                 uint pid;
-                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid) : Fail(p[1], 87, "parse", 0);
+                long since;
+                long floor = p.Length == 4 && Int64.TryParse(p[3], out since) && since > 0 ? FromUnixMs(since) : 0;
+                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid, floor) : Fail(p[1], 87, "parse", 0);
             }
             else if (p.Length == 2 && p[0] == "close")
             {
-                IntPtr job;
-                if (jobs.TryGetValue(p[1], out job))
+                Job record;
+                if (jobs.TryGetValue(p[1], out record))
                 {
-                    // A child that a process outside the job started after the assign's last pass.
-                    foreach (uint member in Members(job)) JoinEarlier(job, member);
-                    TerminateJobObject(job, 1);
-                    CloseHandle(job);
+                    // A child that a process outside the job started after the assign's last pass, and one of a
+                    // program that never joined.
+                    JoinEarlier(record.Handle, record.Root, record.Born);
+                    foreach (uint member in Members(record.Handle)) JoinEarlier(record.Handle, member, Started(member));
+                    TerminateJobObject(record.Handle, 1);
+                    CloseHandle(record.Handle);
                     jobs.Remove(p[1]);
                 }
                 answer = "closed " + p[1];
