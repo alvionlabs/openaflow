@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { isAbsoluteFor, resolveBin } from './bin-path.ts'
 import { sessionBaseEnv, UUID_V4 } from './session-command.ts'
 
@@ -175,4 +176,109 @@ export function resolveProgram(word: string, env: NodeJS.ProcessEnv, platform: N
   const bare = !word.includes('/') && !(win && word.includes('\\'))
   const found = bare || isAbsoluteFor(word, win) ? resolveBin(word, env, platform) : undefined
   return found === undefined ? { error: `${word} not found` } : { program: found }
+}
+
+/** The default texts per platform (sprint settings §2). Windows has none, and ignores stored texts. */
+export const DEFAULT_TEXTS: Record<'linux' | 'other', { runWrapper: string; stopCommand: string }> = {
+  linux: { runWrapper: 'systemd-run --user --scope --quiet --unit=openaflow-run-{runId}.scope', stopCommand: 'systemctl --user stop openaflow-run-{runId}.scope' },
+  other: { runWrapper: '', stopCommand: '' },
+}
+export const defaultTexts = (platform: NodeJS.Platform) => (platform === 'linux' ? DEFAULT_TEXTS.linux : DEFAULT_TEXTS.other)
+
+/**
+ * What a start wraps its program in, with placeholders still in the words: the wrapper's absolute program and its
+ * args, and the stop command's. Neither: the program as it is, with no stop.
+ */
+export type WrapperPlan = { wrapper?: string[]; stop?: string[] }
+
+/** The settings a plan reads: an absent key is the platform default, `''` none. */
+export type WrapperSettings = { runWrapper?: string; stopCommand?: string }
+
+/** The default words with their first word swapped for a tool's absolute path. */
+const withProgram = (text: string, program: string): string[] => {
+  const { words } = splitCommand(text) as { words: string[] }
+  return [program, ...words.slice(1)]
+}
+
+/**
+ * The run wrapper and stop command at each start (sprint settings §4). Create one per server start: a changed
+ * wrapper text that passed its check passes with no check for the rest of this server's life.
+ */
+export function createRunWrapper(o: { platform: NodeJS.Platform; log: (line: string) => void; timeoutMs?: number; newId?: () => string }) {
+  const passed = new Set<string>()
+  const newId = o.newId ?? randomUUID
+
+  /** A stored text's words with an absolute program; `[]` for none; or the refusal's word. */
+  const resolve = (text: string, env: Record<string, string>): string[] | { error: string } => {
+    const split = splitCommand(text)
+    // The store reads only good texts; a bad one here is none.
+    if ('error' in split || split.words.length === 0) return []
+    const found = resolveProgram(split.words[0]!, env, o.platform)
+    return 'error' in found ? found : [found.program, ...split.words.slice(1)]
+  }
+
+  /** Runs `<program> <filled args…> <true>` with a fresh run id; `undefined` when it passes, else its word. */
+  const check = async (text: string, words: string[], env: Record<string, string>): Promise<string | undefined> => {
+    if (passed.has(text)) return undefined
+    const yes = resolveBin('true', env, o.platform)
+    if (yes === undefined) {
+      o.log('openaflow: true not found; the run wrapper starts with no check')
+      return undefined
+    }
+    const [program, ...args] = fillWords(words, newId())
+    const word = await run(program!, [...args, yes], env, o.timeoutMs ?? SCOPE_PROBE_MS)
+    if (word !== 'exit 0') return word
+    passed.add(text)
+    return undefined
+  }
+
+  return {
+    /**
+     * The plan for a start with `settings`, this server's `probe`, and the server's `env` (a session's is made from
+     * it), or the refusal: `run wrapper: <word>` first, then `stop command: <word>`.
+     */
+    async plan(settings: WrapperSettings, probe: ScopeProbe, serverEnv: NodeJS.ProcessEnv): Promise<WrapperPlan | { error: string }> {
+      if (o.platform === 'win32') return {}
+      const env = sessionBaseEnv(serverEnv, o.platform)
+      const defaults = defaultTexts(o.platform)
+      const plan: WrapperPlan = {}
+      let defaultOn = false
+      if (settings.runWrapper === undefined) {
+        if (defaults.runWrapper !== '' && probe.on) {
+          plan.wrapper = withProgram(defaults.runWrapper, probe.systemdRun)
+          defaultOn = true
+        }
+      } else {
+        const words = resolve(settings.runWrapper, env)
+        if ('error' in words) return { error: `run wrapper: ${words.error}` }
+        if (words.length > 0) {
+          const failed = await check(settings.runWrapper, words, env)
+          if (failed !== undefined) return { error: `run wrapper: ${failed}` }
+          plan.wrapper = words
+        }
+      }
+      if (settings.stopCommand === undefined) {
+        if (defaultOn && probe.on && defaults.stopCommand !== '') plan.stop = withProgram(defaults.stopCommand, probe.systemctl)
+      } else {
+        const words = resolve(settings.stopCommand, env)
+        if ('error' in words) return { error: `stop command: ${words.error}` }
+        if (words.length > 0) plan.stop = words
+      }
+      return plan
+    },
+  }
+}
+
+export type RunWrapper = ReturnType<typeof createRunWrapper>
+
+/** The start for `cmd` as session `marker`: inside the plan's wrapper, with its stop, placeholders filled. */
+export function applyPlan(plan: WrapperPlan, cmd: { program: string; args: string[] }, marker: string): WrappedStart {
+  const out: WrappedStart = { program: cmd.program, args: cmd.args }
+  if (plan.wrapper) {
+    const [program, ...args] = fillWords(plan.wrapper, marker)
+    out.program = program!
+    out.args = [...args, cmd.program, ...cmd.args]
+  }
+  if (plan.stop) out.stop = fillWords(plan.stop, marker)
+  return out
 }
