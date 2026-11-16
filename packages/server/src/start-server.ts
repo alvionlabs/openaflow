@@ -25,13 +25,13 @@ import { createRemoveRepoRoutes } from './remove-repo-routes.ts'
 import { createForgetRunRoutes } from './forget-run-routes.ts'
 import { addRepo, removeRepo } from './repos-config.ts'
 import { createResumeRoutes } from './resume-routes.ts'
-import { scopeProbe, wrapStart, type ScopeProbe } from './run-wrapper.ts'
+import { scopeProbe, type ScopeProbe } from './run-wrapper.ts'
 import { createIdleCheck } from './session-activity.ts'
 import { createOwnerFile } from './owner-file.ts'
 import { createStopPath, guardOutput, linkParent, type ParentChannel } from './parent-link.ts'
 import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
-import { createHookReader, createSessionStore, followChannel, reconcileSessions } from './session-store.ts'
+import { createHookReader, createSessionStore, followChannel, reconcileSessions, type StoredSession } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
 import { createShutdown, createWorkTracker } from './shutdown.ts'
 import { createTerminalChannel } from './terminal-channel.ts'
@@ -255,20 +255,22 @@ export async function startServer(
   if (owner.take()) auto.start()
   // After the bind, never awaited: main forks the terminal host only after this server's first ready.
   // Then main ends whatever the sessions it set to `stopped · app closed` left, with each one's scope stop.
-  if (terminals) void reconcileSessions(sessions, { list: () => terminals.list() }).then((closed) => sweep(terminals, closed, probe))
+  if (terminals) void reconcileSessions(sessions, { list: () => terminals.list() }).then((closed) => sweep(terminals, closed, sessions.list()))
 
   // The terminal channel stays open through the drain: a start in flight still gets its answer, or its 30 s limit.
   const stop = createShutdown({ auto, server: bound.server, work, watcher, release: owner.release, exit: o.exit ?? ((code) => process.exit(code)) })
   return { port: bound.port, stop }
 }
 
-/** One `sweep` naming each closed session with the stop its scope has (this start's probe); none for no session. */
-async function sweep(terminals: { sweep(s: { id: string; stop?: string[] }[]): void }, closed: string[], probe?: () => Promise<ScopeProbe>): Promise<void> {
+/**
+ * One `sweep` naming each closed session with the stop its start used, as its record keeps it; none for a record
+ * without one, whatever the settings are now. No closed session: no message.
+ */
+function sweep(terminals: { sweep(s: { id: string; stop?: string[] }[]): void }, closed: string[], records: readonly StoredSession[]): void {
   if (closed.length === 0) return
-  const scope: ScopeProbe = probe ? await probe() : { on: false, reason: 'no probe' }
   terminals.sweep(
     closed.map((id) => {
-      const { stop } = wrapStart({ program: '', args: [] }, id, scope)
+      const stop = records.find((r) => r.marker === id)?.stop
       return stop ? { id, stop } : { id }
     }),
   )
