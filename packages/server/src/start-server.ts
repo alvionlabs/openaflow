@@ -16,6 +16,7 @@ import { createAutoContinue } from './auto-continue.ts'
 import { createAutoContinueStore } from './auto-continue-store.ts'
 import { createBoardService } from './board-service.ts'
 import { portsDir } from './claims.ts'
+import { resolveBin } from './bin-path.ts'
 import { claudeBin, createClaudeRunner } from './claude-runner.ts'
 import { configPath, envValue, listenConfig, liveConfigDir, oldConfigDir, portFromEnv, type Env } from './config.ts'
 import { moveOldConfig } from './config-move.ts'
@@ -31,6 +32,8 @@ import { createOwnerFile } from './owner-file.ts'
 import { createStopPath, guardOutput, linkParent, type ParentChannel } from './parent-link.ts'
 import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
+import { createSettingsActions, createSettingsRead, type SettingsRouteDeps } from './settings-routes.ts'
+import { createSettingsStore } from './settings-store.ts'
 import { createHookReader, createSessionStore, followChannel, reconcileSessions, type StoredSession } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
 import { createShutdown, createWorkTracker } from './shutdown.ts'
@@ -124,6 +127,17 @@ export async function startServer(
   const sessionEnv = () => (tools ? tools.env() : env)
   // The scope probe runs once per start, and only with a terminal channel; set once the tools are checked.
   let probe: (() => Promise<ScopeProbe>) | undefined
+  // The settings file, read at each use by every mode; the session routes read it at each start.
+  const settingsStore = createSettingsStore({ file: join(configDir, 'settings.json'), log: (line) => console.log(line) })
+  const pluginDir = envValue(env, 'OPENAFLOW_HOOKS_PLUGIN')
+  const settingsDeps = (): SettingsRouteDeps => ({
+    store: settingsStore,
+    platform,
+    ...(probe ? { probe } : {}),
+    // The claude a new session would start: the tool finder's in production, else the PATH lookup's.
+    claude: () => (tools ? tools.path('claude') : resolveBin(settings.claudeBin, env, platform)),
+    pluginDir,
+  })
   const service = createBoardService({ ...settings, platform, gh, actions: log.recent, autoContinue: store.list, hosted })
   const watcher = createBoardWatcher({ service, ...settings, poll: env.OPENAFLOW_POLL === '1' })
 
@@ -152,6 +166,7 @@ export async function startServer(
       web,
       tools,
       screens: createScreenRoutes({ store: sessions, configDir }),
+      settings: createSettingsRead(settingsDeps()),
       addRepo: (p) => addRepo(configFile, p, platform),
       timeline: createTimelineSource({ board: () => watcher.board(), ...settings, now: Date.now }).timeline,
       actions: new Hono()
@@ -168,6 +183,7 @@ export async function startServer(
           }),
         )
         .route('/', createAnswerRoutes({ board: () => watcher.board(), rebuild: () => watcher.rebuild(), log }))
+        .route('/', createSettingsActions(settingsDeps()))
         .route('/', createResumeRoutes(resume))
         .route(
           '/',
@@ -188,11 +204,12 @@ export async function startServer(
             store: sessions,
             terminals,
             claude: () => tools?.path('claude'),
-            pluginDir: envValue(env, 'OPENAFLOW_HOOKS_PLUGIN'),
+            pluginDir,
             configDir,
             hooks: hosted.hooks,
             claudeDir: settings.claudeDir,
             ...(probe ? { probe } : {}),
+            settings: settingsStore,
             env: sessionEnv,
             platform,
             now: Date.now,

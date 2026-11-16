@@ -285,6 +285,40 @@ describe('dev', () => {
   })
 })
 
+describe('settings', () => {
+  test('both modes serve the settings routes on the config folder', async () => {
+    // Dev: the token file's token.
+    const api = await freePort()
+    const dev = await start(envFor({ OPENAFLOW_API_PORT: String(api), OPENAFLOW_WEB_PORT: String(await freePort()) }))
+    const devToken = readFileSync(join(cfg, 'session-token'), 'utf8').trim()
+    expect((await send(dev.started.port, '/api/settings')).status).toBe(403)
+    const read = await send(dev.started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': devToken } })
+    expect(read.status).toBe(200)
+    expect(JSON.parse(read.text)).toMatchObject({ scrollback: 5000 })
+    const post = (port: number, token: string, body: unknown) =>
+      send(port, '/api/actions/settings', {
+        method: 'POST',
+        headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+        body: JSON.stringify(body),
+      })
+    const saved = await post(dev.started.port, devToken, { scrollback: 300 })
+    expect(saved.status).toBe(200)
+    expect(JSON.parse(saved.text)).toMatchObject({ scrollback: 300 })
+    expect(JSON.parse(readFileSync(join(cfg, 'settings.json'), 'utf8'))).toEqual({ v: 1, scrollback: 300 })
+    dev.started.stop()
+    await dev.exited
+    running.splice(0)
+
+    // Production: the page's token; it reads what dev wrote, and a hand edit applies to the next read.
+    const { started } = await startProduction()
+    const token = await pageToken(started.port)
+    expect(JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text)).toMatchObject({ scrollback: 300 })
+    await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, scrollback: 400 }))
+    expect(JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text)).toMatchObject({ scrollback: 400 })
+    expect((await post(started.port, token, { scrollback: 99 })).text).toBe(JSON.stringify({ error: 'bad scrollback' }))
+  })
+})
+
 describe('production', () => {
   test('tool routes are production only', async () => {
     const { started } = await startProduction()
