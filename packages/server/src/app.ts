@@ -36,6 +36,8 @@ export type AppDeps = {
   tools?: ToolRoutesDeps | undefined
   /** The saved-screen route (`createScreenRoutes`), mounted at /api/sessions behind the read guard. With none: 404. */
   screens?: Hono | undefined
+  /** `GET /api/settings` (`createSettingsRead`), mounted at /api/settings behind the read guard. With none: 404. */
+  settings?: Hono | undefined
 }
 
 const ADD_REPO_STATUS = { 'not absolute': 400, 'not a local path': 400, 'not a directory': 400, 'already registered': 409, 'config unreadable': 500 } as const
@@ -68,6 +70,11 @@ export function createApp(deps: AppDeps): Hono {
     // Screen text can hold what the user typed: the token is required, as for the tool list.
     app.use('/api/sessions/*', readGuard({ ports: deps.ports, token: deps.token }))
     app.route('/api/sessions', deps.screens)
+  }
+  if (deps.settings) {
+    // The settings name programs a session starts with: the token is required, as for the tool list.
+    app.use('/api/settings', readGuard({ ports: deps.ports, token: deps.token }))
+    app.route('/api/settings', deps.settings)
   }
   app.get('/api/health', (c) => c.json({ ok: true }))
 
