@@ -48,8 +48,17 @@ const desktopLog = (h: Harness) => {
   return existsSync(file) ? readFileSync(file, 'utf8') : ''
 }
 
-/** What xterm draws, as text with its rows run together, so a line xterm wraps still reads whole. */
-const screen = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.term .xterm-rows > div')].map((r) => (r.textContent ?? '').trimEnd()).join(''))
+/**
+ * What xterm draws, as text with its rows run together, so a line xterm wraps still reads whole. xterm draws a row only
+ * up to its last written cell, so a row as long as the longest one fills the width and runs on: it keeps a space in
+ * its last column. Shorter rows lose their trailing blanks.
+ */
+const screen = (page: Page) =>
+  page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.term .xterm-rows > div')].map((r) => r.textContent ?? '')
+    const full = Math.max(0, ...rows.map((r) => r.length))
+    return rows.map((r) => (r.length === full ? r : r.trimEnd())).join('')
+  })
 
 /** Every failed wait shows the screen, the page's text, and the desktop log. */
 async function until(what: string, ok: () => boolean | Promise<boolean>, h: Harness, ms = 30_000): Promise<void> {
