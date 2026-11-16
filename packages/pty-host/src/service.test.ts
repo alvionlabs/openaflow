@@ -323,6 +323,23 @@ describe('pty host service', () => {
     expect(lines[0]).toBe('line 196')
   })
 
+  test('scrollback per session', async () => {
+    const h = host()
+    h.service.handle({ type: 'start', spec: spec({ id: 'a', rows: 5, scrollback: 200 }) })
+    h.service.handle({ type: 'start', spec: spec({ id: 'b', rows: 5 }) })
+    const lines300 = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\r\n')
+    h.spawned[0]!.emit(lines300)
+    h.spawned[1]!.emit(lines300)
+    h.service.handle({ type: 'snapshot', id: 'a' })
+    h.service.handle({ type: 'snapshot', id: 'b' })
+    await until(() => h.of('snapshot').length === 2)
+    const text = (id: string) => h.of('snapshot').find((m) => m.id === id)!.text!.split('\n')
+    // The spec's 200 lines plus 5 on screen; the session with none keeps the host's 100.
+    expect(text('a')).toHaveLength(205)
+    expect(text('a')[0]).toBe('line 96')
+    expect(text('b')).toHaveLength(105)
+  })
+
   test('dispose kills a live session', () => {
     const h = host()
     h.service.handle({ type: 'start', spec: spec() })

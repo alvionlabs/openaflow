@@ -13,6 +13,8 @@ export type StartSpec = {
   rows: number
   /** Absolute. The host saves the session's snapshot text there (session-life §2). */
   screenFile?: string
+  /** Lines kept above the screen: a whole number from 100 to 100,000. Absent: the host's own value. */
+  scrollback?: number
 }
 
 export type SessionInfo = { id: string; pid: number; live: boolean; startedAt: number }
@@ -72,6 +74,7 @@ export const FLUSH_WAIT_MS = 2_000
 export const SESSION_ID = /^[a-z0-9-]{1,64}$/
 export const COLS = { min: 2, max: 500 }
 export const ROWS = { min: 1, max: 200 }
+export const SCROLLBACK = { min: 100, max: 100_000 }
 
 const inRange = (n: unknown, r: { min: number; max: number }) => Number.isInteger(n) && (n as number) >= r.min && (n as number) <= r.max
 
@@ -89,5 +92,6 @@ export function specError(spec: unknown, o: { isAbsolute(path: string): boolean;
   if (typeof s.cwd !== 'string' || !o.isAbsolute(s.cwd) || !o.isDir(s.cwd)) return 'no folder'
   if (!sizeOk(s.cols, s.rows)) return 'bad size'
   if (s.screenFile !== undefined && (typeof s.screenFile !== 'string' || !o.isAbsolute(s.screenFile))) return 'bad screen file'
+  if (s.scrollback !== undefined && !inRange(s.scrollback, SCROLLBACK)) return 'bad scrollback'
   return undefined
 }
