@@ -85,6 +85,8 @@ function appEnv(dir: string, port: number, extra: Record<string, string>): Recor
     OPENAFLOW_PORTS_DIR: folder('ports'),
     OPENAFLOW_CLAUDE_DIR: folder('claude'),
     OPENAFLOW_DESKTOP_DATA_DIR: folder('shell'),
+    // Open at login on Linux writes here, never in the user's ~/.config/autostart.
+    OPENAFLOW_AUTOSTART_DIR: folder('autostart'),
     OPENAFLOW_API_PORT: String(port),
     ...extra,
   }

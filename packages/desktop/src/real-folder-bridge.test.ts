@@ -6,11 +6,15 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { launchHarness } from '../test/electron-harness.ts'
 import { bundleDesktop } from './bundle-desktop.ts'
 
 // The folder bridge in real Electron: the real window, preload, and IPC. Only the native dialog is a stand-in
 // (test/bridge-probe-main.ts), because automation can't answer it. Temp folders only. `pnpm test:electron` runs
 // this after `pnpm build`.
+
+/** Every call the preload gives the page, in its order. */
+const BRIDGE_KEYS = ['pickFolder', 'connectTerminals', 'onTerminalHost', 'onQuitting', 'terminalHostState', 'openAtLogin', 'setOpenAtLogin']
 
 const here = dirname(fileURLToPath(import.meta.url))
 const DESKTOP = join(here, '..')
@@ -106,6 +110,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
         OPENAFLOW_CLAUDE_DIR: join(tmp, 'claude'),
         OPENAFLOW_CLAUDE_BIN: join(tmp, 'missing', 'claude'),
         OPENAFLOW_DESKTOP_DATA_DIR: join(tmp, 'shell'),
+        OPENAFLOW_AUTOSTART_DIR: join(tmp, 'autostart'),
         OPENAFLOW_PROBE_APP_PATH: DESKTOP,
         OPENAFLOW_PROBE_STATUS: join(tmp, 'status.json'),
         OPENAFLOW_PROBE_QUIT: join(tmp, 'quit'),
@@ -124,10 +129,10 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       const page = s.page!
       expect(new URL(page.url).origin).toBe(`http://127.0.0.1:${s.readyPorts[0]}`)
 
-      // Exactly the bridge's five functions, and no Node or Electron in the page.
+      // Exactly the bridge's functions, and no Node or Electron in the page.
       expect(page.look).toEqual({
         openaflow: 'object',
-        keys: ['pickFolder', 'connectTerminals', 'onTerminalHost', 'onQuitting', 'terminalHostState'],
+        keys: BRIDGE_KEYS,
         pickFolder: 'function',
         require: 'undefined',
         process: 'undefined',
@@ -156,6 +161,36 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform 
       expect(text).toContain('the folder dialog failed: probe dialog error')
     } finally {
       if (shell && shell.exitCode === null) shell.kill()
+    }
+  }, 180_000)
+})
+
+describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform === 'win32' || process.platform === 'linux'))('the bridge keys in real Electron', () => {
+  test('the page sees only the bridge keys', async () => {
+    const h = await launchHarness()
+    try {
+      type Bridge = { openAtLogin(): Promise<boolean>; setOpenAtLogin(on: unknown): Promise<boolean> }
+      const seen = await h.page.evaluate(async () => {
+        const bridge = (window as unknown as { openaflow: Bridge }).openaflow
+        const word = async (call: () => Promise<unknown>) => {
+          try {
+            return `resolved ${String(await call())}`
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e)
+          }
+        }
+        return {
+          keys: Reflect.ownKeys(bridge).map(String),
+          types: [typeof bridge.openAtLogin, typeof bridge.setOpenAtLogin],
+          yes: await word(() => bridge.setOpenAtLogin('yes')),
+          missing: await word(() => bridge.setOpenAtLogin(undefined)),
+          // Read only: nothing here turns it on.
+          now: await word(() => bridge.openAtLogin()),
+        }
+      })
+      expect(seen).toEqual({ keys: BRIDGE_KEYS, types: ['function', 'function'], yes: 'bad request', missing: 'bad request', now: 'resolved false' })
+    } finally {
+      await h.close()
     }
   }, 180_000)
 })

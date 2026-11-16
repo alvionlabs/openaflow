@@ -1,9 +1,11 @@
 // Glue: the window's preload, bundled to dist/preload.cjs. It runs sandboxed, so it may require only `electron`.
 // The page gets exactly `window.openaflow.pickFolder()`, `connectTerminals()`, `onTerminalHost(fn)`,
-// `onQuitting(fn)`, and `terminalHostState()`. The rules are in folder-bridge.ts, terminal-port.ts, and quit-flow.ts.
+// `onQuitting(fn)`, `terminalHostState()`, `openAtLogin()`, and `setOpenAtLogin(on)`. The rules are in folder-bridge.ts,
+// terminal-port.ts, quit-flow.ts, and login-item.ts.
 
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { answerOf, PICK_FOLDER_CHANNEL } from './folder-bridge.ts'
+import { LOGIN_GET_CHANNEL, LOGIN_SET_CHANNEL, loginAnswerOf } from './login-item.ts'
 import { QUITTING_CHANNEL, quittingCount } from './quit-flow.ts'
 import {
   createDeliveries,
@@ -31,6 +33,11 @@ const ports = createPortRequests<MessagePort>({
   deliver: (port) => deliveries.deliver(port),
 })
 ipcRenderer.on(TERMINAL_PORT_CHANNEL, (e, message: { request?: unknown } | null) => ports.receive(message?.request, e.ports[0]))
+
+// A failed invoke (no handler, a closed window) reads as a failed read, never as Electron's own text.
+const loginFailed = (): never => {
+  throw new Error('login item failed')
+}
 
 contextBridge.exposeInMainWorld('openaflow', {
   // A failed invoke (no handler, a closed window) reads as a failed dialog, never as Electron's own text.
@@ -61,4 +68,8 @@ contextBridge.exposeInMainWorld('openaflow', {
     ipcRenderer.invoke(TERMINAL_HOST_STATE_CHANNEL).then(readHostState, () => {
       throw new Error('forbidden')
     }),
+  /** Open at login now. Rejects with `forbidden` or `login item failed`. */
+  openAtLogin: (): Promise<boolean> => ipcRenderer.invoke(LOGIN_GET_CHANNEL).then(loginAnswerOf, loginFailed),
+  /** The state read after the write. Rejects with `forbidden`, `bad request` (not a boolean), or `login item failed`. */
+  setOpenAtLogin: (on: boolean): Promise<boolean> => ipcRenderer.invoke(LOGIN_SET_CHANNEL, on).then(loginAnswerOf, loginFailed),
 })
