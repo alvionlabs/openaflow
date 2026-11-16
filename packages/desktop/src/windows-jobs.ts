@@ -7,16 +7,21 @@
 // pod-docs/sprints/session-life.md (§7, J1).
 //
 // Lines, one request at a time, answered in order:
-//   main → helper: `assign <id> <pid>`  `close <id>`
-//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error>`  `closed <id>`
+//   main → helper: `assign <id> <pid> [<since>]`  `close <id>`
+//   helper → main: `ok <id> <joined>`  `fail <id> <win32 error> <call> <joined>`  `closed <id>`
+// `since`: Unix ms, less BIRTH_SLACK_MS, when main asked the host for the session; nothing the session started is
+// older. `call`: the Win32 call that failed.
 // `joined`: how many processes the session's program started before the assign, and their children, the helper put in
 // the job after it. Without that, a child started while the helper was still starting stays outside the job (CI,
 // session-life wave 3): close and the helper's exit never end it, and once its parent has ended, taskkill /T can't
 // find it either. `close` puts such children in the job once more before it ends the job.
 
 export type JobControl = {
-  /** Puts a running process in the session's job. False on any failure: the caller falls back to a tree kill. */
-  assign(id: string, pid: number): Promise<boolean>
+  /**
+   * Puts a running process in the session's job. `since`: when main asked for the session (Unix ms). False on any
+   * failure: the caller falls back to a tree kill.
+   */
+  assign(id: string, pid: number, since?: number): Promise<boolean>
   /** Ends every process in the session's job and drops the job. Never rejects; waits at most CLOSE_MS. */
   close(id: string): Promise<void>
   /** Ends the helper's input, so it exits and Windows ends every job's processes. */
@@ -44,6 +49,8 @@ export type SpawnHelper = (
 export const ANSWER_MS = 10_000
 /** A close with no answer for this long resolves anyway, so a quit never waits on a stuck helper. */
 export const CLOSE_MS = 2_000
+/** Taken off `since`: Windows may stamp a process's start up to a clock tick before Node's clock reads it. */
+export const BIRTH_SLACK_MS = 1_000
 
 const LOG = 'openaflow desktop:'
 const ID = /^[A-Za-z0-9._-]{1,128}$/
@@ -241,6 +248,11 @@ public static class OpenAFlowJobs
         return list;
     }
 
+    static string Fail(string id, int error, string call, int joined)
+    {
+        return "fail " + id + " " + error + " " + call + " " + joined;
+    }
+
     static string Assign(Dictionary<string, IntPtr> jobs, string id, uint pid)
     {
         IntPtr job;
@@ -248,29 +260,38 @@ public static class OpenAFlowJobs
         if (!jobs.TryGetValue(id, out job))
         {
             job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero) return "fail " + id + " " + Marshal.GetLastWin32Error();
+            if (job == IntPtr.Zero) return Fail(id, Marshal.GetLastWin32Error(), "CreateJobObject", 0);
             ExtendedLimit info = new ExtendedLimit();
             info.Basic.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref info, (uint)Marshal.SizeOf(typeof(ExtendedLimit))))
             {
                 int setError = Marshal.GetLastWin32Error();
                 CloseHandle(job);
-                return "fail " + id + " " + setError;
+                return Fail(id, setError, "SetInformationJobObject", 0);
             }
             made = true;
         }
         int error = 0;
+        string call = null;
         IntPtr process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid);
-        if (process == IntPtr.Zero) error = Marshal.GetLastWin32Error();
+        if (process == IntPtr.Zero)
+        {
+            error = Marshal.GetLastWin32Error();
+            call = "OpenProcess";
+        }
         else
         {
-            if (!AssignProcessToJobObject(job, process)) error = Marshal.GetLastWin32Error();
+            if (!AssignProcessToJobObject(job, process))
+            {
+                error = Marshal.GetLastWin32Error();
+                call = "AssignProcessToJobObject";
+            }
             CloseHandle(process);
         }
         if (error != 0)
         {
             if (made) CloseHandle(job);
-            return "fail " + id + " " + error;
+            return Fail(id, error, call, 0);
         }
         if (made) jobs[id] = job;
         return "ok " + id + " " + JoinEarlier(job, pid);
@@ -284,10 +305,10 @@ public static class OpenAFlowJobs
         {
             string[] p = line.Trim().Split(' ');
             string answer = null;
-            if (p.Length == 3 && p[0] == "assign")
+            if ((p.Length == 3 || p.Length == 4) && p[0] == "assign")
             {
                 uint pid;
-                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid) : "fail " + p[1] + " 87";
+                answer = UInt32.TryParse(p[2], out pid) ? Assign(jobs, p[1], pid) : Fail(p[1], 87, "parse", 0);
             }
             else if (p.Length == 2 && p[0] == "close")
             {
@@ -368,12 +389,16 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
   }
 
   function onLine(h: Helper, line: string) {
-    const [word, id, code] = line.trim().split(' ')
+    const [word, id, code, call, joinedText] = line.trim().split(' ')
     const head = h.queue[0]
     if (!head || head.id !== id) return
     if (head.kind === 'assign' && (word === 'ok' || word === 'fail')) {
       h.queue.shift()
-      if (word === 'fail' && head.settle) o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}`)
+      if (word === 'fail' && head.settle) {
+        const joined = Number(joinedText ?? 0)
+        const note = joined > 0 ? `; ${joined} processes it started joined its job` : ''
+        o.log(`${LOG} session ${id} not in a job: error ${code ?? '?'}${call ? ` at ${call}` : ''}${note}`)
+      }
       if (word === 'ok' && head.settle) {
         const joined = Number(code ?? 0)
         const note = joined > 0 ? `; ${joined} processes it started before joined too` : ''
@@ -427,7 +452,7 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
   }
 
   return {
-    assign(id, pid) {
+    assign(id, pid, since) {
       if (!onWindows || disposed || !ID.test(id) || !Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff) {
         return Promise.resolve(false)
       }
@@ -449,7 +474,8 @@ export function createJobControl(o: { spawn: SpawnHelper; log(line: string): voi
             resolve(ok)
           },
         }
-        send(h, `assign ${id} ${pid}`, r)
+        const floor = since !== undefined && Number.isSafeInteger(since) && since > BIRTH_SLACK_MS ? ` ${since - BIRTH_SLACK_MS}` : ''
+        send(h, `assign ${id} ${pid}${floor}`, r)
       })
     },
     close(id) {

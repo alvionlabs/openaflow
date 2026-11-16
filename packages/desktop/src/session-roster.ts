@@ -40,7 +40,8 @@ export type RosterOptions = {
   log(line: string): void
 }
 
-type Entry = { id: string; pid: number; stop?: string[]; state: RosterState }
+/** `since`: when the relay asked the host for it (Unix ms); unset when main never saw the start. */
+type Entry = { id: string; pid: number; stop?: string[]; state: RosterState; since?: number }
 
 export function createSessionRoster(o: RosterOptions): SessionRoster {
   const entries = new Map<string, Entry>()
@@ -54,7 +55,7 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
   let ending: Promise<void> | undefined
 
   const prefix = (id: string) => `openaflow desktop: session ${id.slice(0, 8)}`
-  const view = (e: Entry): RosterSession => ({ ...e, ...(labels.has(e.id) ? { label: labels.get(e.id) } : {}) })
+  const view = ({ since: _since, ...e }: Entry): RosterSession => ({ ...e, ...(labels.has(e.id) ? { label: labels.get(e.id) } : {}) })
   const held = (e: Entry | undefined) => e !== undefined && e.state !== 'ended'
   /** The ender never rejects; this keeps a broken one from rejecting a quit. */
   const settle = (p: Promise<void>) => p.catch((err) => o.log(`openaflow desktop: session end failed: ${String(err)}`))
@@ -101,7 +102,7 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
   return {
     starting(id, stop) {
       if (entries.has(id)) return
-      entries.set(id, { id, pid: 0, ...(stop ? { stop } : {}), state: 'starting' })
+      entries.set(id, { id, pid: 0, ...(stop ? { stop } : {}), state: 'starting', since: Date.now() })
     },
     started(id, pid) {
       const e = entries.get(id) ?? { id, pid: 0, state: 'starting' as RosterState }
@@ -120,7 +121,7 @@ export function createSessionRoster(o: RosterOptions): SessionRoster {
       if (!jobs) return
       const noJob = () => o.log(`${prefix(id)} has no job; quit ends it by taskkill only`)
       Promise.resolve()
-        .then(() => jobs.assign(id, pid))
+        .then(() => jobs.assign(id, pid, e.since))
         .then((ok) => ok || noJob(), noJob)
     },
     ended(id) {

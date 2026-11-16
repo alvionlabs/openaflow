@@ -182,10 +182,13 @@ describe('jobs', () => {
   test('started assigns the job on Windows only', async () => {
     const win = jobsFake(async () => true)
     const w = setup({ platform: 'win32', jobs: win })
+    vi.setSystemTime(1_794_788_430_229)
     w.roster.starting(A)
+    await vi.advanceTimersByTimeAsync(300)
     w.roster.started(A, 1000)
     await vi.advanceTimersByTimeAsync(0)
-    expect(win.assign.mock.calls).toEqual([[A, 1000]])
+    // The time main asked for the start: the helper finds what the program started by it, even once the program is gone.
+    expect(win.assign.mock.calls).toEqual([[A, 1000, 1_794_788_430_229]])
     expect(w.log).not.toHaveBeenCalled()
 
     const lin = jobsFake(async () => true)

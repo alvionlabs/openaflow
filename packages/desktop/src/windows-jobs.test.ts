@@ -5,7 +5,7 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ANSWER_MS, CLOSE_MS, createJobControl, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
+import { ANSWER_MS, BIRTH_SLACK_MS, CLOSE_MS, createJobControl, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
 
 // Node's own spawn is what main passes in.
 const realSpawn: SpawnHelper = spawn
@@ -112,6 +112,33 @@ describe('helper protocol', () => {
     expect(log.mock.calls).toEqual([
       ['openaflow desktop: session s-1 in a job after 1250 ms; 2 processes it started before joined too'],
       ['openaflow desktop: session s-2 in a job after 0 ms'],
+    ])
+  })
+
+  test('an assign sends when its session started, less the birth slack; with no start time it sends none', async () => {
+    const { jobs, helpers } = setup()
+    const since = 1_794_788_430_229
+    void jobs.assign('s-1', 4242, since)
+    void jobs.assign('s-2', 77)
+    void jobs.assign('s-3', 78, Number.NaN)
+    void jobs.assign('s-4', 79, -5)
+    expect(BIRTH_SLACK_MS).toBe(1_000)
+    expect(helpers[0]!.lines()).toEqual([`assign s-1 4242 ${since - BIRTH_SLACK_MS}`, 'assign s-2 77', 'assign s-3 78', 'assign s-4 79'])
+  })
+
+  test('a fail names the call that failed, and how many processes the program started joined its job anyway', async () => {
+    const { jobs, helpers, log } = setup()
+    const a = track(jobs.assign('s-1', 7932, 1_000_000))
+    helpers[0]!.say('fail s-1 87 OpenProcess 1\r\n')
+    await settle()
+    expect(a).toEqual({ done: true, value: false })
+    const b = track(jobs.assign('s-2', 77))
+    helpers[0]!.say('fail s-2 5 AssignProcessToJobObject 0\r\n')
+    await settle()
+    expect(b).toEqual({ done: true, value: false })
+    expect(log.mock.calls).toEqual([
+      ['openaflow desktop: session s-1 not in a job: error 87 at OpenProcess; 1 processes it started joined its job'],
+      ['openaflow desktop: session s-2 not in a job: error 5 at AssignProcessToJobObject'],
     ])
   })
 
