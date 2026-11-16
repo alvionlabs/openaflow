@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,7 @@ import { resumeCommand, sessionCommand } from './session-command.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createHookReader, createSessionStore, type StoredSession } from './session-store.ts'
 import { createSessionToken } from './session-token.ts'
+import { createSettingsStore } from './settings-store.ts'
 import { createTerminalChannel, TERMINAL_MESSAGE } from './terminal-channel.ts'
 
 const API = 3070
@@ -62,7 +63,10 @@ type Main = 'started' | 'start-failed' | 'silent'
  * The routes behind the real app and guard, over a real store, board service, and terminal channel. `main` plays the
  * desktop's main process on the channel's other end.
  */
-async function setup(o: { terminals?: boolean; claude?: string | undefined; main?: Main; seed?: StoredSession[]; answerMs?: number; probe?: ScopeProbe } = {}) {
+async function setup(o: { terminals?: boolean; claude?: string | undefined; main?: Main; seed?: StoredSession[]; answerMs?: number; probe?: ScopeProbe; settings?: Record<string, unknown> } = {}) {
+  if (o.settings) await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, ...o.settings }))
+  else await rm(join(cfg, 'settings.json'), { force: true })
+  const lines: string[] = []
   // Each setup starts from its own seed, or from no file.
   if (o.seed) await writeFile(join(cfg, 'sessions.json'), JSON.stringify({ v: 1, sessions: o.seed }))
   else await rm(join(cfg, 'sessions.json'), { force: true })
@@ -133,6 +137,8 @@ async function setup(o: { terminals?: boolean; claude?: string | undefined; main
     hooks: hookReader,
     claudeDir: join(root, 'claude'),
     ...(o.probe ? { probe: async () => o.probe! } : {}),
+    settings: createSettingsStore({ file: join(cfg, 'settings.json'), log: (l) => lines.push(l) }),
+    logLine: (l) => lines.push(l),
   })
   const app = createApp({
     ports: [API, WEB],
@@ -159,6 +165,7 @@ async function setup(o: { terminals?: boolean; claude?: string | undefined; main
     claude,
     pluginDir,
     env,
+    lines,
     async settle() {
       await store.saved()
     },
@@ -176,6 +183,14 @@ const rec = (marker: string, repoPath: string, state: StoredSession['state'], ov
 })
 const marker = (n: number) => `${String(n).padStart(8, '9')}-1111-4111-8111-111111111111`
 const PROBE_ON: ScopeProbe = { on: true, systemdRun: '/usr/bin/systemd-run', systemctl: '/usr/bin/systemctl' }
+/** What a start with `PROBE_ON` sends: the default wrapper and stop; Windows has neither. */
+const scoped = (cmd: { program: string; args: string[] }, unit: string) =>
+  platform === 'win32'
+    ? { run: { program: cmd.program, args: cmd.args }, stop: {} }
+    : {
+        run: { program: '/usr/bin/systemd-run', args: ['--user', '--scope', '--quiet', `--unit=${unit}`, cmd.program, ...cmd.args] },
+        stop: { stop: ['/usr/bin/systemctl', '--user', 'stop', unit] },
+      }
 const screenOf = (m: string) => join(cfg, 'screens', `${m}.txt`)
 const hookOf = (m: string) => join(cfg, 'hooks', `${m}.jsonl`)
 /** The conversation file Resume looks for. */
@@ -268,17 +283,17 @@ describe('new-session', () => {
     if (typeof cmd === 'string') throw new Error(cmd)
     // With the probe off (none given): no wrapper and no stop; the screen file is the config folder's.
     expect(s.sent).toEqual([
-      { type: TERMINAL_MESSAGE, op: 'start', req: 1, spec: { id: M, program: cmd.program, args: cmd.args, cwd: cmd.cwd, env: cmd.env, cols: 100, rows: 40, screenFile: screenOf(M) } },
+      { type: TERMINAL_MESSAGE, op: 'start', req: 1, spec: { id: M, program: cmd.program, args: cmd.args, cwd: cmd.cwd, env: cmd.env, cols: 100, rows: 40, screenFile: screenOf(M), scrollback: 5000 } },
     ])
     // Saved before the start went out; logged, then the Board rebuilt, before the answer.
     expect(s.events).toEqual(['send start', 'log', 'rebuild'])
     expect(s.board().repos.find((r) => r.id === A)!.hosted).toEqual([
-      { marker: M, sessionId: S, liveSession: S, sessions: [S], skill: 'plan', startedAt: NOW, state: 'live', hooked: false, prompted: false },
+      { marker: M, sessionId: S, liveSession: S, sessions: [S], skill: 'plan', startedAt: NOW, state: 'live', hooked: false, prompted: false, scrollback: 5000 },
     ])
     expect(s.logged).toEqual([{ action: 'new-session', repoId: A, repo: 'a', target: '/pod:plan · 00000001', result: 'started' }])
     await s.settle()
     const file = await readFile(join(cfg, 'sessions.json'), 'utf8')
-    expect(JSON.parse(file)).toEqual({ v: 1, sessions: [{ marker: M, repoPath: repoA, sessionId: S, skill: 'plan', startedAt: NOW, state: 'live', pid: 4321 }] })
+    expect(JSON.parse(file)).toEqual({ v: 1, sessions: [{ marker: M, repoPath: repoA, sessionId: S, skill: 'plan', startedAt: NOW, state: 'live', pid: 4321, scrollback: 5000 }] })
     // No text anywhere but the start itself.
     expect(file).not.toContain(SECRET)
     expect(JSON.stringify(s.logged)).not.toContain(SECRET)
@@ -305,8 +320,8 @@ describe('new-session', () => {
         type: TERMINAL_MESSAGE,
         op: 'start',
         req: 1,
-        spec: { id: M, program: '/usr/bin/systemd-run', args: ['--user', '--scope', '--quiet', `--unit=${unit}`, cmd.program, ...cmd.args], cwd: cmd.cwd, env: cmd.env, cols: 120, rows: 30, screenFile: screenOf(M) },
-        stop: ['/usr/bin/systemctl', '--user', 'stop', unit],
+        spec: { id: M, ...scoped(cmd, unit).run, cwd: cmd.cwd, env: cmd.env, cols: 120, rows: 30, screenFile: screenOf(M), scrollback: 5000 },
+        ...scoped(cmd, unit).stop,
       },
     ])
     await s.settle()
@@ -429,15 +444,15 @@ describe('resume-session', () => {
         type: TERMINAL_MESSAGE,
         op: 'start',
         req: 1,
-        spec: { id: M, program: '/usr/bin/systemd-run', args: ['--user', '--scope', '--quiet', `--unit=${unit}`, cmd.program, ...cmd.args], cwd: cmd.cwd, env: cmd.env, cols: 100, rows: 40, screenFile: screenOf(M) },
-        stop: ['/usr/bin/systemctl', '--user', 'stop', unit],
+        spec: { id: M, ...scoped(cmd, unit).run, cwd: cmd.cwd, env: cmd.env, cols: 100, rows: 40, screenFile: screenOf(M), scrollback: 5000 },
+        ...scoped(cmd, unit).stop,
       },
       { type: TERMINAL_MESSAGE, op: 'dispose', id: OLD },
     ])
     expect(cmd.args).toEqual(['--resume', LIVE, '--plugin-dir', s.pluginDir])
     // The old record, its hook file, and its screen file are gone; the new one is live, with the old skill.
     await s.settle()
-    expect(s.store.list()).toEqual([{ marker: M, repoPath: repoA, sessionId: LIVE, skill: 'task', startedAt: NOW, state: 'live', pid: 4321 }])
+    expect(s.store.list()).toEqual([{ marker: M, repoPath: repoA, sessionId: LIVE, skill: 'task', startedAt: NOW, state: 'live', pid: 4321, scrollback: 5000, ...scoped(cmd, unit).stop }])
     expect(existsSync(hookOf(OLD))).toBe(false)
     expect(existsSync(screenOf(OLD))).toBe(false)
     expect(s.logged).toEqual([{ action: 'resume-session', repoId: A, repo: 'a', target: '/pod:task · 00000001', result: 'started' }])
@@ -558,7 +573,7 @@ describe('resume-session', () => {
     expect([one.body, two.body]).toContainEqual({ error: 'terminals unavailable' })
     expect(s.sent.filter((m) => m.op === 'start')).toHaveLength(1)
     const M = '00000001-0000-4000-8000-000000000001'
-    expect(s.store.list()).toEqual([old, { marker: M, repoPath: repoA, sessionId: LIVE, skill: 'plan', startedAt: NOW, state: 'starting', resumedFrom: OLD }])
+    expect(s.store.list()).toEqual([old, { marker: M, repoPath: repoA, sessionId: LIVE, skill: 'plan', startedAt: NOW, state: 'starting', resumedFrom: OLD, scrollback: 5000 }])
     expect(existsSync(hookOf(OLD))).toBe(true)
     expect(existsSync(screenOf(OLD))).toBe(true)
     // While the new one is starting, the old one reads in use on the Board.
@@ -570,5 +585,122 @@ describe('resume-session', () => {
     expect((await ok.post('resume-session', { repoId: ok.idOf(repoA), marker: OLD })).status).toBe(200)
     expect(await ok.post('resume-session', { repoId: ok.idOf(repoA), marker: OLD })).toEqual({ status: 404, body: { error: 'no session' } })
     await ok.settle()
+  })
+})
+
+describe('settings at a start', () => {
+  const WIN = process.platform === 'win32'
+  const M = '00000001-0000-4000-8000-000000000001'
+  const OLD = marker(1)
+
+  /** `<root>/tools/<name>`: a script that notes its args, then does what `body` says. */
+  const tool = (name: string, body: string) => {
+    const dir = join(root, 'tools')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, name), `#!/bin/sh\necho "$*" >> '${dir}/${name}.runs'\n${body}\n`)
+    chmodSync(join(dir, name), 0o755)
+    return join(dir, name)
+  }
+  const runs = (name: string) => (existsSync(join(root, 'tools', `${name}.runs`)) ? readFileSync(join(root, 'tools', `${name}.runs`), 'utf8').trim().split('\n') : [])
+
+  test.skipIf(WIN)('refuses a broken wrapper or stop', async () => {
+    const wrap = tool('wrap', 'echo "bad option" >&2\nexit 3')
+    const cases: [Record<string, unknown>, string][] = [
+      [{ runWrapper: join(root, 'gone') }, `run wrapper: ${join(root, 'gone')} not found`],
+      [{ runWrapper: 'no-such-wrapper --x' }, 'run wrapper: no-such-wrapper not found'],
+      [{ runWrapper: `${wrap} --unit={unit}` }, 'run wrapper: exit 3: bad option'],
+      [{ stopCommand: 'no-such-stop {unit}' }, 'stop command: no-such-stop not found'],
+      [{ runWrapper: '', stopCommand: 'a/b' }, 'stop command: a/b not found'],
+      // The wrapper is refused before the stop.
+      [{ runWrapper: 'no-such-wrapper', stopCommand: 'no-such-stop' }, 'run wrapper: no-such-wrapper not found'],
+    ]
+    for (const [settings, error] of cases) {
+      // New session: no record, no start, no entry; one console line.
+      const s = await setup({ settings })
+      const res = await s.post('new-session', { repoId: s.idOf(repoA), skill: 'plan', text: SECRET })
+      expect(res, error).toEqual({ status: 409, body: { error } })
+      expect(s.store.list(), error).toEqual([])
+      expect(s.sent, error).toEqual([])
+      expect(s.logged, error).toEqual([])
+      expect(s.lines, error).toEqual([`openaflow: session start refused: ${error}`])
+      expect(existsSync(join(cfg, 'sessions.json')), error).toBe(false)
+
+      // Resume: the old record stays as it was, with no new one, no start, and no entry.
+      const old = rec(OLD, repoA, 'ended', { exitCode: 0, endedAt: 5 })
+      const r = await setup({ settings, seed: [old] })
+      await conversation(repoA, old.sessionId)
+      const back = await r.post('resume-session', { repoId: r.idOf(repoA), marker: OLD })
+      expect(back, error).toEqual({ status: 409, body: { error } })
+      expect(r.store.list(), error).toEqual([old])
+      expect(r.sent, error).toEqual([])
+      expect(r.logged, error).toEqual([])
+      expect(r.lines, error).toEqual([`openaflow: session start refused: ${error}`])
+    }
+
+    const broken = { runWrapper: 'no-such-wrapper' }
+    // New session: after claude not found, before session starting.
+    const noClaude = await setup({ settings: broken, claude: undefined })
+    expect((await noClaude.post('new-session', { repoId: noClaude.idOf(repoA), skill: 'plan', text: '' })).body).toEqual({ error: 'claude not found' })
+    const starting = await setup({ settings: broken, seed: [rec(marker(2), repoA, 'starting')] })
+    expect((await starting.post('new-session', { repoId: starting.idOf(repoA), skill: 'plan', text: '' })).body).toEqual({ error: 'run wrapper: no-such-wrapper not found' })
+
+    // Resume: after the first no session, before the checks that follow it (session is live, session starting).
+    const none = await setup({ settings: broken, seed: [rec(OLD, repoA, 'ended')] })
+    expect((await none.post('resume-session', { repoId: none.idOf(repoA), marker: marker(9) })).body).toEqual({ error: 'no session' })
+    const live = await setup({ settings: broken, seed: [rec(OLD, repoA, 'live', { pid: 3 })] })
+    expect((await live.post('resume-session', { repoId: live.idOf(repoA), marker: OLD })).body).toEqual({ error: 'run wrapper: no-such-wrapper not found' })
+    expect(live.lines).toEqual(['openaflow: session start refused: run wrapper: no-such-wrapper not found'])
+
+    // A good start after the wrapper is fixed: the failure was not cached.
+    expect(runs('wrap')).toHaveLength(2)
+    writeFileSync(wrap, `#!/bin/sh\necho "$*" >> '${join(root, 'tools')}/wrap.runs'\nexit 0\n`)
+    const fixed = await setup({ settings: { runWrapper: `${wrap} --unit={unit}` } })
+    expect((await fixed.post('new-session', { repoId: fixed.idOf(repoA), skill: 'plan', text: '' })).status).toBe(200)
+    expect(runs('wrap')).toHaveLength(3)
+    await fixed.settle()
+  })
+
+  test('a start uses the settings in force', async () => {
+    const wrap = WIN ? '' : tool('wrap', 'shift\nexec "$@"')
+    const stopper = WIN ? '' : tool('stopper', 'exit 0')
+    const unit = `openaflow-run-${M}.scope`
+    const s = await setup({ settings: WIN ? { scrollback: 300 } : { scrollback: 300, runWrapper: `${wrap} --unit={unit}`, stopCommand: `${stopper} {unit} {runId}` } })
+    expect((await s.post('new-session', { repoId: s.idOf(repoA), skill: 'plan', text: '' })).status).toBe(200)
+    const spec = s.sent[0]!.spec as { program: string; args: string[]; scrollback: number }
+    expect(spec.scrollback).toBe(300)
+    await s.settle()
+    const first = s.store.list()[0]!
+    expect(first.scrollback).toBe(300)
+    if (!WIN) {
+      expect(spec.program).toBe(wrap)
+      expect(spec.args.slice(0, 2)).toEqual([`--unit=${unit}`, s.claude])
+      expect(s.sent[0]!.stop).toEqual([stopper, unit, M])
+      expect(first.stop).toEqual([stopper, unit, M])
+    }
+    // The Board's session carries the scrollback; never the stop.
+    expect(s.board().repos.find((r) => r.path === repoA)!.hosted![0]!.scrollback).toBe(300)
+    expect(JSON.stringify(s.board())).not.toContain(stopper || 'no-stopper')
+
+    // A change between two starts applies to the second only.
+    await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, scrollback: 400, runWrapper: '' }))
+    expect((await s.post('new-session', { repoId: s.idOf(repoB), skill: 'plan', text: '' })).status).toBe(200)
+    const second = s.sent[1]!
+    expect(second.spec).toMatchObject({ program: s.claude, scrollback: 400 })
+    expect(second).not.toHaveProperty('stop')
+    await s.settle()
+    const [a, b] = s.store.list()
+    expect(a).toEqual(first)
+    expect(b!.scrollback).toBe(400)
+    expect(b).not.toHaveProperty('stop')
+
+    // Resume reads them too; no file is the defaults.
+    const old = rec(OLD, repoA, 'ended', { exitCode: 0, endedAt: 5, scrollback: 300 })
+    const r = await setup({ seed: [old] })
+    await conversation(repoA, old.sessionId)
+    expect((await r.post('resume-session', { repoId: r.idOf(repoA), marker: OLD })).status).toBe(200)
+    expect(r.sent[0]!.spec).toMatchObject({ scrollback: 5000 })
+    await r.settle()
+    expect(r.store.list()[0]!.scrollback).toBe(5000)
+    expect(r.lines).toEqual([])
   })
 })

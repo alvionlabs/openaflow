@@ -222,6 +222,43 @@ describe('session store', () => {
     expect(await reconcileSessions(writable(), { list: () => Promise.reject(new Error('terminals unavailable')) })).toEqual([])
   })
 
+  test('keeps scrollback and stop', async () => {
+    const STOP = ['/usr/bin/systemctl', '--user', 'stop', `openaflow-run-${M1}.scope`]
+    // Saved and read back as they were.
+    const store = writable()
+    await store.add(record(M1, { scrollback: 200, stop: STOP }))
+    await store.started(M1, 7)
+    await store.exited(M1, 0)
+    expect((await saved()).sessions[0]).toEqual(record(M1, { state: 'ended', pid: 7, exitCode: 0, endedAt: 5000, scrollback: 200, stop: STOP }))
+    expect(writable().list()[0]).toMatchObject({ scrollback: 200, stop: STOP })
+    // The edges of each rule pass.
+    const edges = [record(M1, { scrollback: 100, stop: ['/x'] }), record(M2, { scrollback: 100_000, stop: Array.from({ length: 32 }, (_, i) => (i === 0 ? '/' + 'a'.repeat(1023) : '')) })]
+    await writeFile(file, JSON.stringify({ v: 1, sessions: edges }))
+    expect(writable().list()).toEqual(edges)
+
+    // A bad value is dropped on read; the record stays.
+    const bad: [unknown, unknown][] = [
+      [99, ['relative', '--user']],
+      [100_001, []],
+      [1.5, Array.from({ length: 33 }, () => '/x')],
+      ['300', ['/x', 7]],
+      [null, ['/' + 'a'.repeat(1024)]],
+      [0, '/usr/bin/systemctl'],
+      [5000.5, [''] as unknown],
+    ]
+    const markers = [M1, M2, M3, M4, '55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666', '77777777-7777-4777-8777-777777777777']
+    await writeFile(file, JSON.stringify({ v: 1, sessions: bad.map(([scrollback, stop], i) => ({ ...record(markers[i]!), scrollback, stop })) }))
+    const read = writable().list()
+    expect(read).toEqual(markers.map((m) => record(m)))
+    expect(logs).toEqual([])
+
+    // The Board's session carries the record's scrollback, and never its stop.
+    const hosted = hostedSession(record(M1, { state: 'live', scrollback: 300, stop: STOP }), undefined)
+    expect(hosted.scrollback).toBe(300)
+    expect(hosted).not.toHaveProperty('stop')
+    expect(hostedSession(record(M1), undefined)).not.toHaveProperty('scrollback')
+  })
+
   test('unreadable file', async () => {
     await writeFile(file, '{"v":1,"sessions":[')
     const store = writable()

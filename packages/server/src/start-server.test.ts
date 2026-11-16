@@ -285,6 +285,40 @@ describe('dev', () => {
   })
 })
 
+describe('settings', () => {
+  test('both modes serve the settings routes on the config folder', async () => {
+    // Dev: the token file's token.
+    const api = await freePort()
+    const dev = await start(envFor({ OPENAFLOW_API_PORT: String(api), OPENAFLOW_WEB_PORT: String(await freePort()) }))
+    const devToken = readFileSync(join(cfg, 'session-token'), 'utf8').trim()
+    expect((await send(dev.started.port, '/api/settings')).status).toBe(403)
+    const read = await send(dev.started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': devToken } })
+    expect(read.status).toBe(200)
+    expect(JSON.parse(read.text)).toMatchObject({ scrollback: 5000 })
+    const post = (port: number, token: string, body: unknown) =>
+      send(port, '/api/actions/settings', {
+        method: 'POST',
+        headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+        body: JSON.stringify(body),
+      })
+    const saved = await post(dev.started.port, devToken, { scrollback: 300 })
+    expect(saved.status).toBe(200)
+    expect(JSON.parse(saved.text)).toMatchObject({ scrollback: 300 })
+    expect(JSON.parse(readFileSync(join(cfg, 'settings.json'), 'utf8'))).toEqual({ v: 1, scrollback: 300 })
+    dev.started.stop()
+    await dev.exited
+    running.splice(0)
+
+    // Production: the page's token; it reads what dev wrote, and a hand edit applies to the next read.
+    const { started } = await startProduction()
+    const token = await pageToken(started.port)
+    expect(JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text)).toMatchObject({ scrollback: 300 })
+    await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, scrollback: 400 }))
+    expect(JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text)).toMatchObject({ scrollback: 400 })
+    expect((await post(started.port, token, { scrollback: 99 })).text).toBe(JSON.stringify({ error: 'bad scrollback' }))
+  })
+})
+
 describe('production', () => {
   test('tool routes are production only', async () => {
     const { started } = await startProduction()
@@ -541,17 +575,15 @@ describe('hosted sessions', () => {
       await exited
     }
 
-    // One unlisted record: one sweep, with the stop its scope has.
+    // One unlisted record: one sweep. It started before stops were stored, so it has none, even with the probe on.
     await seed()
     const main = fakeMain()
     await start(await env(), { webDir }, main.link)
     await until(() => main.sent.some((m) => m.op === 'list'))
     main.answer({ op: 'list', req: main.sent.find((m) => m.op === 'list')!.req, sessions: [{ id: M2, pid: 6, live: true, startedAt: 1 }] })
     await until(() => states()[0] === 'stopped')
-    // The sweep follows once the probe has answered.
-    await until(() => main.sent.some((m) => m.op === 'sweep')).catch(() => {})
-    const stop = process.platform === 'linux' ? { stop: [join(bin, 'systemctl'), '--user', 'stop', `openaflow-run-${M}.scope`] } : {}
-    expect(main.sent.filter((m) => m.op === 'sweep')).toEqual([{ type: 'openaflow:terminal', op: 'sweep', sessions: [{ id: M, ...stop }] }])
+    await until(() => main.sent.some((m) => m.op === 'sweep'))
+    expect(main.sent.filter((m) => m.op === 'sweep')).toEqual([{ type: 'openaflow:terminal', op: 'sweep', sessions: [{ id: M }] }])
     expect(states()).toEqual(['stopped', 'live', 'ended'])
     // The labels went at the start, before the reconcile changed anything.
     expect(main.sent.find((m) => m.op === 'labels')).toEqual({ type: 'openaflow:terminal', op: 'labels', labels: [{ id: M, label: 'repo · no plan yet' }, { id: M2, label: 'repo · no plan yet' }] })
@@ -569,6 +601,41 @@ describe('hosted sessions', () => {
     await until(() => states()[1] === 'live')
     await new Promise((r) => setTimeout(r, 300))
     expect(all.sent.filter((m) => m.op === 'sweep')).toEqual([])
+  })
+
+  test('sweep uses the stop each session started with', async () => {
+    const M2 = '22222222-2222-4222-8222-222222222222'
+    const M3 = '33333333-3333-4333-8333-333333333333'
+    const M4 = '44444444-4444-4444-8444-444444444444'
+    const repo = join(tmp, 'repo')
+    await mkdir(repo)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    const rec = (marker: string, state: string, over: Record<string, unknown> = {}) => ({ marker, repoPath: repo, sessionId: S, skill: 'plan', startedAt: 1, state, ...over })
+    const OLD_STOP = ['/opt/old/stop', '--unit', `openaflow-run-${M}.scope`]
+    await writeFile(
+      join(cfg, 'sessions.json'),
+      JSON.stringify({ v: 1, sessions: [rec(M, 'live', { pid: 5, stop: OLD_STOP, scrollback: 300 }), rec(M2, 'starting'), rec(M3, 'live', { pid: 7 }), rec(M4, 'ended', { exitCode: 0, stop: ['/x'] })] }),
+    )
+    // The settings changed since: another stop command, and the default wrapper with a working fake systemd.
+    await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, stopCommand: '/opt/new/stop {unit}' }))
+    const bin = join(tmp, 'bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'systemd-run'), '#!/bin/sh\nexit 0\n')
+    await writeFile(join(bin, 'systemctl'), '#!/bin/sh\nexit 0\n')
+    await writeFile(join(bin, 'true'), '#!/bin/sh\nexit 0\n')
+    for (const f of ['systemd-run', 'systemctl', 'true']) await chmod(join(bin, f), 0o755)
+
+    const main = fakeMain()
+    await start(envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: join(tmp, 'plugin'), PATH: bin }), { webDir }, main.link)
+    await until(() => main.sent.some((m) => m.op === 'list'))
+    main.answer({ op: 'list', req: main.sent.find((m) => m.op === 'list')!.req, sessions: [{ id: M2, pid: 6, live: true, startedAt: 1 }] })
+    await until(() => main.sent.some((m) => m.op === 'sweep'))
+    // Each closed record's own stop, and none for one without; the ended record isn't swept.
+    expect(main.sent.filter((m) => m.op === 'sweep')).toEqual([{ type: 'openaflow:terminal', op: 'sweep', sessions: [{ id: M, stop: OLD_STOP }, { id: M3 }] }])
+    // The records keep them.
+    const saved = JSON.parse(readFileSync(join(cfg, 'sessions.json'), 'utf8')) as { sessions: Record<string, unknown>[] }
+    expect(saved.sessions[0]).toMatchObject({ state: 'stopped', stop: OLD_STOP, scrollback: 300 })
   })
 
   test('a server with no channel answers no terminal host and writes no store', async () => {
