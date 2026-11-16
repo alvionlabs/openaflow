@@ -363,9 +363,18 @@ public static class OpenAFlowJobs
 }
 `
 
+/**
+ * The C# with no comment lines, indents, or blank lines: `-EncodedCommand` grows the script about 2.7 times, and
+ * Windows refuses a command line over 32,767 characters (spawn ENAMETOOLONG). The C# has no comment after code.
+ */
+const COMPACT = CSHARP.split('\n')
+  .map((l) => l.trim())
+  .filter((l) => l !== '' && !l.startsWith('//'))
+  .join('\n')
+
 const SCRIPT = `$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
-${CSHARP}
+${COMPACT}
 '@
 [OpenAFlowJobs]::Run()
 `

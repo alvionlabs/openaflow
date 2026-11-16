@@ -5,7 +5,7 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ANSWER_MS, BIRTH_SLACK_MS, CLOSE_MS, createJobControl, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
+import { ANSWER_MS, BIRTH_SLACK_MS, CLOSE_MS, createJobControl, helperCommand, type HelperChild, type SpawnHelper } from './windows-jobs.ts'
 
 // Node's own spawn is what main passes in.
 const realSpawn: SpawnHelper = spawn
@@ -324,6 +324,15 @@ describe('hidden and Windows only', () => {
     helpers[0]!.say('ok s-1\nok s-2\n')
     expect(await a).toBe(true)
     expect(await b).toBe(true)
+  })
+
+  test('the helper command line fits Windows with room to spare, and carries no C# comments', () => {
+    const { file, args } = helperCommand('C:\\Windows')
+    // CreateProcess refuses a command line over 32,767 characters: spawn ENAMETOOLONG (CI, settings W1-fix round 2).
+    expect([file, ...args].join(' ').length).toBeLessThanOrEqual(24_000)
+    const script = Buffer.from(args[3]!, 'base64').toString('utf16le')
+    expect(script).not.toMatch(/^\s*\/\//m)
+    expect(script).toContain('JoinEarlier(record.Handle, record.Root, record.Born)')
   })
 
   test.each(['linux', 'darwin'] as const)('on %s nothing starts: assign is false, close and dispose do nothing', async (platform) => {
