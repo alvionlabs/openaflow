@@ -1,0 +1,73 @@
+// The settings page's requests (settings §5): GET /api/settings and POST /api/actions/settings, each with the page's
+// token. Every failure comes back as words, never as a throw; a failed load puts its exact cause in the console.
+
+import type { SettingsChange, SettingsView } from '@openaflow/model'
+import { pageToken, postAction, type ActionDeps, type ActionReply } from '../../actions-client.ts'
+import { parseSettingsView } from './settings-view.ts'
+
+export const LOAD_FAILED = "Couldn't load settings. Please try again"
+/** A 200 whose body isn't a SettingsView. */
+export const SAVE_UNREADABLE = "Couldn't save. Please try again"
+/**
+ * The load's limit. Just after an app start the server waits for the scope probe's first answer, up to about 6 s,
+ * before it answers; this stays well above that, so a slow first answer is never called a failure.
+ */
+export const LOAD_LIMIT_MS = 15_000
+
+export type SettingsRead = { ok: true; view: SettingsView } | { ok: false; message: string }
+
+const failed = (cause: string): SettingsRead => {
+  console.warn(`openaflow: settings didn't load: ${cause}`)
+  return { ok: false, message: LOAD_FAILED }
+}
+
+async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSignal): Promise<SettingsRead> {
+  let res: Response
+  let text: string
+  try {
+    res = await fetchFn('/api/settings', { method: 'GET', headers: { 'X-OpenAFlow-Token': token }, signal })
+    text = await res.text()
+  } catch (e) {
+    return signal.aborted ? { ok: false, message: LOAD_FAILED } : failed(String(e))
+  }
+  if (!res.ok) return failed(`HTTP ${res.status} ${text.slice(0, 200)}`)
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return failed('the answer is not JSON')
+  }
+  const view = parseSettingsView(data)
+  return view ? { ok: true, view } : failed('the answer is not a SettingsView')
+}
+
+/** GET /api/settings with the page token, within `limitMs`. */
+export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_MS): Promise<SettingsRead> {
+  const token = (deps.token ?? pageToken)()
+  if (!token) return failed('no page token')
+  const fetchFn = deps.fetch ?? fetch
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<SettingsRead>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      resolve(failed(`no answer in ${limitMs / 1000} s`))
+    }, limitMs)
+  })
+  try {
+    return await Promise.race([askSettings(fetchFn, token, controller.signal), late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** POST /api/actions/settings: only the keys sent change; `null` removes a key. */
+export async function saveSettings(change: SettingsChange, deps: ActionDeps = {}): Promise<ActionReply<SettingsView>> {
+  const reply = await postAction<unknown>('settings', change, deps)
+  if (!reply.ok) return reply
+  const view = parseSettingsView(reply.data)
+  return view ? { ok: true, data: view } : { ok: false, status: 200, message: SAVE_UNREADABLE }
+}
+
+/** Reset to default: both run wrapper keys removed. */
+export const resetWrapper = (deps: ActionDeps = {}) => saveSettings({ runWrapper: null, stopCommand: null }, deps)
