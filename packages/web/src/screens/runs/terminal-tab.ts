@@ -6,6 +6,8 @@ import { sessionDot, sessionView, sessionWord, type HostedSession, type SessionD
 import { hashFor, parseHash } from '../../selection.ts'
 import type { TerminalHandlers } from '../../terminal-link.ts'
 import { DESKTOP_TERMINAL } from './next-step.ts'
+import type { ITerminalOptions } from '@xterm/xterm'
+import type { TerminalLook } from '../../theme/terminal-theme.ts'
 import type { ChipClass } from './view.ts'
 
 /** A live session's terminal that the host can't give: it has no such session, or the host can't be used. */
@@ -139,4 +141,13 @@ export function screenUnder(v: { ended: boolean; lost: Lost; saved: string | und
   if (v.lost === undefined) return { show: 'terminal' }
   if (!v.ended) return { show: 'none', line: UNAVAILABLE }
   return { show: v.saved === undefined ? 'none' : 'saved' }
+}
+
+/** Lines a terminal view keeps above its screen when the session has no `scrollback` (an older record). xterm's own default is 1,000. */
+export const DEFAULT_SCROLLBACK = 5_000
+
+/** The xterm options for one session's view: the page's look, 4.5:1 for every colour, and the session's own scrollback. */
+export function terminalOptions(o: { look: TerminalLook; scrollback: number | undefined; ended: boolean }): ITerminalOptions {
+  // 4.5:1 for every colour: xterm's own ANSI green is about 2.5:1 on the light --surface.
+  return { ...o.look, minimumContrastRatio: 4.5, cursorBlink: true, disableStdin: o.ended, scrollback: o.scrollback ?? DEFAULT_SCROLLBACK }
 }
