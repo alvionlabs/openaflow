@@ -179,7 +179,9 @@ export function createSettingsFlow(deps: SettingsDeps, onChange: (s: SettingsSta
 
   return {
     state: (): SettingsState => state,
+    /** Loads once. A start after `stop` takes answers again: React's StrictMode mounts, unmounts, and mounts again. */
     start() {
+      stopped = false
       if (started) return
       started = true
       if (deps.login) readLogin(deps.login)

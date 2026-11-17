@@ -403,6 +403,22 @@ describe('saves at once', () => {
   })
 })
 
+describe('mount and unmount', () => {
+  it('a start after stop takes answers again, with one load: React’s StrictMode mounts, unmounts, and mounts again', async () => {
+    const held = deferred<SettingsRead>()
+    const bridge = login(true)
+    const { flow, load } = setup({ load: () => held.promise, login: bridge })
+    flow.start()
+    flow.stop()
+    flow.start()
+    held.resolve({ ok: true, view: LINUX })
+    await vi.waitFor(() => expect(flow.state().kind).toBe('ready'))
+    await vi.waitFor(() => expect(ready(flow).login).toEqual({ on: true, busy: false }))
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(bridge.get).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('login switch', () => {
   it('reads the state at start; the switch is off and disabled until it answers', async () => {
     const read = deferred<boolean>()
