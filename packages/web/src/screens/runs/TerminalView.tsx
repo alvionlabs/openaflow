@@ -8,7 +8,7 @@ import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createTerminalLink, type TerminalLink } from '../../terminal-link.ts'
 import { readTerminalLook, watchTerminalLook } from '../../theme/terminal-theme.ts'
 import { savedScreen } from '../../actions-client.ts'
-import { focusMove, screenHandlers, screenUnder, wantSaved, type Lost } from './terminal-tab.ts'
+import { focusMove, screenHandlers, screenUnder, terminalOptions, wantSaved, type Lost } from './terminal-tab.ts'
 
 let pageLink: TerminalLink | undefined
 
@@ -35,6 +35,8 @@ type Props = {
   attach: boolean
   /** The session ended or stopped: the last screen, faded, with no input. Nothing at all once the host lacks it. */
   ended: boolean
+  /** The lines the view keeps above its screen: the session's own (`HostedSession.scrollback`), else 5,000. */
+  scrollback?: number | undefined
   /**
    * Open terminal (or the move after a start) asked for focus: put it in xterm once the view is attached (`focusMove`).
    * `onFocusDone` once the request is taken or dropped (a faded screen, or a terminal that is not available).
@@ -43,7 +45,7 @@ type Props = {
   onFocusDone?: () => void
 }
 
-export function TerminalView({ id, bridge, attach, ended, focus = false, onFocusDone }: Props) {
+export function TerminalView({ id, bridge, attach, ended, scrollback, focus = false, onFocusDone }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const term = useRef<import('@xterm/xterm').Terminal | undefined>(undefined)
   const [ready, setReady] = useState(false)
@@ -69,8 +71,7 @@ export function TerminalView({ id, bridge, attach, ended, focus = false, onFocus
       const el = box.current
       if (stopped || !el) return
       const look = readTerminalLook(window)
-      // 4.5:1 for every colour: xterm's own ANSI green is about 2.5:1 on the light --surface.
-      const t = new Terminal({ ...look, minimumContrastRatio: 4.5, cursorBlink: true, disableStdin: endedNow.current })
+      const t = new Terminal(terminalOptions({ look, scrollback, ended: endedNow.current }))
       made = t
       const fit = new FitAddon()
       t.loadAddon(fit)

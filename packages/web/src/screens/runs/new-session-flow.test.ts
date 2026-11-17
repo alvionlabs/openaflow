@@ -14,6 +14,9 @@ import {
   type NewSessionInput,
   type NewSessionState,
 } from './new-session-flow.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { NewSessionForm } from './NewSessionForm.tsx'
 
 const MARKER = '7f3c9a12-0000-4000-8000-000000000001'
 
@@ -212,5 +215,41 @@ describe('new session flow', () => {
     expect(textLabel('plan')).toBe('What to build')
     expect(textLabel('idea')).toBe('What to build')
     expect(textLabel('plain')).toBe('Message (optional)')
+  })
+
+  it('wrapper errors offer settings', async () => {
+    const wrapper = { line: 'Your run wrapper failed:', code: 'exit 3: bad option' }
+    const t = setup()
+    t.flow.start(input())
+    await t.reply(fail(409, 'run wrapper: exit 3: bad option'))
+    expect(t.flow.state()).toEqual({ kind: 'idle', error: "The session didn't start", wrapper })
+    // The action goes to the literal hash, and only that.
+    t.flow.openSettings()
+    expect(t.moves).toEqual(['go #settings'])
+    // The form draws the title, the line, the code as code, and the action; the failed state is not busy.
+    const html = renderToStaticMarkup(createElement(NewSessionForm, { repoId: 'notes', state: t.flow.state(), flow: t.flow }))
+    expect(html).toContain("The session didn&#x27;t start")
+    expect(html).toContain('Your run wrapper failed:')
+    expect(html).toContain('<code class="mono wrapper-error-code">exit 3: bad option</code>')
+    expect(html).toContain('Open settings')
+    expect(html).toContain('role="alert"')
+
+    // The stop command has its own line; a reason with a colon and spaces stays whole.
+    const stop = setup()
+    stop.flow.start(input())
+    await stop.reply(fail(409, 'stop command: not found: /usr/bin/nope'))
+    expect(stop.flow.state()).toEqual({ kind: 'idle', error: "The session didn't start", wrapper: { line: 'Your stop command failed:', code: 'not found: /usr/bin/nope' } })
+
+    // Other errors keep today's words and show no action; a bare prefix with no reason is not a wrapper error.
+    for (const message of ['claude not found', 'start failed: boom', 'run wrapper:', 'run wrapper: ', 'stop command:', 'xrun wrapper: exit 1', 'something new']) {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const o = setup()
+      o.flow.start(input())
+      await o.reply(fail(409, message))
+      const state = o.flow.state()
+      expect(state, message).not.toHaveProperty('wrapper')
+      const out = renderToStaticMarkup(createElement(NewSessionForm, { repoId: 'notes', state, flow: o.flow }))
+      expect(out, message).not.toContain('Open settings')
+    }
   })
 })

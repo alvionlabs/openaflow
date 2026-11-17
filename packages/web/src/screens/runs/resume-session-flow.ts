@@ -4,7 +4,7 @@
 
 import type { ResumeSessionResult } from '@openaflow/model'
 import { resumeSession, UNREACHABLE, type ActionReply, type ResumeSessionInput } from '../../actions-client.ts'
-import { START_ERRORS } from './new-session-flow.ts'
+import { SETTINGS_HASH, START_ERRORS, wrapperError, type WrapperError } from './new-session-flow.ts'
 import { refusalText, warnUnknown } from './remove-flow.ts'
 import { RESUME_BLOCKED } from './terminal-tab.ts'
 
@@ -12,6 +12,9 @@ import { RESUME_BLOCKED } from './terminal-tab.ts'
 export const RESUME_WAIT_MS = 10_000
 /** The start failed, the terminals didn't answer, or the board is out of reach. */
 export const RESUME_FAILED = "The session didn't resume. Please try again"
+
+/** The title over a wrapper error's lines. */
+export const RESUME_FAILED_TITLE = "The session didn't resume"
 
 const CANT = "can't resume: "
 
@@ -33,7 +36,7 @@ export const RESUME_ERRORS: ReadonlyMap<string, string> = new Map([
  * `waiting`: `next` started, until the tab shows it.
  */
 export type ResumeState =
-  | { kind: 'idle'; error?: { marker: string; text: string } }
+  | { kind: 'idle'; error?: { marker: string; text: string; wrapper?: WrapperError } }
   | { kind: 'resuming'; marker: string }
   | { kind: 'waiting'; marker: string; next: string }
 
@@ -43,6 +46,9 @@ export const resumeBusy = (s: ResumeState, marker: string): boolean => s.kind !=
 /** The alert text under the bar of `marker`, if its last Resume was refused. */
 export const resumeError = (s: ResumeState, marker: string): string | undefined => (s.kind === 'idle' && s.error?.marker === marker ? s.error.text : undefined)
 
+/** The wrapper error's lines under the bar of `marker`, if its last Resume was refused by the run wrapper or the stop command. */
+export const resumeWrapper = (s: ResumeState, marker: string): WrapperError | undefined => (s.kind === 'idle' && s.error?.marker === marker ? s.error.wrapper : undefined)
+
 export type ResumeTarget = { repoId: string; marker: string }
 
 export type ResumeFlow = {
@@ -51,11 +57,13 @@ export type ResumeFlow = {
   resume(target: ResumeTarget): void
   /** The marker the tab shows now, at each render: the flow asks for focus once it is the new session's. */
   seen(marker: string | undefined): void
+  /** Open settings: moves the page to `#settings`. */
+  openSettings(): void
   /** The tab left: drops any answer and the wait. */
   dispose(): void
 }
 
-export type ResumeDeps = { post?: (input: ResumeSessionInput) => Promise<ActionReply<ResumeSessionResult>> }
+export type ResumeDeps = { post?: (input: ResumeSessionInput) => Promise<ActionReply<ResumeSessionResult>>; go?: (hash: string) => void }
 
 function errorText(reply: { status: number; message: string }): string {
   if (reply.message.startsWith(CANT)) {
@@ -73,6 +81,7 @@ function errorText(reply: { status: number; message: string }): string {
 /** `onFocus(next)` once the tab shows the session Resume started. */
 export function createResumeFlow(onChange: (s: ResumeState) => void, onFocus: (marker: string) => void, deps: ResumeDeps = {}): ResumeFlow {
   const post = deps.post ?? ((input: ResumeSessionInput) => resumeSession(input))
+  const go = deps.go ?? ((hash: string) => (window.location.hash = hash))
   let state: ResumeState = { kind: 'idle' }
   let shown: string | undefined
   let seq = 0
@@ -94,7 +103,13 @@ export function createResumeFlow(onChange: (s: ResumeState) => void, onFocus: (m
     onFocus(next)
   }
   const answered = (marker: string, reply: ActionReply<ResumeSessionResult>) => {
-    if (!reply.ok) return set({ kind: 'idle', error: { marker, text: errorText(reply) } })
+    if (!reply.ok) {
+      const wrapper = wrapperError(reply.message)
+      if (wrapper) {
+        return set({ kind: 'idle', error: { marker, text: RESUME_FAILED_TITLE, wrapper } })
+      }
+      return set({ kind: 'idle', error: { marker, text: errorText(reply) } })
+    }
     set({ kind: 'waiting', marker, next: reply.data.marker })
     timer = setTimeout(() => {
       timer = undefined
@@ -113,6 +128,7 @@ export function createResumeFlow(onChange: (s: ResumeState) => void, onFocus: (m
         if (mine === seq && state.kind === 'resuming') answered(target.marker, reply)
       })
     },
+    openSettings: () => go(SETTINGS_HASH),
     seen(marker) {
       shown = marker
       moveIfShown()
