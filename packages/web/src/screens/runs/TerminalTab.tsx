@@ -6,9 +6,11 @@
 import { sessionView, sessionWord, type HostedSession } from '@openaflow/model'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ModalAlert } from '../../components/ModalAlert.tsx'
+import type { WrapperError } from './new-session-flow.ts'
+import { WrapperErrorBox } from './NewSessionForm.tsx'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { barStatus, createDismissFlow, type DismissState } from './dismiss-flow.ts'
-import { createResumeFlow, resumeBusy, resumeError, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
+import { createResumeFlow, resumeBusy, resumeError, resumeWrapper, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
 import { browserView, canAttach, terminalBody, type StopBar } from './terminal-tab.ts'
 import { TerminalView } from './TerminalView.tsx'
 import './terminal.css'
@@ -54,11 +56,13 @@ export function TerminalTab({ repoId, repoPath, session, now, bridge, onDismisse
           target={{ repoId, marker: session.marker }}
           resuming={resumeBusy(resume, session.marker)}
           resumeError={resumeError(resume, session.marker)}
+          resumeWrapper={resumeWrapper(resume, session.marker)}
+          onOpenSettings={resumeFlow.openSettings}
           onResume={resumeFlow.resume}
           {...(onDismissed ? { onDismissed } : {})}
         />
       )}
-      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={canAttach(session, now)} ended={ended} focus={focus || ownFocus} onFocusDone={focusDone} />
+      <TerminalView key={session.marker} id={session.marker} bridge={bridge} attach={canAttach(session, now)} ended={ended} scrollback={session.scrollback} focus={focus || ownFocus} onFocusDone={focusDone} />
       {!ended && (
         <p className="term-foot">
           <span className={`status ${view === 'waiting' ? 's-you' : 's-run'}`}>{sessionWord(session, now)}</span>
@@ -77,11 +81,14 @@ type StopBarViewProps = {
   target: ResumeTarget
   resuming: boolean
   resumeError: string | undefined
+  /** The lines under `resumeError`, for a run wrapper or stop command refusal. */
+  resumeWrapper: WrapperError | undefined
+  onOpenSettings(): void
   onResume(target: ResumeTarget): void
   onDismissed?: () => void
 }
 
-function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed }: StopBarViewProps) {
+function StopBarView({ bar, target, resuming, resumeError, resumeWrapper, onOpenSettings, onResume, onDismissed }: StopBarViewProps) {
   const [state, setState] = useState<DismissState>({ kind: 'idle' })
   // The callback taken at the press: the flow outlives the bar when the new Board comes before the answer.
   const done = useRef<(() => void) | undefined>(undefined)
@@ -95,6 +102,8 @@ function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed
       bar={bar}
       {...(busy ? { busy } : {})}
       {...(error ? { error } : {})}
+      {...(error !== undefined && error === resumeError && resumeWrapper ? { wrapper: resumeWrapper } : {})}
+      onOpenSettings={onOpenSettings}
       onResume={() => {
         setLast('resume')
         onResume(target)
@@ -112,7 +121,24 @@ function StopBarView({ bar, target, resuming, resumeError, onResume, onDismissed
  * The stop bar (session-life §9): the dot, the word, one muted line, then Resume (primary, when the bar offers it) and
  * Dismiss; the alert box under it. While either runs, both buttons are off; Resume reads Resuming….
  */
-export function StopBarPanel({ bar, busy, error, onResume, onDismiss }: { bar: StopBar; busy?: 'resume' | 'dismiss'; error?: string; onResume(): void; onDismiss(): void }) {
+export function StopBarPanel({
+  bar,
+  busy,
+  error,
+  wrapper,
+  onResume,
+  onDismiss,
+  onOpenSettings,
+}: {
+  bar: StopBar
+  busy?: 'resume' | 'dismiss'
+  error?: string
+  /** With `error` as the title: the wrapper error's lines, and Open settings. */
+  wrapper?: WrapperError
+  onResume(): void
+  onDismiss(): void
+  onOpenSettings?: () => void
+}) {
   const off = busy !== undefined
   return (
     <div className="stop-wrap">
@@ -130,7 +156,7 @@ export function StopBarPanel({ bar, busy, error, onResume, onDismiss }: { bar: S
           Dismiss
         </button>
       </div>
-      {error && <ModalAlert message={error} />}
+      {error && (wrapper && onOpenSettings ? <WrapperErrorBox title={error} wrapper={wrapper} onOpenSettings={onOpenSettings} /> : <ModalAlert message={error} />)}
     </div>
   )
 }

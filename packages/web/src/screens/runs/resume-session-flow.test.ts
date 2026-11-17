@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ResumeSessionResult } from '@openaflow/model'
+import type { HostedSession, ResumeSessionResult } from '@openaflow/model'
 import { NEED_RELOAD, RESTARTED, UNREACHABLE, type ActionReply, type ResumeSessionInput } from '../../actions-client.ts'
 import { RELOAD, TRY_AGAIN } from '../../add-repo.ts'
 import { START_ERRORS } from './new-session-flow.ts'
-import { createResumeFlow, RESUME_FAILED, RESUME_WAIT_MS, resumeBusy, resumeError, type ResumeState } from './resume-session-flow.ts'
-import { RESUME_BLOCKED } from './terminal-tab.ts'
+import { createResumeFlow, RESUME_FAILED, RESUME_WAIT_MS, resumeBusy, resumeError, resumeWrapper, type ResumeState } from './resume-session-flow.ts'
+import { RESUME_BLOCKED, stopBar } from './terminal-tab.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { StopBarPanel } from './TerminalTab.tsx'
 
 const OLD = '7f3c9a12-0000-4000-8000-000000000001'
 const NEW = '0b1c2d3e-0000-4000-8000-000000000002'
 const OTHER = '99999999-0000-4000-8000-000000000003'
 const TARGET = { repoId: 'notes', marker: OLD }
+const ENDED_SESSION: HostedSession = { marker: OLD, sessionId: 's', liveSession: 's', sessions: ['s'], skill: 'plan', startedAt: 0, state: 'ended', hooked: true, prompted: true }
 
 type Reply = ActionReply<ResumeSessionResult>
 const ok = (marker = NEW): Reply => ({ ok: true, data: { outcome: 'started', marker, logged: true } })
@@ -162,5 +166,50 @@ describe('resume flow', () => {
       "openaflow: resume failed (HTTP 409: can't resume: moon)",
       'openaflow: resume failed (HTTP 500: HTTP 500)',
     ])
+  })
+
+  it('wrapper errors offer settings', async () => {
+    const go = vi.fn()
+    const make = () => {
+      const answers: ((r: Reply) => void)[] = []
+      const flow = createResumeFlow(() => {}, () => {}, { post: () => new Promise<Reply>((res) => answers.push(res)), go })
+      return { flow, answer: async (r: Reply) => { answers[0]!(r); await Promise.resolve(); await Promise.resolve() } }
+    }
+    const t = make()
+    t.flow.resume(TARGET)
+    await t.answer(fail(409, 'run wrapper: exit 3: bad option'))
+    expect(t.flow.state()).toEqual({ kind: 'idle', error: { marker: OLD, text: "The session didn't resume", wrapper: { line: 'Your run wrapper failed:', code: 'exit 3: bad option' } } })
+    // Under its own bar only, and the bar's alert text stays the title.
+    expect(resumeError(t.flow.state(), OLD)).toBe("The session didn't resume")
+    expect(resumeWrapper(t.flow.state(), OLD)).toEqual({ line: 'Your run wrapper failed:', code: 'exit 3: bad option' })
+    expect(resumeWrapper(t.flow.state(), NEW)).toBeUndefined()
+    t.flow.openSettings()
+    expect(go).toHaveBeenCalledWith('#settings')
+    expect(go).toHaveBeenCalledTimes(1)
+
+    const s = make()
+    s.flow.resume(TARGET)
+    await s.answer(fail(409, 'stop command: could not start: ENOENT'))
+    expect(resumeWrapper(s.flow.state(), OLD)).toEqual({ line: 'Your stop command failed:', code: 'could not start: ENOENT' })
+
+    // Other errors have no action.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const message of ['too many sessions', 'start failed: x', 'run wrapper: ', 'odd']) {
+      const o = make()
+      o.flow.resume(TARGET)
+      await o.answer(fail(409, message))
+      expect(resumeWrapper(o.flow.state(), OLD), message).toBeUndefined()
+    }
+  })
+
+  it('draws the wrapper error under the bar with Open settings', () => {
+    const bar = stopBar({ ...ENDED_SESSION, resume: 'ok' }, 0, true)
+    const html = renderToStaticMarkup(
+      createElement(StopBarPanel, { bar, error: "The session didn't resume", wrapper: { line: 'Your stop command failed:', code: 'exit 2: no' }, onResume: () => {}, onDismiss: () => {}, onOpenSettings: () => {} }),
+    )
+    expect(html).toContain('Your stop command failed:')
+    expect(html).toContain('<code class="mono wrapper-error-code">exit 2: no</code>')
+    expect(html).toContain('Open settings')
+    expect(html.indexOf('stop-bar')).toBeLessThan(html.indexOf('Open settings'))
   })
 })
