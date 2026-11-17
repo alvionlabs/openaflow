@@ -41,7 +41,7 @@ In dev, the browser loads the web app from the Vite dev server, which proxies `/
 
 ## CI
 
-`.github/workflows/pod-ci.yml` runs on every `pull_request` (any base branch) and on `push` to `pod-staging`:
+`.github/workflows/pod-ci.yml` runs on a `pull_request` into `pod-staging` or `main` and on `push` to `pod-staging` (a wave PR into the plan branch runs none; see [decisions.md](decisions.md), 2026-11-17):
 
 - **verify** — `verify (windows-latest)` and `verify (ubuntu-latest)`, with Node 22 and pnpm (`pnpm/action-setup`): `pnpm install --frozen-lockfile` with no Electron binary, then `pnpm verify`. No display, no packaging.
 

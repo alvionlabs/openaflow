@@ -431,3 +431,11 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 **Decision:** sprint `host-core` adds jobs on `ubuntu-latest` (`pty proof`, a Linux `verify`, and Electron checks under `xvfb`) beside the Windows jobs. This replaces "Windows-only" in the 2026-10-22 entry. Value in use: the jobs run on every PR and on push to `pod-staging`.
 
 **Rejected:** Windows-only CI. Why: nothing would prove the Linux build, and no maintainer machine runs Windows tests for every PR.
+
+## 2026-11-17 — CI once per sprint, not per wave PR (human)
+
+- **Decision:** wave PRs into the plan branch run no CI; they merge on the orchestrator's local wave check (`pnpm verify` and `pnpm test:electron` on Linux). CI (Linux and Windows) runs on PRs into `pod-staging` or `main` and on a push to `pod-staging`. At each sprint end, the orchestrator opens a draft PR from the plan branch into `pod-staging` (`ci: sprint <slug> check`) and closes it when green; a red run halts before the next sprint. In the last sprint, the final plan PR is that check. Engineers no longer open `wip: … CI check` draft PRs.
+- **Why:** the per-wave CI and the engineers' draft CI rounds cost about 10 minutes of waiting per wave; CI minutes are free (public repo), so time is the only cost.
+- **Rejected:** CI on every PR (slow); a manual `workflow_dispatch` trigger (works only once it is on `main`); CI on every push (wave PRs would run twice).
+- **Risk accepted:** a Windows bug shows only at sprint end, mixed with up to three waves of changes. Revisit if that bites.
+- **For autopilot:** a wave PR with zero checks meets the "CI passed" criterion by this decision; the sprint-end check and the final plan PR still need passing checks.
