@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunSummary } from '@openaflow/model'
-import { backHash, followRepoId, hashFor, nextBack, parseHash, rememberRepoPaths, resolveSelection, SETTINGS_HASH, startClock, LIVE_TICK_MS } from './selection.ts'
+import { backHash, followRepoId, moveAfterRemoval, hashFor, nextBack, parseHash, rememberRepoPaths, resolveSelection, SETTINGS_HASH, startClock, LIVE_TICK_MS } from './selection.ts'
 
 const run = (repoId: string, plan?: string): RunSummary => ({
   repoId,
@@ -274,5 +274,12 @@ describe('settings route', () => {
     expect(backHash(nextBack(undefined, '', SETTINGS_HASH))).toBe('')
     // Moves between runs record nothing.
     expect(nextBack(undefined, run, '#/e--projects-b')).toBeUndefined()
+  })
+
+  it('a remove or forget from the sidebar never moves the page off #settings', () => {
+    expect(moveAfterRemoval('#/e--projects-b', false)).toBe('#/e--projects-b')
+    expect(moveAfterRemoval(undefined, false)).toBeUndefined()
+    expect(moveAfterRemoval('#/e--projects-b', true)).toBeUndefined()
+    expect(moveAfterRemoval('', true)).toBeUndefined()
   })
 })

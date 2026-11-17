@@ -65,6 +65,11 @@ export const SETTINGS_HASH = '#settings'
 /** Where Back on the settings page goes: the hash the page had before `#settings`, or none. */
 export const backHash = (back: string | undefined): string => back ?? ''
 
+/** Where a finished remove or forget moves the page: nowhere while the settings page is open, since it shows no run. */
+export function moveAfterRemoval(go: string | undefined, onSettings: boolean): string | undefined {
+  return onSettings ? undefined : go
+}
+
 /** The Back target after the hash moves `from` → `to`: kept while the page stays on `#settings`, dropped when it leaves. */
 export function nextBack(back: string | undefined, from: string, to: string): string | undefined {
   if (to !== SETTINGS_HASH) return undefined

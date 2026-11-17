@@ -850,3 +850,57 @@ describe('hosted cards', () => {
   })
 })
 
+
+// Settings (settings §8): the sidebar foot's button, and the page in the main column on #settings.
+describe('sidebar settings button', () => {
+  const SETTINGS = /<button[^>]*class="btn ghost settings-open"[^>]*>Settings<\/button>/
+  const ADD = /<button[^>]*class="btn lead add-repo"[^>]*>[\s\S]*?Add repo<\/button>/
+  /** Renders with the desktop preload's calls on the page, as the desktop app has them. */
+  function inDesktop<T>(fn: () => T): T {
+    const g = globalThis as { window?: unknown }
+    const had = 'window' in g
+    const before = g.window
+    g.window = { openaflow: { connectTerminals: () => Promise.resolve(), openAtLogin: async () => false, setOpenAtLogin: async (on: boolean) => on } }
+    try {
+      return fn()
+    } finally {
+      if (had) g.window = before
+      else delete g.window
+    }
+  }
+  const screen = (over: Partial<Parameters<typeof RunsScreen>[0]> = {}) => {
+    const board = boardOf(chess([onlyQueue()]))
+    const runs = listRuns(board, NOW)
+    return renderToStaticMarkup(
+      createElement(RunsScreen, { board, stream: 'live', runs, selected: runs[0], view: 'pipeline', slice: undefined, now: NOW, storage: storage(), ...over }),
+    )
+  }
+
+  it('the sidebar foot holds Settings after Add repo, in both builds', () => {
+    for (const html of [screen(), inDesktop(() => screen())]) {
+      const foot = /<div class="side-foot">[\s\S]*?<\/div>/.exec(sideOf(html))?.[0] ?? ''
+      expect(foot).toMatch(ADD)
+      expect(foot).toMatch(SETTINGS)
+      expect(foot.search(SETTINGS)).toBeGreaterThan(foot.search(ADD))
+      // Not open: no current page, and the run screen in the main column.
+      expect(foot.match(SETTINGS)![0]).not.toMatch(/aria-current/)
+      expect(html).not.toMatch(/class="settings"/)
+    }
+  })
+
+  it('on #settings the main column is the settings page, beside the sidebar, with no run selected', () => {
+    for (const html of [screen({ selected: undefined, settings: { back: '#/chess/sparring-ladder' } }), inDesktop(() => screen({ selected: undefined, settings: { back: '' } }))]) {
+      expect(sideOf(html)).toMatch(/<button[^>]*class="btn ghost settings-open"[^>]*aria-current="page"[^>]*>Settings<\/button>/)
+      expect(sideOf(html)).not.toMatch(/aria-current="true"/)
+      const main = /<main class="main settings-main">[\s\S]*<\/main>/.exec(html)?.[0] ?? ''
+      expect(main).toMatch(/<button class="btn ghost" type="button">Back<\/button><h1 class="settings-title">Settings<\/h1>/)
+      expect(main).toMatch(/Loading settings…/)
+      // No run, no "No repos yet", no tabs.
+      expect(main).not.toMatch(/No repos yet|run-header|class="tabs"/)
+    }
+    // Before the first Board too: the page needs none.
+    const early = screen({ board: undefined, runs: [], selected: undefined, settings: { back: '' } })
+    expect(early).toMatch(/<main class="main settings-main">/)
+    expect(early).not.toMatch(/Connecting to the server/)
+  })
+})
