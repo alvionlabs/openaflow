@@ -29,8 +29,10 @@ describe('pod-ci.yml', () => {
 
   test('verify on both systems', () => {
     const flow = ci()
-    // Today's triggers: every pull request, and a push to pod-staging.
+    // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
+    // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
     expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
+    expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
     expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
     const job = flow.jobs?.verify
     // The Windows check keeps its name, so a required check on the branch still finds it.
@@ -46,8 +48,10 @@ describe('pod-ci.yml', () => {
 
   test('electron jobs', () => {
     const flow = ci()
-    // Today's triggers: every pull request, and a push to pod-staging.
+    // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
+    // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
     expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
+    expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
     expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
     // The electron jobs took over the pty proof's.
     expect(flow.jobs?.['pty-proof']).toBeUndefined()
