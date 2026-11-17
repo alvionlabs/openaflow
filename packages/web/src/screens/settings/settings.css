@@ -39,7 +39,7 @@
 .settings-head {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
-  font-size: var(--size-body);
+  font-size: var(--size-title);
   font-weight: 500;
   letter-spacing: normal;
 }
