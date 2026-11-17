@@ -1,0 +1,144 @@
+/*
+ * The settings page (settings §8, draft pod-docs/design-drafts/terminal-host-look.html §6). Tokens only, with the
+ * shared .btn, .input, and .switch. The page is the main column beside the sidebar: a 720 px column, centred.
+ *
+ *   .settings          Back and the title, then the sections, 24 px apart
+ *   .settings-section  a heading over a rule, then its fields, 16 px apart
+ *   .settings-field    a label, its control, an error, and help, 8 px apart (DESIGN.md Forms)
+ */
+.main.settings-main {
+  max-width: 720px;
+}
+
+.settings {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.settings-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-title {
+  font-size: var(--size-title);
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
+.settings-section {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--size-body);
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
+.settings-field {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-label {
+  font-size: var(--size-dense);
+  font-weight: 500;
+}
+
+.settings-help {
+  max-width: 72ch;
+  font-size: var(--size-dense);
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.settings-help code {
+  font: var(--size-small) var(--mono);
+  color: var(--fg);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-unit {
+  font-size: var(--size-dense);
+}
+
+.settings .input {
+  font-size: var(--size-small);
+}
+
+.settings-text {
+  width: 100%;
+}
+
+.settings-number {
+  width: 140px;
+}
+
+/* The command a new session gets: shown as the server gives it, wrapped anywhere so a long path never overflows. */
+.settings-preview {
+  justify-self: stretch;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--size-small);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-note {
+  max-width: 72ch;
+  font-size: var(--size-dense);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* An error about one field or action, directly under it: red text with the 16 px alert icon, no box. */
+.settings-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 72ch;
+  margin-top: 8px;
+  font-size: var(--size-dense);
+  line-height: 20px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.settings-field > .settings-error {
+  margin-top: 0;
+}
+
+.settings-error svg {
+  flex: none;
+  margin-top: 2px;
+  stroke: var(--blocked);
+}
+
+.settings-failed {
+  display: grid;
+  gap: 16px;
+}
