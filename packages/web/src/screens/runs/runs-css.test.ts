@@ -332,9 +332,10 @@ describe('runs.css run cards and Add repo', () => {
     expect(runsRules().filter((r) => r.selectors.some((s) => s.startsWith('.run') && !s.startsWith('.run-') && !s.startsWith('.runs')) && 'padding' in decls(r.body))).toHaveLength(1)
   })
 
-  it('makes Add repo as wide as the run cards, its icon and label centred', () => {
+  it('makes Add repo fill the foot’s row beside Settings, its icon and label centred', () => {
     const add = stylesAt(1280).get('.side-foot .add-repo')
-    expect(add?.['width']).toBe('100%')
+    expect(add?.['width']).toBeUndefined()
+    expect(add?.['flex']).toBe('1 1 auto')
     expect(add?.['justify-content']).toBe('center')
     // Even sides, so the centred label isn't pushed by the lead padding.
     // Centred on its ink: the plus has about 2 px of empty space on its left, so the
@@ -349,7 +350,19 @@ describe('runs.css Add repo size', () => {
     // .btn is 40 px; .btn.sm would make it 32 px.
     const add = stylesAt(1280).get('.side-foot .add-repo')
     expect(add?.['height']).toBeUndefined()
-    expect(add?.['width']).toBe('100%')
+    expect(add?.['flex']).toBe('1 1 auto')
+  })
+
+  it('puts Settings beside Add repo, 8 px apart, wrapping under it when the sidebar is too narrow for both', () => {
+    const foot = stylesAt(1280).get('.side-foot')
+    expect(foot?.['display']).toBe('flex')
+    // At the 200 px minimum the two don't fit on one row (about 116 + 8 + 81 px in 168 px): Settings wraps.
+    expect(foot?.['flex-wrap']).toBe('wrap')
+    expect(foot?.['gap']).toBe('8px')
+    const settings = stylesAt(1280).get('.side-foot .settings-open')
+    expect(settings?.['flex']).toBe('1 1 auto')
+    // While the page is open, its button keeps the hover fill, as in the draft.
+    expect(stylesAt(1280).get('.side-foot .settings-open[aria-current="page"]')?.['background']).toBe('var(--hover)')
   })
 
   it('has no rule for the old Add repo dialog: Add repo uses the shared modal', () => {
