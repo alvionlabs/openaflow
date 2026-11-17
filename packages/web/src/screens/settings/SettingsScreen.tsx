@@ -158,7 +158,7 @@ function Sections({ state, flow }: { state: Ready; flow: Handlers }) {
 }
 
 /** One text field: it saves on a changed blur or Enter, and Escape puts the saved text back. */
-function Field({ name, field, flow, number = false }: { name: FieldName; field: FieldState; flow: Handlers; number?: boolean }) {
+export function Field({ name, field, flow, number = false }: { name: FieldName; field: FieldState; flow: Handlers; number?: boolean }) {
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()

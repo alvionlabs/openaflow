@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ActionReply } from '../../actions-client.ts'
 import type { LoginBridge } from '../../desktop-bridge.ts'
 import type { SettingsRead } from './settings-client.ts'
-import { SettingsPage } from './SettingsScreen.tsx'
+import { Field, SettingsPage } from './SettingsScreen.tsx'
 import {
   createSettingsFlow,
   LOGIN_FAILED,
@@ -169,6 +169,32 @@ describe('sections per build and platform', () => {
 })
 
 describe('saves at once', () => {
+  it('the field hands blur, Enter, and Escape to the flow, and nothing for other keys', () => {
+    const flow = { ...handlers, commit: vi.fn(), escape: vi.fn(), type: vi.fn() }
+    const el = Field({ name: 'runWrapper', field: { text: 'x', saved: 'y', busy: false }, flow })
+    const props = el.props as {
+      onBlur: () => void
+      onKeyDown: (e: { key: string; preventDefault: () => void }) => void
+      onChange: (e: { target: { value: string } }) => void
+    }
+    props.onBlur()
+    expect(flow.commit).toHaveBeenLastCalledWith('runWrapper', 'blur')
+    const press = (key: string) => {
+      const preventDefault = vi.fn()
+      props.onKeyDown({ key, preventDefault })
+      return preventDefault
+    }
+    expect(press('Enter')).toHaveBeenCalled()
+    expect(flow.commit).toHaveBeenLastCalledWith('runWrapper', 'enter')
+    expect(press('Escape')).toHaveBeenCalled()
+    expect(flow.escape).toHaveBeenCalledWith('runWrapper')
+    expect(press('a')).not.toHaveBeenCalled()
+    expect(flow.commit).toHaveBeenCalledTimes(2)
+    expect(flow.escape).toHaveBeenCalledTimes(1)
+    props.onChange({ target: { value: 'z' } })
+    expect(flow.type).toHaveBeenCalledWith('runWrapper', 'z')
+  })
+
   it('a field posts only on a changed blur or Enter', async () => {
     const { flow, save } = await started()
     // Unchanged: nothing goes out.
@@ -397,6 +423,8 @@ describe('saves at once', () => {
     t.flow.commit('scrollback', 'blur')
     const seen = t.states.length
     t.flow.stop()
+    // An edit then Back: the blur's post still goes out.
+    await vi.waitFor(() => expect(t.save).toHaveBeenCalledWith({ scrollback: 200 }))
     held.resolve({ ok: true, data: { ...LINUX, scrollback: 200 } })
     await settle()
     expect(t.states).toHaveLength(seen)
