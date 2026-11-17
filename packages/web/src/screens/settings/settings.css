@@ -80,7 +80,9 @@
   font-size: var(--size-dense);
 }
 
+/* Commands and numbers in mono, 13 px, as the draft draws them. */
 .settings .input {
+  font-family: var(--mono);
   font-size: var(--size-small);
 }
 
