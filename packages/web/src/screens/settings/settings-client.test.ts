@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsView } from '@openaflow/model'
 import { RESTARTED, UNREACHABLE } from '../../actions-client.ts'
-import { LOAD_FAILED, LOAD_LIMIT_MS, readSettings, resetWrapper, SAVE_UNREADABLE, saveSettings } from './settings-client.ts'
+import { LOAD_FAILED, LOAD_LIMIT_MS, readSettings, resetWrapper, SAVE_LIMIT_MS, SAVE_UNREADABLE, saveSettings } from './settings-client.ts'
 
 const VIEW: SettingsView = {
   scrollback: 5000,
@@ -87,6 +87,25 @@ describe('settings client', () => {
     expect(init?.method).toBe('POST')
     expect(headerOf(init)).toBe('tok-1')
     expect(JSON.parse(String(init?.body))).toEqual({ scrollback: 200 })
+  })
+
+  it('a save with no answer by the limit fails as unreachable, so later saves don’t wait forever', async () => {
+    vi.useFakeTimers()
+    let signal: AbortSignal | undefined
+    const hung = saveSettings({ scrollback: 200 }, {
+      fetch: (_url, init) => {
+        signal = init?.signal ?? undefined
+        return new Promise(() => {})
+      },
+      token,
+    })
+    await vi.advanceTimersByTimeAsync(SAVE_LIMIT_MS)
+    await expect(hung).resolves.toEqual({ ok: false, status: 0, message: UNREACHABLE })
+    expect(signal?.aborted).toBe(true)
+    // A slow answer inside the limit is kept.
+    const slow = saveSettings({ scrollback: 200 }, { fetch: () => new Promise((resolve) => setTimeout(() => resolve(answer(VIEW)), SAVE_LIMIT_MS - 1_000)), token })
+    await vi.advanceTimersByTimeAsync(SAVE_LIMIT_MS - 1_000)
+    await expect(slow).resolves.toEqual({ ok: true, data: VIEW })
   })
 
   it('Reset posts {runWrapper:null, stopCommand:null}', async () => {

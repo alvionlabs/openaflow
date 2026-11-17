@@ -2,7 +2,7 @@
 // token. Every failure comes back as words, never as a throw; a failed load puts its exact cause in the console.
 
 import type { SettingsChange, SettingsView } from '@openaflow/model'
-import { pageToken, postAction, type ActionDeps, type ActionReply } from '../../actions-client.ts'
+import { pageToken, postAction, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
 import { parseSettingsView } from './settings-view.ts'
 
 export const LOAD_FAILED = "Couldn't load settings. Please try again"
@@ -13,6 +13,8 @@ export const SAVE_UNREADABLE = "Couldn't save. Please try again"
  * before it answers; this stays well above that, so a slow first answer is never called a failure.
  */
 export const LOAD_LIMIT_MS = 15_000
+/** A save's limit, as setup-client.ts gives its POST: saves go one at a time, so one with no answer must not hold the rest. */
+export const SAVE_LIMIT_MS = 15_000
 
 export type SettingsRead = { ok: true; view: SettingsView } | { ok: false; message: string }
 
@@ -62,8 +64,23 @@ export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_M
 }
 
 /** POST /api/actions/settings: only the keys sent change; `null` removes a key. */
-export async function saveSettings(change: SettingsChange, deps: ActionDeps = {}): Promise<ActionReply<SettingsView>> {
-  const reply = await postAction<unknown>('settings', change, deps)
+export async function saveSettings(change: SettingsChange, deps: ActionDeps = {}, limitMs = SAVE_LIMIT_MS): Promise<ActionReply<SettingsView>> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<ActionReply<unknown>>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      resolve({ ok: false, status: 0, message: UNREACHABLE })
+    }, limitMs)
+  })
+  const fetchFn = deps.fetch ?? fetch
+  const post = postAction<unknown>('settings', change, { ...deps, fetch: (url, init) => fetchFn(url, { ...init, signal: controller.signal }) })
+  let reply: ActionReply<unknown>
+  try {
+    reply = await Promise.race([post, late])
+  } finally {
+    clearTimeout(timer)
+  }
   if (!reply.ok) return reply
   const view = parseSettingsView(reply.data)
   return view ? { ok: true, data: view } : { ok: false, status: 200, message: SAVE_UNREADABLE }
