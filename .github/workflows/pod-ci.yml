@@ -1,7 +1,11 @@
 name: pod-ci
 
 on:
+  # A wave PR into the plan branch runs no CI: it merges on the local wave check. CI runs once per sprint, on a PR
+  # into pod-staging (the sprint-end check or the final plan PR), and on the staging PR into main.
+  # See pod-docs/decisions.md (2026-11-17).
   pull_request:
+    branches: [pod-staging, main]
   push:
     branches: [pod-staging]
 
