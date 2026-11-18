@@ -36,16 +36,38 @@ export const START_ERRORS: ReadonlyMap<string, string> = new Map([
   [UNREACHABLE, "Can't reach the board. Please try again"],
 ])
 const START_FAILED = "The session didn't start. Please try again"
+/** The title over a wrapper error's lines. */
+export const START_FAILED_TITLE = "The session didn't start"
+
+/** The two lines of a wrapper error: which command failed, and why (shown as code). */
+export type WrapperError = { line: string; code: string }
+
+const WRAPPER_PREFIXES: readonly (readonly [string, string])[] = [
+  ['run wrapper: ', 'Your run wrapper failed:'],
+  ['stop command: ', 'Your stop command failed:'],
+]
+
+/** `run wrapper: <why>` and `stop command: <why>` (the settings' refusals) as the page's two lines; undefined for any other message, or one with no reason. */
+export function wrapperError(message: string): WrapperError | undefined {
+  for (const [prefix, line] of WRAPPER_PREFIXES) {
+    if (message.startsWith(prefix) && message.length > prefix.length) return { line, code: message.slice(prefix.length) }
+  }
+  return undefined
+}
+
+/** The Open settings action's target: the settings page's literal hash. */
+export const SETTINGS_HASH = '#settings'
 
 export type NewSessionInput = { repoId: string; skill: SkillId; text: string }
 
 /**
- * `idle`: the form is free; `fieldError` goes under the text field, `error` in the alert box, `note` is a quiet
+ * `idle`: the form is free; `fieldError` goes under the text field, `error` in the alert box (with `wrapper`'s line and code
+ * and Open settings under it, for a run wrapper or stop command refusal), `note` is a quiet
  * status; `done` after a start, so the form clears its text. `starting`: the request is out. `waiting`: started, until
  * the Board lists `marker`. The button is off while `starting` or `waiting`.
  */
 export type NewSessionState =
-  | { kind: 'idle'; fieldError?: string; error?: string; note?: string; done?: true }
+  | { kind: 'idle'; fieldError?: string; error?: string; wrapper?: WrapperError; note?: string; done?: true }
   | { kind: 'starting'; input: NewSessionInput }
   | { kind: 'waiting'; repoId: string; marker: string }
 
@@ -57,6 +79,8 @@ export type NewSessionFlow = {
   start(input: NewSessionInput): void
   /** Each Board's repo, as it arrives: the flow moves once the repo it started in lists the marker. */
   board(repo: BoardRepo | undefined): void
+  /** Open settings: moves the page to `#settings`. */
+  openSettings(): void
   /** The text changed: a field error no longer applies. */
   edit(): void
   /** Drops any answer and the wait: the form left. */
@@ -112,8 +136,12 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
   }
   const answered = (input: NewSessionInput, reply: ActionReply<NewSessionResult>) => {
     if (!reply.ok) {
-      set(reply.message === 'bad text' ? { kind: 'idle', fieldError: fieldError(input) } : { kind: 'idle', error: boxError(reply) })
-      return
+      if (reply.message === 'bad text') return set({ kind: 'idle', fieldError: fieldError(input) })
+      const wrapper = wrapperError(reply.message)
+      if (wrapper) {
+        return set({ kind: 'idle', error: START_FAILED_TITLE, wrapper })
+      }
+      return set({ kind: 'idle', error: boxError(reply) })
     }
     const { marker, typeYourself } = reply.data
     if (typeYourself !== undefined) typed.remember(marker, typeYourself)
@@ -140,6 +168,7 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
       listed.set(repo.id, new Set((repo.hosted ?? []).map((s) => s.marker)))
       moveIfListed()
     },
+    openSettings: () => go(SETTINGS_HASH),
     edit() {
       if (state.kind === 'idle' && state.fieldError !== undefined) set({ kind: 'idle' })
     },

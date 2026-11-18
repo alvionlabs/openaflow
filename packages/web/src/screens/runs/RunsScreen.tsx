@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { buildFixPipeline, buildFlow, buildPipeline, rowSessions, shownSession, type Board, type RunSummary } from '@openaflow/model'
 import type { StreamState } from '../../board-stream.ts'
-import { hashFor, type View } from '../../selection.ts'
+import { hashFor, moveAfterRemoval, SETTINGS_HASH, type View } from '../../selection.ts'
 import { ConfirmModal } from '../../components/ConfirmModal.tsx'
 import { terminalBridge } from '../../desktop-bridge.ts'
 import { onTabRequest } from '../../open-tab.ts'
 import { returnFocus } from '../../components/modal.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { BoardScreen } from '../board/BoardScreen.tsx'
+import { SettingsScreen } from '../settings/SettingsScreen.tsx'
 import { AddRepoDialog } from './AddRepoDialog.tsx'
 import { AutoContinueButton } from './AutoContinueButton.tsx'
 import { BarMenu } from './BarMenu.tsx'
@@ -72,6 +73,8 @@ type Props = {
   planFallback?: (hash: string | undefined) => void
   /** Moves the page to a hash now ('' for none). */
   navigate?: (hash: string) => void
+  /** On `#settings`: the settings page takes the main column, and Back goes to `back`. */
+  settings?: { back: string } | undefined
 }
 
 /** The page's local storage, or nothing where there is none or it throws. */
@@ -85,7 +88,7 @@ function pageStorage(): TabStorage | undefined {
 
 const TAB_LABELS: Record<Tab, string> = { waiting: 'Waiting', log: 'Log', terminal: 'Terminal' }
 
-export function RunsScreen({ board, stream, runs, selected, view, slice, agent, now, storage, planFallback, navigate }: Props) {
+export function RunsScreen({ board, stream, runs, selected, view, slice, agent, now, storage, planFallback, navigate, settings }: Props) {
   const store = useRef(storage ?? pageStorage())
   const [stored, setStored] = useState<Tab | undefined>(() => readTab(store.current))
   const [picking, setPicking] = useState(false)
@@ -98,6 +101,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const [quitting, setQuitting] = useState<number | undefined>(undefined)
   useEffect(() => watchOverlay(bridge, setQuitting), [bridge])
   const repoButton = useRef<HTMLButtonElement>(null)
+  const settingsButton = useRef<HTMLButtonElement>(null)
   const runTitle = useRef<HTMLHeadingElement>(null)
   // The run (its `hashFor`) whose live terminal Open terminal or a started New session asked focus for. The Terminal
   // tab clears it once taken or dropped; a tab press or another run showing drops it.
@@ -138,8 +142,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   // Remove repo, from the header's ⋯ or a sidebar card's ⋯: both open the one confirm modal.
   // After a removal the page moves on when the open run's repo left.
   const [removeState, setRemoveState] = useState<RemoveState>(REMOVE_IDLE)
-  const latest = useRef({ planFallback, navigate, selected, view, agent })
-  latest.current = { planFallback, navigate, selected, view, agent }
+  const latest = useRef({ planFallback, navigate, selected, view, agent, onSettings: settings !== undefined })
+  latest.current = { planFallback, navigate, selected, view, agent, onSettings: settings !== undefined }
   const shownKey = useRef(runKey)
   shownKey.current = runKey
   // Open terminal and a started New session ask for the Terminal tab. It is stored, not applied to this row only: the
@@ -163,7 +167,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
       createRemoveFlow(setRemoveState, (target, after) => {
         // `after` was planned when Remove was pressed: the new Board may have reached the page first, and
         // the user may have opened another run meanwhile, which stays.
-        const go = navigateAfterRemove(latest.current.selected, target, after)
+        const go = moveAfterRemoval(navigateAfterRemove(latest.current.selected, target, after), latest.current.onSettings)
         if (go !== undefined) latest.current.navigate?.(go)
         latest.current.planFallback?.(undefined)
       }),
@@ -190,7 +194,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
   const forgetFlow = useMemo(
     () =>
       createForgetFlow(setForgetState, (target, after) => {
-        const go = navigateAfterForget(latest.current.selected, target, after)
+        const go = moveAfterRemoval(navigateAfterForget(latest.current.selected, target, after), latest.current.onSettings)
         if (go !== undefined) latest.current.navigate?.(go)
         latest.current.planFallback?.(undefined)
       }),
@@ -246,6 +250,16 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     setSideWidth(w)
     saveWidth(store.current, w)
   }
+  const go = (hash: string) => {
+    if (navigate) navigate(hash)
+    else window.location.hash = hash
+  }
+  /** Back on the settings page: its button leaves, so focus goes to the sidebar's Settings button. */
+  const leaveSettings = () => {
+    if (!settings) return
+    go(settings.back)
+    setTimeout(() => settingsButton.current?.focus(), 0)
+  }
   const closePicker = () => {
     setPicking(false)
     repoButton.current?.focus()
@@ -300,101 +314,119 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
               <Icon name="plus" />
               Add repo
             </button>
+            <button
+              ref={settingsButton}
+              className="btn ghost settings-open"
+              type="button"
+              aria-current={settings ? 'page' : undefined}
+              onClick={() => {
+                if (!settings) go(SETTINGS_HASH)
+              }}
+            >
+              Settings
+            </button>
           </div>
         </aside>
         <SideHandle width={sideWidth} onResize={setSideWidth} onCommit={commitWidth} />
-        <main className={view === 'board' ? 'main wide' : 'main'}>
-          {hostDown && <HostBanner />}
-          {urgentSlot && (
-            <div className="urgent-slot" role="status">
-              {urgent && <UrgentBanner at={urgent} onOpen={(href) => (focusFor.current = href)} />}
-            </div>
-          )}
-          {notices.length > 0 && (
-            <div className="banners">
-              {notices.map((b) => (
-                <p key={b.chip.label} className="banner" data-tone={b.chip.cls} role="status">
-                  <Chip chip={b.chip} />
-                  <span>{b.text}</span>
-                </p>
-              ))}
-            </div>
-          )}
-          {!board ? (
-            <p className="muted">{stream === 'lost' ? 'Waiting for the server…' : 'Connecting to the server…'}</p>
-          ) : !selected || !repo ? (
-            <div className="empty">
-              <div className="run-top">
-                <h1 className="run-name">No repos yet</h1>
-                {menu}
+        {settings ? (
+          <main className="main settings-main">
+            {hostDown && <HostBanner />}
+            <SettingsScreen onBack={leaveSettings} />
+          </main>
+        ) : (
+          <main className={view === 'board' ? 'main wide' : 'main'}>
+            {hostDown && <HostBanner />}
+            {urgentSlot && (
+              <div className="urgent-slot" role="status">
+                {urgent && <UrgentBanner at={urgent} onOpen={(href) => (focusFor.current = href)} />}
               </div>
-              <p className="muted">Press Add repo in the sidebar and pick a repo's folder to see its pod runs.</p>
-              <p className="muted">Runs come from pod, a Claude Code plugin. {POD_INSTALL}</p>
-            </div>
-          ) : view === 'board' && pipeline && selected.plan !== undefined ? (
-            <>
-              {header && <RunHeader header={header} actions={headerActions} />}
-              <p className="back">
-                <a href={hashFor(selected)}>Back to the run</a>
-              </p>
-              <BoardScreen repo={repo} plan={selected.plan} {...(slice === undefined ? {} : { slice })} now={now} />
-            </>
-          ) : (
-            <>
-              {header && (
-                <RunHeader header={header} titleRef={runTitle} actions={headerActions} {...(pipeline ? { boardHref: hashFor(selected, 'board') } : {})} />
-              )}
-              <Flow key={`flow:${runKey}`} stages={stages} />
-              {steps && <NextStepCard key={runKey} repo={repo} run={selected} card={steps.card} />}
-              {!bridge && rowSession && <TerminalNote session={rowSession} now={now} note={!cardNote} />}
-              <div className="tabs" role="group" aria-label="More about this run">
-                {tabs.map((t) => (
-                  <button
-                    key={t}
-                    className="tab"
-                    type="button"
-                    aria-expanded={shown === t}
-                    aria-controls={shown === t ? `tab-${t}` : undefined}
-                    onClick={() => press(t)}
-                  >
-                    {t === 'terminal' && dot && <span className={`status ${dot} tab-dot`} aria-hidden="true" />}
-                    {TAB_LABELS[t]}
-                    {t === 'waiting' && <span className="n">{steps?.rest.length ?? 0}</span>}
-                  </button>
+            )}
+            {notices.length > 0 && (
+              <div className="banners">
+                {notices.map((b) => (
+                  <p key={b.chip.label} className="banner" data-tone={b.chip.cls} role="status">
+                    <Chip chip={b.chip} />
+                    <span>{b.text}</span>
+                  </p>
                 ))}
               </div>
-              {shown && (
-                <div id={`tab-${shown}`} className="tab-slot">
-                  {shown === 'waiting' && <WaitingTab key={runKey} repo={repo} run={selected} items={steps?.rest ?? []} />}
-                  {shown === 'log' && (
-                    <LogTab
-                      repo={repo}
-                      run={selected}
-                      {...(pipeline ? { pipeline } : {})}
-                      {...(fixPipeline ? { fixPipeline } : {})}
-                      {...(view === 'agent' && agent !== undefined ? { agent } : {})}
-                      now={now}
-                      actions={board.actions ?? []}
-                    />
-                  )}
-                  {shown === 'terminal' && rowSession && (
-                    <TerminalTab
-                      key={runKey}
-                      repoId={repo.id}
-                      repoPath={repo.path}
-                      session={rowSession}
-                      now={now}
-                      bridge={bridge}
-                      onDismissed={dismissedOn(runKey)}
-                      focus={focusAsk === runKey}
-                      onFocusDone={focusDone}
-                    />
-                  )}
+            )}
+            {!board ? (
+              <p className="muted">{stream === 'lost' ? 'Waiting for the server…' : 'Connecting to the server…'}</p>
+            ) : !selected || !repo ? (
+              <div className="empty">
+                <div className="run-top">
+                  <h1 className="run-name">No repos yet</h1>
+                  {menu}
                 </div>
-              )}
-            </>
-          )}
-        </main>
+                <p className="muted">Press Add repo in the sidebar and pick a repo's folder to see its pod runs.</p>
+                <p className="muted">Runs come from pod, a Claude Code plugin. {POD_INSTALL}</p>
+              </div>
+            ) : view === 'board' && pipeline && selected.plan !== undefined ? (
+              <>
+                {header && <RunHeader header={header} actions={headerActions} />}
+                <p className="back">
+                  <a href={hashFor(selected)}>Back to the run</a>
+                </p>
+                <BoardScreen repo={repo} plan={selected.plan} {...(slice === undefined ? {} : { slice })} now={now} />
+              </>
+            ) : (
+              <>
+                {header && (
+                  <RunHeader header={header} titleRef={runTitle} actions={headerActions} {...(pipeline ? { boardHref: hashFor(selected, 'board') } : {})} />
+                )}
+                <Flow key={`flow:${runKey}`} stages={stages} />
+                {steps && <NextStepCard key={runKey} repo={repo} run={selected} card={steps.card} />}
+                {!bridge && rowSession && <TerminalNote session={rowSession} now={now} note={!cardNote} />}
+                <div className="tabs" role="group" aria-label="More about this run">
+                  {tabs.map((t) => (
+                    <button
+                      key={t}
+                      className="tab"
+                      type="button"
+                      aria-expanded={shown === t}
+                      aria-controls={shown === t ? `tab-${t}` : undefined}
+                      onClick={() => press(t)}
+                    >
+                      {t === 'terminal' && dot && <span className={`status ${dot} tab-dot`} aria-hidden="true" />}
+                      {TAB_LABELS[t]}
+                      {t === 'waiting' && <span className="n">{steps?.rest.length ?? 0}</span>}
+                    </button>
+                  ))}
+                </div>
+                {shown && (
+                  <div id={`tab-${shown}`} className="tab-slot">
+                    {shown === 'waiting' && <WaitingTab key={runKey} repo={repo} run={selected} items={steps?.rest ?? []} />}
+                    {shown === 'log' && (
+                      <LogTab
+                        repo={repo}
+                        run={selected}
+                        {...(pipeline ? { pipeline } : {})}
+                        {...(fixPipeline ? { fixPipeline } : {})}
+                        {...(view === 'agent' && agent !== undefined ? { agent } : {})}
+                        now={now}
+                        actions={board.actions ?? []}
+                      />
+                    )}
+                    {shown === 'terminal' && rowSession && (
+                      <TerminalTab
+                        key={runKey}
+                        repoId={repo.id}
+                        repoPath={repo.path}
+                        session={rowSession}
+                        now={now}
+                        bridge={bridge}
+                        onDismissed={dismissedOn(runKey)}
+                        focus={focusAsk === runKey}
+                        onFocusDone={focusDone}
+                      />
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </main>
+        )}
       </div>
       {modal && <ConfirmModal key={modal.key} {...modal.view} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />}
       {quitting !== undefined && <QuitOverlay count={quitting} />}

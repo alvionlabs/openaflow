@@ -64,3 +64,23 @@ export function terminalBridge(win: unknown = globalThis.window): TerminalBridge
     hostState: typeof terminalHostState === 'function' ? () => (terminalHostState as () => Promise<TerminalHostRead>).call(bridge) : undefined,
   }
 }
+
+/** The desktop shell's Open at login (settings §7). Each call resolves to the state read after it. */
+export type LoginBridge = {
+  get(): Promise<boolean>
+  /** Resolves to the state read after the write, which may differ from `on`; rejects with `login item failed` and the like. */
+  set(on: boolean): Promise<boolean>
+}
+
+/** Open at login, or undefined in the browser build or a shell without both `openAtLogin` and `setOpenAtLogin`. */
+export function loginBridge(win: unknown = globalThis.window): LoginBridge | undefined {
+  if (typeof win !== 'object' || win === null) return undefined
+  const bridge = (win as { openaflow?: unknown }).openaflow
+  if (typeof bridge !== 'object' || bridge === null) return undefined
+  const { openAtLogin, setOpenAtLogin } = bridge as { openAtLogin?: unknown; setOpenAtLogin?: unknown }
+  if (typeof openAtLogin !== 'function' || typeof setOpenAtLogin !== 'function') return undefined
+  return {
+    get: () => (openAtLogin as () => Promise<boolean>).call(bridge),
+    set: (on) => (setOpenAtLogin as (on: boolean) => Promise<boolean>).call(bridge, on),
+  }
+}

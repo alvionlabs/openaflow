@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { folderBridge, terminalBridge } from './desktop-bridge.ts'
+import { folderBridge, loginBridge, terminalBridge } from './desktop-bridge.ts'
 
 describe('bridge detection', () => {
   it('is undefined with no window, no openaflow, or a pickFolder that is not a function', () => {
@@ -105,5 +105,38 @@ describe('terminal bridge', () => {
     // A shell whose onQuitting returns nothing still gives a stop function.
     const quiet = terminalBridge({ openaflow: { connectTerminals: async () => {}, onQuitting: () => undefined } })!
     expect(() => quiet.onQuitting!(() => {})()).not.toThrow()
+  })
+})
+
+describe('login bridge', () => {
+  it('is undefined without both calls, as in the browser build or an older shell', () => {
+    expect(loginBridge(undefined)).toBeUndefined()
+    expect(loginBridge()).toBeUndefined()
+    expect(loginBridge({})).toBeUndefined()
+    expect(loginBridge({ openaflow: null })).toBeUndefined()
+    expect(loginBridge({ openaflow: { connectTerminals: async () => {} } })).toBeUndefined()
+    expect(loginBridge({ openaflow: { openAtLogin: async () => true } })).toBeUndefined()
+    expect(loginBridge({ openaflow: { setOpenAtLogin: async () => true } })).toBeUndefined()
+    expect(loginBridge({ openaflow: { openAtLogin: true, setOpenAtLogin: async () => true } })).toBeUndefined()
+    expect(loginBridge({ openaflow: { openAtLogin: async () => true, setOpenAtLogin: 'x' } })).toBeUndefined()
+  })
+
+  it('reads with openAtLogin and writes with setOpenAtLogin, on the bridge, passing answers and rejections through', async () => {
+    const shell = {
+      openAtLogin: vi.fn(async function (this: unknown) {
+        expect(this).toBe(shell)
+        return false
+      }),
+      setOpenAtLogin: vi.fn(async function (this: unknown, on: boolean) {
+        expect(this).toBe(shell)
+        return !on
+      }),
+    }
+    const login = loginBridge({ openaflow: shell })!
+    await expect(login.get()).resolves.toBe(false)
+    await expect(login.set(true)).resolves.toBe(false)
+    expect(shell.setOpenAtLogin).toHaveBeenCalledWith(true)
+    shell.setOpenAtLogin.mockRejectedValueOnce(new Error('login item failed'))
+    await expect(login.set(false)).rejects.toThrow('login item failed')
   })
 })

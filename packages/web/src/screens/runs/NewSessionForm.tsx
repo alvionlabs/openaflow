@@ -6,7 +6,7 @@ import type { BoardRepo, SkillId } from '@openaflow/model'
 import { Listbox } from '../../components/Listbox.tsx'
 import { ModalAlert } from '../../components/ModalAlert.tsx'
 import { Icon } from '../../theme/icons.tsx'
-import { TEXT_MAX, createNewSessionFlow, isBusy, skillItems, textLabel, type NewSessionFlow, type NewSessionState } from './new-session-flow.ts'
+import { TEXT_MAX, createNewSessionFlow, isBusy, skillItems, textLabel, type NewSessionFlow, type NewSessionState, type WrapperError } from './new-session-flow.ts'
 import '../../components/modal.css'
 import './new-session.css'
 
@@ -22,6 +22,30 @@ export function useNewSession(repo: BoardRepo): [NewSessionState, NewSessionFlow
   useEffect(() => flow.board(repo), [repo, flow])
   useEffect(() => () => flow.dispose(), [flow])
   return [state, flow]
+}
+
+/**
+ * The alert box for a run wrapper or stop command refusal (draft section 4): the title, the line, the reason as code
+ * (it wraps, whatever its length), and Open settings. Used by the form and by the stop bar.
+ */
+export function WrapperErrorBox({ title, wrapper, onOpenSettings, id }: { title: string; wrapper: WrapperError; onOpenSettings(): void; id?: string }) {
+  return (
+    <div id={id} className="modal-alert wrapper-error" role="alert">
+      <Icon name="alert" />
+      <div className="wrapper-error-body">
+        <p className="modal-alert-text">
+          <b>{title}</b>
+        </p>
+        <p className="wrapper-error-line">{wrapper.line}</p>
+        <code className="mono wrapper-error-code">{wrapper.code}</code>
+        <div>
+          <button className="btn" type="button" onClick={onOpenSettings}>
+            Open settings
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 type Props = {
@@ -111,7 +135,12 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props
           </p>
         )}
       </div>
-      {idle?.error && <ModalAlert id={errorId} message={idle.error} />}
+      {idle?.error &&
+        (idle.wrapper ? (
+          <WrapperErrorBox id={errorId} title={idle.error} wrapper={idle.wrapper} onOpenSettings={flow.openSettings} />
+        ) : (
+          <ModalAlert id={errorId} message={idle.error} />
+        ))}
       <p className="note ns-note" role="status">
         {idle?.note ?? ''}
       </p>

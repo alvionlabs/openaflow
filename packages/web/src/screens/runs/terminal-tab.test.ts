@@ -8,7 +8,7 @@ import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createTerminalLink } from '../../terminal-link.ts'
 import { StopBarPanel, TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { SavedScreen } from './TerminalView.tsx'
-import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
+import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, terminalOptions, DEFAULT_SCROLLBACK, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
 // Local times, so the HH:MM checks hold in any time zone.
 const START = new Date(2026, 10, 15, 13, 40).getTime()
@@ -323,5 +323,18 @@ describe('terminal tab', () => {
     ports[2]!.onmessage!({ data: { type: 'error', id: LIVE.marker, error: 'no session' } })
     expect(lost).toBe('gone')
     expect(await render(LIVE)).toEqual({ show: 'none', line: UNAVAILABLE })
+  })
+
+  it('view scrollback', () => {
+    const look = { theme: {}, fontFamily: 'f', fontSize: 13 } as never
+    const opts = (scrollback: number | undefined, ended = false) => terminalOptions({ look, scrollback, ended })
+    // The session's value, else 5,000 (xterm's own default is 1,000).
+    expect(opts(200).scrollback).toBe(200)
+    expect(opts(100_000).scrollback).toBe(100_000)
+    expect(opts(undefined).scrollback).toBe(5_000)
+    expect(DEFAULT_SCROLLBACK).toBe(5_000)
+    // The rest of today's options stay.
+    expect(opts(undefined, true)).toMatchObject({ minimumContrastRatio: 4.5, cursorBlink: true, disableStdin: true, fontFamily: 'f' })
+    expect(opts(undefined, false).disableStdin).toBe(false)
   })
 })

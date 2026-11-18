@@ -72,3 +72,24 @@
     margin-top: 0;
   }
 }
+
+/* A run wrapper or stop command refusal (draft section 4): the alert box with a title, a muted line, the reason as code, and Open settings. */
+.wrapper-error-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wrapper-error-line {
+  font-size: var(--size-dense);
+  color: var(--muted);
+}
+
+/* The reason can be one long word (a path): it wraps anywhere, so it never widens the box on a phone. */
+.wrapper-error-code {
+  color: var(--muted);
+  font-size: var(--size-small);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  min-width: 0;
+}

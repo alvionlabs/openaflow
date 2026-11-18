@@ -6,6 +6,7 @@
 //   #/<repoId>/task-<slug>            a one-off run's pipeline and agent log (it has no wave board);
 //                                     an older /pod:fix run's is #/<repoId>/fix-<slug>
 //   #/<repoId>/task-<slug>/agent/<id> the same, with that engineer's view open
+//   #settings                         the settings page beside the sidebar, with no run selected
 // A hash that names no run falls back to the first run's pipeline; no runs means
 // none, with an empty hash. `resolveSelection` also returns the hash that names what it picked, so the
 // page can put it in the URL and a vanished run's hash doesn't come back to life.
@@ -48,7 +49,32 @@ export function parseHash(hash: string): RouteKey | undefined {
   }
 }
 
-export type Selection = { run: RunSummary | undefined; view: View; slice: string | undefined; agent?: string | undefined; hash: string | undefined }
+export type Selection = {
+  run: RunSummary | undefined
+  view: View
+  slice: string | undefined
+  agent?: string | undefined
+  hash: string | undefined
+  /** `#settings`: the settings page in the main column, with no run selected. */
+  settings?: true
+}
+
+/** The settings page's hash (settings §8). No slash, so `parseHash` never reads it as a repo. */
+export const SETTINGS_HASH = '#settings'
+
+/** Where Back on the settings page goes: the hash the page had before `#settings`, or none. */
+export const backHash = (back: string | undefined): string => back ?? ''
+
+/** Where a finished remove or forget moves the page: nowhere while the settings page is open, since it shows no run. */
+export function moveAfterRemoval(go: string | undefined, onSettings: boolean): string | undefined {
+  return onSettings ? undefined : go
+}
+
+/** The Back target after the hash moves `from` → `to`: kept while the page stays on `#settings`, dropped when it leaves. */
+export function nextBack(back: string | undefined, from: string, to: string): string | undefined {
+  if (to !== SETTINGS_HASH) return undefined
+  return from === SETTINGS_HASH ? back : from
+}
 
 /**
  * The run, view, and open slice or agent a hash names, corrected: an unknown run → the
@@ -64,6 +90,8 @@ export function resolveSelection(
   agentsOf?: (run: RunSummary) => string[],
   fallback?: string,
 ): Selection {
+  // The settings page selects no run and asks for no hash, so nothing rewrites `#settings`.
+  if (hash === SETTINGS_HASH) return { run: undefined, view: 'pipeline', slice: undefined, hash: undefined, settings: true }
   const key = parseHash(hash)
   const named = key && runs.find((r) => r.repoId === key.repoId && r.plan === key.plan)
   // A run that vanished (its repo was just removed) goes to `fallback`, the run the remove planned, when it names one.
