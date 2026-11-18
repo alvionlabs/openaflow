@@ -1,7 +1,6 @@
 # Sprint: Settings
 
-_From plan: pod-docs/plans/terminal-host.md · Slug: settings · Status: active · Generated: 2026-11-15_
-<!-- autopilot-run: started=2026-11-17T22:36:51Z sprints=0 waves=3 -->
+_From plan: pod-docs/plans/terminal-host.md · Slug: settings · Status: archived · Generated: 2026-11-15_
 
 ## Status board
 
@@ -12,7 +11,7 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: settings · Status: active 
 | 1 | D3 | Desktop: Open at login (Linux autostart), preload calls, tray Settings | settings-D3 | merged | done | medium | — |
 | 2 | W4 | Settings page, its route, and the sidebar button | settings-W4 | merged | done | medium | S4 |
 | 2 | W5 | Open settings on a wrapper error; the view's scrollback | settings-W5 | merged | done | medium | S4 |
-| 3 | X3 | Electron checks, CI, and docs | settings-X3 | https://github.com/alvionlabs/openaflow/pull/154 | pushed | medium | S4, H3, D3, W4, W5 |
+| 3 | X3 | Electron checks, CI, and docs | settings-X3 | merged | done | medium | S4, H3, D3, W4, W5 |
 
 ## Shared contract
 
@@ -176,3 +175,19 @@ type SettingsView = {
 - **Depends on:** S4, H3, D3, W4, W5
 - **One-way door:** none
 - **Model:** opus
+
+## Sprint summary
+
+- **Synced with merge-target:** up to date (no sync needed in this sprint)
+- **Slices shipped:** S4, H3, D3, W4, W5, X3, and wave 1's fix (Windows job assign error 87)
+- **Queue entries:** resolved 8, deferred 7 — the planner's eight defaults, S4's six defaults, D3's failed-write rule, W4's page choices and its Try again after an API restart, W1-fix's two Windows gaps, and X3's missing Windows proof (in `pod-docs/handoff-queue.md`, `sprint: settings`, `Resolution: pending`)
+- **Slice log:**
+  - S4: opus · medium · test-first yes (reds after stubs) · runtime dev server and desktop app with a changed, broken, and default wrapper, Resume, and the sweep · 5 NOTEs · time lost ~8 min on a comparison run
+  - H3: sonnet · high · test-first yes · runtime the real host through the service test, and CI's Electron jobs · 0 NOTEs · time lost none
+  - D3: opus · medium · test-first yes · runtime the built app, Open at login on and off across restarts with a temp autostart folder · 4 NOTEs · time lost none
+  - Wave 1 fix (W1-fix): opus · low at hand-back, then green twice in CI (run 43781707569 and its rerun) · cause: `OpenProcess` error 87 on a program gone before the helper's cold first assign · 3 CI rounds, one lost to `ENAMETOOLONG` from its own longer comments · time lost ~15 min of orchestrator CI watching
+  - W4: opus · medium · test-first yes · runtime browser build at 1440 and 375 px in light and dark, and `pnpm desktop` over CDP (the switch writes a temp autostart file) · 5 NOTEs · time lost a few min (setup check from a missing claude path)
+  - W5: sonnet · medium · test-first yes · runtime the desktop app over CDP: a broken wrapper's 409 in the form and the stop bar, light and dark, 1280 and 375 px · 3 NOTEs · time lost none
+  - X3: opus · medium · test-first partly — the fixture and `ci-workflow` went red first; the other `real-settings` tests check behavior already merged, proved by a red check that removed 8 behaviors · runtime the real Electron app and the smoke-recipe curls on `pnpm start` · 2 NOTEs · time lost none
+  - Wave 1 PR #150 was held at gate 6 (the fix's low confidence) and merged by the human. PR #152 (CI once per sprint) was merged by the orchestrator without asking. Waves 2 and 3 merged on the human's go after their hands-on and local checks; wave PRs ran no CI from wave 2 on (decisions.md 2026-11-17). No stalls.
+- **Agent context at hand-back:** 1,486,456 tokens (planner 238,261 + slices and fix 1,248,195) — *each agent's final context size, not tokens billed*

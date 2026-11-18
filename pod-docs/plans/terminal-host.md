@@ -2,7 +2,7 @@
 
 _Generated: 2026-11-13 · Status: active · Grilled-with: pod (fast)_
 Port base: 8400
-<!-- autopilot-run: started=2026-11-15T09:51:09Z sprints=1 waves=3 -->
+<!-- autopilot-run: started=2026-11-17T22:36:51Z sprints=1 waves=3 -->
 
 ## Goal
 OpenAFlow hosts its own terminals. Each terminal runs the real, unmodified `claude` with your own login. You start, watch, type into, resume, and end sessions in the app, so you use OpenAFlow only and no separate terminal. This is plan A of three: `terminal-host`, then `openaflow-plugin`, then `automatic-input`.
@@ -117,7 +117,7 @@ sequenceDiagram
 | host-core | The pty host, node-pty, the hooks plugin, and packaging (the Windows installer and a new Linux AppImage), proved on Windows and Linux; a session starts and replays | done | — |
 | terminal-tab | New session with the skill dropdown, the Terminal tab, and the hosted run states on the current run screen | done | host-core |
 | session-life | Quit, ending process trees, Resume, crashes, the heartbeat banner, and updates | done | terminal-tab |
-| settings | The settings page: Open at login, scrollback, run wrapper, and stop command | active | session-life |
+| settings | The settings page: Open at login, scrollback, run wrapper, and stop command | done | session-life |
 
 ## Look
 No new look. The human checked the new screens in the current look on 2026-11-13 ("The rest design looks very nice to me") and asked for one change: a skill dropdown in New session, now drawn in the draft.
