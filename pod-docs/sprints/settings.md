@@ -1,7 +1,7 @@
 # Sprint: Settings
 
 _From plan: pod-docs/plans/terminal-host.md · Slug: settings · Status: active · Generated: 2026-11-15_
-<!-- autopilot-run: started=2026-11-17T22:36:51Z sprints=0 waves=1 -->
+<!-- autopilot-run: started=2026-11-17T22:36:51Z sprints=0 waves=2 -->
 
 ## Status board
 
@@ -10,8 +10,8 @@ _From plan: pod-docs/plans/terminal-host.md · Slug: settings · Status: active 
 | 1 | S4 | Server: settings file, settings routes, run wrapper and stop command at each start | settings-S4 | merged | done | medium | — |
 | 1 | H3 | Pty host: scrollback per session | settings-H3 | merged | done | high | — |
 | 1 | D3 | Desktop: Open at login (Linux autostart), preload calls, tray Settings | settings-D3 | merged | done | medium | — |
-| 2 | W4 | Settings page, its route, and the sidebar button | settings-W4 | https://github.com/alvionlabs/openaflow/pull/153 | pushed | medium | S4 |
-| 2 | W5 | Open settings on a wrapper error; the view's scrollback | settings-W5 | https://github.com/alvionlabs/openaflow/pull/153 | pushed | medium | S4 |
+| 2 | W4 | Settings page, its route, and the sidebar button | settings-W4 | merged | done | medium | S4 |
+| 2 | W5 | Open settings on a wrapper error; the view's scrollback | settings-W5 | merged | done | medium | S4 |
 | 3 | X3 | Electron checks, CI, and docs | settings-X3 | — | pending | — | S4, H3, D3, W4, W5 |
 
 ## Shared contract
