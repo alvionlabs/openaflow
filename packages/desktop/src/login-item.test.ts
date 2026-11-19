@@ -213,7 +213,8 @@ describe('login item', () => {
     }
     const unchanged = (text: string, more: Partial<Parameters<typeof repairLoginItem>[0]> = {}) => {
       const fs = fakeFs({ [FILE]: text })
-      repair(fs, more)
+      // A start with nothing to do says nothing.
+      expect(repair(fs, more), text).not.toHaveBeenCalled()
       expect(fs.store.get(FILE), text).toBe(text)
       expect(fs.writeFile, text).not.toHaveBeenCalled()
       expect([...fs.store.keys()]).toEqual([FILE])
@@ -245,7 +246,8 @@ describe('login item', () => {
 
     test('a missing file stays missing', () => {
       const fs = fakeFs()
-      repair(fs)
+      // Most users have no entry: their start says nothing.
+      expect(repair(fs)).not.toHaveBeenCalled()
       expect(fs.store.size).toBe(0)
       expect(fs.mkdir).not.toHaveBeenCalled()
       expect(fs.writeFile).not.toHaveBeenCalled()
