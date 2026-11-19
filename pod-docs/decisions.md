@@ -440,3 +440,159 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 - **Rejected:** CI on every PR (slow, and it tests pieces); non-blocking CI per wave (still tests pieces); CI opt-in by a `ci` label on risky waves (one more rule to get right); Windows-only CI per wave (saves runners, not time); a manual `workflow_dispatch` trigger (works only once it is on `main`); CI on every push (wave PRs would run twice); a scheduled nightly run (GitHub schedules only from the default branch).
 - **Risk accepted:** a Windows bug shows only at sprint end, mixed with up to three waves of changes. Revisit if that bites.
 - **For autopilot:** a wave PR with zero checks meets the "CI passed" criterion by this decision; the sprint-end check and the final plan PR still need passing checks.
+
+## 2026-11-19 — Electron sandbox off on Ubuntu 24.04 AppImages (agent default — override anytime)
+
+- **Value in use:** accept it. electron-builder's AppImage `AppRun` adds `--no-sandbox` by itself when `unshare -Ur true` fails, so on Ubuntu 24.04 the app probably runs with Chromium's sandbox off. `docs/install.md` describes the limit and recommends no workaround.
+- **Options:** accept it; or override `AppRun` to refuse the start and ask for an AppArmor profile.
+- **From:** queue entries 2026-11-14 (sprint host-core) and 2026-11-15 (slice P1).
+
+## 2026-11-19 — Licence notices for ConPTY and the xterm add-ons (agent default — override anytime)
+
+- **Value in use:** the Windows package's notices carry node-pty's `LICENSE` only, with no line that names `conpty.dll` and `OpenConsole.exe`. `@xterm/headless` and `@xterm/addon-serialize` use the MIT `LICENSE` of github.com/xtermjs/xterm.js as their text.
+- **Options:** add a line that names the two ConPTY files; keep as is.
+- **From:** queue entries 2026-11-14, sprint host-core, slice N1.
+
+## 2026-11-19 — New session command rules the spec left open (agent default — override anytime)
+
+- **Value in use:** `session-command.ts` allows plain text that starts with `/` (it runs as a slash command), requires absolute `claude` and config paths, and adds the error words `bad skill`, `bad path`, `cmd.exe not found`, and `unsafe claude path`.
+- **Options:** keep these rules; refuse a leading `/`; change the words.
+- **From:** queue entry 2026-11-15, sprint host-core, slice A1.
+
+## 2026-11-19 — Terminal host state for a late page and after a crash (agent default — override anytime)
+
+- **Value in use:** `onTerminalHost` gives no current state to a page that subscribes late, so the page calls `connectTerminals()` without a wait for `ready`. A crash sends nothing to the page until the restarted host is ready (`restarted`). A host whose node-pty fails to load still uses all 5 restarts.
+- **Options:** keep as built; replay the last state to a late page; stop the restarts after a node-pty load failure.
+- **From:** queue entry 2026-11-15, sprint host-core, slice S1.
+
+## 2026-11-19 — The real-start proof runs unpackaged only (agent default — override anytime)
+
+- **Value in use:** `real-start` runs on Electron's own binary only. `real-pty-proof` and `real-terminal` cover the packaged app. The scope said all three Electron files run unpackaged, then packaged.
+- **Options:** keep as built; make `real-start` also run on the packaged app.
+- **From:** queue entry 2026-11-15, sprint host-core, slice E1.
+
+## 2026-11-19 — A hosted session joins a run only through an agent's session ID (agent default — override anytime)
+
+- **Value in use:** a hosted session joins a run only when an agent of that run holds one of the session's IDs. A fresh `/pod:plan` whose plan doc exists before any agent holds that ID keeps its terminal on the repo row, beside the new plan run.
+- **Options:** keep as built; also join by other signs, such as the plan doc. Not yet checked against a real `/pod:plan` transcript.
+- **From:** queue entry 2026-11-15, sprint terminal-tab.
+
+## 2026-11-19 — Waiting card words for a new session (agent default — override anytime)
+
+- **Value in use:** the waiting card reads "Claude waits for you in the terminal" and "It may ask you to trust this folder or to sign in." The rule (live, no `SessionStart` hook line after 10 s) can't tell the trust prompt from a login screen. `/pod:ship` gets no warning in the Start with list. Resume came later, in session-life.
+- **Options:** keep these words; use the draft's "Claude asks to trust this folder"; add a warning for `/pod:ship`.
+- **From:** queue entry 2026-11-15 (Look), sprint terminal-tab.
+
+## 2026-11-19 — The real-claude test gate refuses home and Claude config folders (agent default — override anytime)
+
+- **Value in use:** the real-claude gate refuses the home folder, any folder inside `~/.claude`, and any folder inside the caller's own `CLAUDE_CONFIG_DIR`. The skip reason prints only when `OPENAFLOW_REAL_CLAUDE` or `OPENAFLOW_REAL_CLAUDE_CONFIG_DIR` is set.
+- **Options:** keep as built; allow more folders. The three real proofs have not run yet; the sign-in task in the queue (2026-11-15, terminal-tab) unblocks them.
+- **From:** queue entry 2026-11-15, sprint terminal-tab, slice X1.
+
+## 2026-11-19 — Sidebar order and state for repos with hosted sessions (agent default — override anytime)
+
+- **Value in use:** a repo row that holds only a live hosted session has no activity time, so it sorts after every run with activity. A repo that shows an error or `update pod` keeps its one row and state, so a waiting session there never reads `needs-you`.
+- **Options:** use the newest session `startedAt` as the row's activity; let a waiting session show `needs-you` on an error repo.
+- **From:** queue entry 2026-11-15, sprint terminal-tab, slice M1.
+
+## 2026-11-19 — Start with list popup style and close rule (agent default — override anytime)
+
+- **Value in use:** the Start with list matches the draft (`--bg`, a `--border-strong` frame, 8 px radius), not the app's `.menu` popup, so the app has two popup styles. Tab or a click outside closes the list and keeps the old pick, like Escape.
+- **Options:** keep as built; use the `.menu` style; pick the active option on Tab (the ARIA default).
+- **From:** queue entry 2026-11-15 (Look), sprint terminal-tab, slice L1.
+
+## 2026-11-19 — Session store rules the contract left open (agent default — override anytime)
+
+- **Value in use:** the five rules in the queue entry, as built: reconcile only the records held when `list` went out; `endedAt` only on `lost` and on an exit; log only a start; a record whose repo left the Board counts toward the cap of 10; a failed `sessions.json` write logs one line and keeps the change in memory.
+- **Options:** change any one of the five.
+- **From:** queue entry 2026-11-15, sprint terminal-tab, slice S1.
+
+## 2026-11-19 — A start or Resume that times out keeps the record starting (agent default — override anytime)
+
+- **Value in use:** after a New session or a Resume answers 504, its record stays `starting` (contract §3). That repo answers `409 session starting` to each New session until a late answer or the next start's reconcile. The Terminal tab shows the row on "Starting". After a late Resume, the old record stays until you dismiss it, so two rows can resume one conversation.
+- **Options:** keep as built; mark a timed-out record failed so the repo can start again; let a late `started` on a record with `resumedFrom` remove the old record.
+- **From:** queue entries 2026-11-15, sprint terminal-tab (slice S1) and sprint session-life (slices S3, W2).
+
+## 2026-11-19 — New session error words (agent default — override anytime)
+
+- **Value in use:** the words in `START_ERRORS` (`new-session-flow.ts`), as listed in the queue entry, for example "A session is already starting in this repo". The start card and ⋯ New session are left out on `error` and `update pod` repos.
+- **Options:** keep these words; give new ones.
+- **From:** queue entry 2026-11-15 (copy), sprint terminal-tab, slice N1.
+
+## 2026-11-19 — Terminal tab words and stop bar look (agent default — override anytime)
+
+- **Value in use:** "The terminal started at HH:MM.", "The terminal has ended.", the `DISMISS_ERRORS` words, a full repo path under the terminal (it wraps at 375 px; the draft shows `~/…`), and a 14 px weight 500 stop word (the draft's is 16 px). Resume came later, in session-life.
+- **Options:** keep as built; shorten the path to `~/…`; use the draft's 16 px stop word.
+- **From:** queue entry 2026-11-15 (copy and Look), sprint terminal-tab, slice T1.
+
+## 2026-11-19 — Quit and host state rules in session-life (agent default — override anytime)
+
+- **Value in use:** after a confirmed quit, main stops sending `exit` and `lost`, so those sessions read `stopped · app closed` after a restart. A test-hooks build answers `end` with no box. After the server fails for good, a quit ends sessions with no dialog. The quit dialog names sessions from the last server list. The heartbeat banner shows only for `unresponsive`.
+- **Options:** change any one of these rules.
+- **From:** queue entry 2026-11-15, sprint session-life.
+
+## 2026-11-19 — Windows job helper close wait and start time (agent default — override anytime)
+
+- **Value in use:** the helper's `close` waits at most 2 s (`CLOSE_MS`), then resolves, so a stuck helper can't block a quit. The helper starts at a session's first assign (0.4–1.4 s), so children started before that assign stay outside the job if main crashes first.
+- **Options:** another close wait; start the helper before the first session (changes J1's rule).
+- **From:** queue entries 2026-11-15, sprint session-life, slices J1 and W3-fix.
+
+## 2026-11-19 — When a window port goes stale (agent default — override anytime)
+
+- **Value in use:** a window port goes stale 30 s after the later of two moments: it went over the 100,000-character limit, and its last message.
+- **Options:** keep this reading of §2; count from the moment it went over only.
+- **From:** queue entry 2026-11-15, sprint session-life, slice H2.
+
+## 2026-11-19 — Session ender edge cases on Linux (agent default — override anytime)
+
+- **Value in use:** `systemctl --user stop` exit 5 logs `stop command failed: exit 5` at each quit; a reused pid without `OPENAFLOW_RUN=<id>` gets a marker-only end; a pid that comes after its session ended at pid 0 is ended again, and `endAll` waits for it.
+- **Options:** count exit 5 (unit not loaded) as success; change the other two.
+- **From:** queue entry 2026-11-15, sprint session-life, slice E1.
+
+## 2026-11-19 — Host banner hidden when the terminal host failed (agent default — override anytime)
+
+- **Value in use:** the host banner hides when the terminal host is `failed` or `starting`. On `failed`, the Terminal tab words the failure.
+- **Options:** keep as built; show the banner on `failed` too.
+- **From:** queue entry 2026-11-15, sprint session-life, slice W3.
+
+## 2026-11-19 — Quit box on SIGTERM and on a failed box (agent default — override anytime)
+
+- **Value in use:** on Linux, a SIGTERM with a live session opens the quit box and waits for an answer. If the native quit box throws, the quit reads as Cancel and logs `quit question failed, so nothing ends`.
+- **Options:** treat SIGTERM like Windows `session-end` (end sessions with no box); let a failed box end the sessions.
+- **From:** queue entries 2026-11-15, sprint session-life, slice D2.
+
+## 2026-11-19 — Resume error words (agent default — override anytime)
+
+- **Value in use:** `no session` reads "This session is already gone"; `session is live` reads "This session is already running"; other errors reuse New session's words. The stop bar has one alert box with the error of the button pressed last.
+- **Options:** keep these words; give new ones.
+- **From:** queue entry 2026-11-15 (copy), sprint session-life, slice W2.
+
+## 2026-11-19 — Settings rules the plan left open (agent default — override anytime)
+
+- **Value in use:** the eight rules in the queue entry, as written: the scope unit name, the Linux autostart file, the 5 s wrapper check, the default stop command's limits, the stop saved on each record, the browser and Windows sections, the token-gated settings post, and the CI-only `HKCU` test.
+- **Options:** change any one of the eight.
+- **From:** queue entry 2026-11-15, sprint settings.
+
+## 2026-11-19 — Open at login: a failed write shows the real state (agent default — override anytime)
+
+- **Value in use:** built to the criterion: a failed write is logged and the switch shows the real state; only a failed read rejects with `login item failed`.
+- **Options:** keep as built; reject a failed write too, as §7 says.
+- **From:** queue entry 2026-11-15, sprint settings, slice D3.
+
+## 2026-11-19 — Settings store and preview rules (agent default — override anytime)
+
+- **Value in use:** the six rules in the queue entry, as built. The preview prints the session id and the `--unit=` value in quotes, per §5.
+- **Options:** change any one of the six; drop the quotes, as the draft's §6 shows.
+- **From:** queue entry 2026-11-15, sprint settings, slice S4.
+
+## 2026-11-19 — Settings page words and layout (agent default — override anytime)
+
+- **Value in use:** a refused save shows the server's raw word under the field (`run wrapper: unclosed quote`); new words "Loading settings…", "Couldn't read Open at login", and "Couldn't save. Please try again"; the Open at login help line sits under the switch; Add repo and Settings share a wrapping row in the sidebar.
+- **Options:** short, warm words for refused saves (DESIGN.md); the help line beside the switch; Add repo full width again.
+- **From:** queue entry 2026-11-17 (Look and copy), sprint settings, slice W4.
+
+## 2026-11-19 — Remove repo while a session is live (agent default — override anytime)
+
+- **Value in use:** keep as is. The session keeps running with no row, still counts toward the cap of 10, and the quit box still counts it; Dismiss and Resume answer 404. Found by reading, not run.
+- **Options:** refuse Remove while a session is live; end the session on Remove.
+- **From:** queue entry 2026-11-19, final review of plan terminal-host.

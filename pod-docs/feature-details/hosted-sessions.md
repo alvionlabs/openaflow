@@ -2,47 +2,54 @@
 
 ## What it is
 
-A hosted session is an interactive `claude` that the app starts in the desktop's terminal host. The server keeps a record of each one, puts it on the Board as `repo.hosted`, and has three routes: New session, Resume, and Dismiss. It also serves each session's saved screen. The shapes are in [terminal-tab's shared contract](../sprints/terminal-tab.md) (§2, §3, §5) and [session-life's](../sprints/session-life.md) (§3–§6). The terminal host is in [terminal-host.md](terminal-host.md); main's side of the link is in [desktop.md](desktop.md) (Server terminal link); the rows and words the page shows are in [runs-and-pipeline.md](runs-and-pipeline.md).
+A hosted session is an interactive `claude` that the app starts in the terminal host. The server keeps a record of each one, shows it on the Board as `repo.hosted`, and has three routes: New session, Resume, and Dismiss. It also serves a session's saved screen. The terminal side is in [terminal-host.md](terminal-host.md).
 
 ## How it works
 
-- **Terminal channel** (`terminal-channel.ts`). Only a server that the desktop's main process started has one: `linkParent` gives it when `OPENAFLOW_TERMINALS=1` and the process has a real `parentPort`. Dev and `pnpm start` have none. The server sends `start {req, spec, stop?}`, `list {req}`, `dispose {id}`, `sweep {sessions}`, and `labels {labels}`. Main answers each `start` and `list` once. It also sends `exit {id, exitCode}` once per session and `lost {ids}` at each host crash. The channel gives every `started`, `start-failed`, `exit`, and `lost` to its listeners before the request that waits on it settles, so the store is current when a route goes on. A `start` or `list` with no answer in 30 s rejects (`NoAnswer`: `terminals unavailable` for a start, `no answer` for a list). A late answer still reaches the listeners. A bad message of type `openaflow:terminal` logs one line, `openaflow: terminal channel ignored a bad message: <reason>`, that never holds the message. Ids the store doesn't hold are ignored.
-- **Session store** (`session-store.ts`, `<config dir>/sessions.json`). Memory changes at once; the file is written whole to a temp file, then renamed, one write at a time. Only a server with a channel writes it. A server with no channel reads it again when its size or time changes, so a dev server shows what the desktop's server wrote. A missing file is empty. A file that doesn't parse is empty with one log line, and it stays as it is until the next real change. A record that breaks a rule (a marker that isn't a UUID v4, an unknown state) is left out. A failed write logs one line and keeps the change in memory.
-- **Transitions.** Saved as `starting` before `start` goes out. A Resume's record also holds `resumedFrom` (the old marker) while it is `starting`; every change out of `starting` drops it, and a bad one is dropped on read. `started` → `live` with its `pid`. `start-failed` → the record goes. `exit` → `ended` with `exitCode` and `endedAt`. `lost` → `stopped · terminals restarted` with `endedAt`. Dismiss → the record goes. `ended` and `stopped` never change. Each change rebuilds the Board.
-- **Reconcile** at each start with a channel, after the bind, never awaited: `list`. Listed and live → `live` (with the listed `pid`); listed and not live → `ended` with no `exitCode`; not listed → `stopped · app closed` with no `endedAt`. Only the `starting` and `live` records there were when it asked, and only while they keep that state: a New session or an `exit` during the wait keeps its own state. `list-failed terminals unavailable` → `stopped · terminals restarted`. Any other failure, or no answer, asks once more 30 s later, then changes nothing. Then one `sweep` names each record it set to `stopped · app closed`, each with the `stop` its record keeps (none for a record without one), whatever the settings are now; none → no message. Main ends what those sessions left running.
-- **Run wrapper and stop command** (`run-wrapper.ts`; full rules in [settings.md](settings.md)). Only a server with a channel runs `scopeProbe`, once, right after the tool check, with the env a session gets. A route waits for the probe's first answer (about 6 s at most: a 5 s limit, then up to 1 s for the killed child). Then it reads `settings.json` and plans the start. Default settings on Linux with the probe on: `systemd-run --user --scope --quiet --unit=openaflow-run-<marker>.scope <program> <args…>`, with `stop` `[systemctl, --user, stop, openaflow-run-<marker>.scope]` beside the spec. Probe off (no user bus, a tool missing), macOS, or Windows: the program as it is, no `stop`. A changed wrapper runs once around `true` with a fresh id before the first start of that text (the wrapper check); a changed stop command goes with any wrapper. A refusal (`409 run wrapper: <word>` or `409 stop command: <word>`) saves no record and writes no log entry. The record keeps the `stop` and the `scrollback` its start used.
-- **Scrollback.** New session and Resume set `spec.scrollback` to the setting (default 5,000). The Board's `HostedSession.scrollback` comes from the record; a record from before the setting has none.
-- **Saved screens.** New session and Resume set `spec.screenFile` to `<config dir>/screens/<marker>.txt`; the host writes the session's screen text there (owner-only). `GET /api/sessions/<marker>/screen` (token required: `403 bad token`) → `200 {text}`, or `404 {error:'no screen'}` when the marker isn't a stored record or has no file. It builds the path only from a stored marker. Dismiss and a started Resume delete the file.
-- **Labels.** At the first Board build, then after each build whose list differs from the last sent, a server with a channel sends `labels`: each `starting` or `live` session on the Board as `{id, label}` with `sessionLabel` (`<repo name> · <joined run>` or `… · no plan yet`). A record whose repo is off the Board has none.
-- **Board.** Each repo's records (matched by `sameRepoPath`), oldest first, as `HostedSession`: with the hook file `<config dir>/hooks/<marker>.jsonl`, read with `readHookState` and cached by size and time. `hooked`: a `SessionStart` line exists. `prompted`: a `UserPromptSubmit` line exists. `sessions`: the start id, then every other `SessionStart` id once. `liveSession`: the newest `SessionStart` id, else the start id. No `pid` and no text. A repo whose folder is gone still lists its sessions. An `ended` or `stopped` one also has `resume`, first match: the repo folder is gone → `no folder`; no `<claude dir>/projects/<projectDirName(repo)>/<liveSession>.jsonl` (or a `liveSession` that isn't a UUID v4) → `no conversation`; a `starting` or `live` record in any repo, on the Board or not, whose `sessions` hold its `liveSession` → `in use`; else `ok`. The watcher watches `sessions.json` and the `hooks` folder (through the config folder until the plugin makes it).
-- **`POST /api/actions/new-session {repoId, skill, text, cols?, rows?}`.** Errors, first match: `400 bad request` (shape; `cols` 2–500, `rows` 1–200, default 120 × 30); `409 no terminal host` (no channel, or no `OPENAFLOW_HOOKS_PLUGIN`); `404 not a repo`; `409 claude not found` (the tool finder's `claude`); `409 run wrapper: <word>` or `409 stop command: <word>`; `409 session starting` (this repo has a `starting` record); `409 too many sessions` (10 `starting` or `live` in all); `400 <sessionCommand word>`; `502 start failed: <host word>`; `504 terminals unavailable`. Both ids come from `crypto.randomUUID()`. The spec is `sessionCommand`'s, with the tool finder's env. `200 {outcome:'started', marker, logged, typeYourself?}`: `typeYourself` is only in the answer; the record keeps `typeYourself: true`. Refusals before the start change nothing and aren't logged. A start logs one `new-session` entry (`started`, or `failed` with the host's word or `no answer`), rebuilds the Board, then answers.
-- **`POST /api/actions/dismiss-session {repoId, marker}`.** Errors: `400 bad request`; `409 no terminal host`; `404 no session` (not this repo's record, also a repeat); `409 session is live` (`starting` or `live`). It removes the record, deletes the hook and screen files (a missing file is fine), sends `dispose`, logs one `dismiss-session` entry, rebuilds, then answers `200 {outcome:'dismissed', logged}`.
-- **`POST /api/actions/resume-session {repoId, marker, cols?, rows?}`.** Errors, first match: `400 bad request`; `409 no terminal host`; `404 no session` (not this repo's record; also a repeat after success); `409 run wrapper: <word>` or `409 stop command: <word>`; `409 session is live`; `409 session starting` (this repo has a `starting` record, so a second press lands here); `409 claude not found`; `409 can't resume: <reason>` (the Board's check, read again now); `409 too many sessions`; `400 <resumeCommand word>`; `502 start failed: <host word>`; `504 terminals unavailable`. It saves a new record (new marker; `sessionId` the old `liveSession`; the old `skill`; `resumedFrom`), then starts `resumeCommand` (`--resume <liveSession> --plugin-dir <dir>`, no prompt). `started`: the old record goes, its hook and screen files are deleted (missing is fine), and the old id is disposed. `start-failed`: the new record goes; the old one stays. `504`: the new record stays `starting`, and the old one stays (it reads `in use` meanwhile). Logs one `resume-session` entry, rebuilds, then answers `200 {outcome:'started', marker:<new>, logged}`.
-- **Log targets:** `<skill command or plain> · <marker first 8>`, never the text.
+```mermaid
+stateDiagram-v2
+  [*] --> starting: New session or Resume
+  starting --> live: started (pid)
+  starting --> [*]: start-failed
+  live --> ended: exit
+  live --> stopped: host lost, or app closed
+  ended --> starting: Resume
+  ended --> [*]: Dismiss
+  stopped --> starting: Resume
+  stopped --> [*]: Dismiss
+```
+
+- **Channel** (`terminal-channel.ts`): only a server that main started has one (a real `parentPort` and `OPENAFLOW_TERMINALS=1`). Dev and `pnpm start` have none, so New session answers `409 no terminal host`.
+- **Store** (`session-store.ts`, `<config>/sessions.json`): written whole, by temp file and rename. Per record: repo, marker, pid, state, stop command, scrollback, times. No typed text.
+- **Reconcile** at each start: asks the host to `list`. Listed and live stays `live`; listed and ended becomes `ended`; unlisted becomes `stopped · app closed`. Records that changed during the wait keep their state.
+- **Routes**: `new-session`, `resume-session`, `dismiss-session`. First-match errors: `400 bad request`, `409 no terminal host`, `404`, `409 claude not found`, `409 run wrapper: …`, `409 session starting`, `409 too many sessions` (10 live or starting). Dismiss refuses a live session. Resume re-checks everything.
+- **Board**: `HostedSession` joins the hook file (`hooked`, `prompted`, `liveSession`) and carries no pid and no text. A session joins a run only when an agent of that run holds one of its IDs.
+- **Screen** (`screen-route.ts`): `GET /api/sessions/<marker>/screen` with the token answers the saved text.
+
+**Worked example.** New session with Plan and "add tags" saves `starting`. `started` makes it `live`. You kill the app. At the next start the reconcile finds it unlisted and writes `stopped · app closed`. The tab shows the faded saved screen with Resume. Resume starts `claude --resume <id>` as a new record; once it has started, the old record, hook file, and screen are deleted.
 
 ## Why it's this way
 
-- **Only a real `parentPort` turns the channel on:** every `OPENAFLOW_*` reaches a resumed `claude -p`, so the env alone would turn it on in a process main never answers.
-- **The reconcile never blocks the start:** main forks the terminal host only after the server's first ready.
-- **The reconcile leaves records that changed during its wait:** a `list` can wait up to 20 s for the host, and a New session in that time is unlisted but new.
-- **No typed text in the store, the log, or the Board:** the start line holds what the user typed. Only the start itself carries it.
-- **Screen text is on disk, but never on the Board or in a log:** a Resume or a restart needs something to show under the stop bar once the host has let the session go. It can hold secrets the user typed or Claude printed, so it lives only in owner-only files that Dismiss and Resume delete, and it is read only with the token.
-- **Resume checks everything again:** the Board's `resume` can be seconds old, and a second press must land on `session starting`. All disk reads happen first; the checks and the save run with no wait between them.
-- **The stop comes from the record:** a sweep names sessions from the last app life, and the settings may have changed since. So each record keeps the stop its start used, and the sweep sends that one.
+- **A real `parentPort` turns the channel on:** every `OPENAFLOW_*` reaches a resumed `claude -p`, so the env alone would turn it on in a process main never answers.
+- **No typed text in the store, log, or Board:** only the start itself carries it.
+- **Screens on disk, owner-only:** a Resume or restart needs something to show. Never on the Board or in a log; read with the token. Turned down: keeping no screen.
+- **The record keeps its stop command** ([settings.md](settings.md)): a sweep after a crash must use the stop its start used. Turned down: the current setting.
+- **A timeout keeps the record `starting`** ([decision](../decisions.md#2026-11-19--a-start-or-resume-that-times-out-keeps-the-record-starting-agent-default--override-anytime)). Turned down: dropping it.
+- **Join a run only by session ID** ([decision](../decisions.md#2026-11-19--a-hosted-session-joins-a-run-only-through-an-agents-session-id-agent-default--override-anytime)). Turned down: the first transcript mention.
 
 ## Watch out
 
-- A `504` leaves the record `starting`, so that repo answers `409 session starting` until a late answer or the next start's reconcile. Its log entry reads `failed` (`no answer`) even if a late `started` makes it live.
-- A record whose repo leaves the Board still counts toward the 10, and nothing can dismiss it until the repo is back.
-- `stopped · app closed` has no `endedAt`: the server doesn't know when the app closed.
-- A late `started` after a Resume's 504 makes the new session live, but the old record stays (`in use` while the new one runs). Dismiss it by hand.
-- Main older than session-life's D2 logs `sweep` and `labels` as unknown ops.
-- The scope probe's first run can take about 6 s; the first New session or Resume after a start waits for it.
-- Records written before the settings sprint have no `stop`, so the sweep sends none for them.
-- Tests start sessions only with a fake `claude` behind `OPENAFLOW_CLAUDE_BIN`. Never the real `claude` with `~/.claude`.
+- A `504` leaves the record `starting`, so that repo answers `409 session starting` until a late answer or the next start.
+- A late `started` after a Resume's 504 leaves the old record too. Dismiss it by hand.
+- Remove repo while a session is live leaves it running with no row, and it still counts toward the 10 ([decision](../decisions.md#2026-11-19--remove-repo-while-a-session-is-live-agent-default--override-anytime)).
+- `stopped · app closed` has no end time.
+- The scope probe's first run can take about 6 s; the first New session waits for it.
+- Records from before the settings sprint have no `stop`; the sweep sends none for them.
+- Tests start sessions only with a fake `claude` behind `OPENAFLOW_CLAUDE_BIN`.
 
 ## History
 
+- 2026-11-19 · plan terminal-host complete · rewrote this page to the current state · [report](../reports/terminal-host.html), [PR #155](https://github.com/alvionlabs/openaflow/pull/155)
 - 2026-11-15 · settings S4 · changed: the start takes its run wrapper and stop command from `settings.json`, with a wrapper check for a changed wrapper and `409 run wrapper: …` / `409 stop command: …` refusals; the record keeps `scrollback` and `stop`, and the sweep sends each record's own `stop`.
 - 2026-11-15 · session-life S3 · added: the Resume route, the `resume` check on the Board, saved screens and their route, the Linux run wrapper on New session and Resume, `sweep` after the reconcile, `labels` after each Board change, and `resume-session` log entries.
 - 2026-11-15 · terminal-tab S1 · added: the session store, the terminal channel, the reconcile, the New session and Dismiss routes, `hosted` on the Board, the watch on hook files, and the two action log kinds.

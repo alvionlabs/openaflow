@@ -1,6 +1,6 @@
 # Plan: Terminal host
 
-_Generated: 2026-11-13 · Status: active · Grilled-with: pod (fast)_
+_Generated: 2026-11-13 · Status: archived · Grilled-with: pod (fast)_
 Port base: 8400
 <!-- autopilot-run: started=2026-11-17T22:36:51Z sprints=1 waves=3 -->
 
