@@ -4,6 +4,7 @@
 # A payload over 64 KB becomes {"v":1,"at":<ms>,"cut":true,"event":"...","session":"..."}.
 # Rules: POSIX sh only; never writes to stdout (a SessionStart stdout becomes model context);
 # always exits 0; writes nothing unless the marker is a lowercase UUID v4 and the folder is absolute.
+# The file holds every prompt and tool input, so only the user may read it: folder 0700, file 0600 (no-ops on Windows).
 
 LIMIT=65536
 
@@ -38,7 +39,10 @@ record() {
     line="{\"v\":1,\"at\":$at,\"payload\":$payload}"
   fi
 
+  umask 077
   mkdir -p "$dir" || return 0
+  # A folder made before this rule may be looser. Once per run, not per event: one more process only on the first line.
+  [ -e "$dir/$marker.jsonl" ] || chmod 700 "$dir"
   printf '%s\n' "$line" >>"$dir/$marker.jsonl"
 }
 

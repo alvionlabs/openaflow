@@ -4,7 +4,7 @@
 // preload imports the channels and loginAnswerOf. The rules are in pod-docs/sprints/settings.md §7.
 
 import { senderAllowed, type BridgeCaller } from './folder-bridge.ts'
-import { autostartDir, createAutostart, execValue, type AutostartFs } from './login-autostart.ts'
+import { autostartDir, createAutostart, type AutostartFs } from './login-autostart.ts'
 
 export const HIDDEN_FLAG = '--hidden'
 export const LOGIN_GET_CHANNEL = 'openaflow:login-item:get'
@@ -52,20 +52,38 @@ export function createLoginItem(o: LoginPlace & { api: LoginApi; log?(message: s
 export const linuxProgram = (o: { packaged: boolean; execPath: string; env: Record<string, string | undefined> }): string =>
   o.packaged && o.env.APPIMAGE !== undefined && o.env.APPIMAGE !== '' ? o.env.APPIMAGE : o.execPath
 
-export function loginItemFor(o: {
+export type LoginPlatform = LoginPlace & {
   platform: NodeJS.Platform
-  packaged: boolean
-  appPath: string
   execPath: string
   env: Record<string, string | undefined>
   home: string
   fs: AutostartFs
-  api: LoginApi
   log?(message: string): void
-}): LoginItem {
+}
+
+const linuxAutostart = (o: LoginPlatform) =>
+  createAutostart({ fs: o.fs, dir: autostartDir(o.env, o.home), program: linuxProgram(o), args: loginArgs(o) })
+
+export function loginItemFor(o: LoginPlatform & { api: LoginApi }): LoginItem {
   if (o.platform !== 'linux') return createLoginItem(o)
-  const file = createAutostart({ fs: o.fs, dir: autostartDir(o.env, o.home), exec: execValue(linuxProgram(o), loginArgs(o)) })
+  const file = linuxAutostart(o)
   return readAfterWrite((on) => file.write(on), () => file.isOn(), o.log)
+}
+
+const isAppImage = (o: LoginPlatform) => o.packaged && o.env.APPIMAGE !== undefined && o.env.APPIMAGE !== ''
+
+/**
+ * At start on Linux, from an AppImage: an on autostart entry of the app's own that names another program (an update
+ * moved the AppImage to a new versioned name) is pointed at this one. Never throws: a failure is logged.
+ */
+export function repairLoginItem(o: LoginPlatform): void {
+  if (o.platform !== 'linux' || !isAppImage(o)) return
+  try {
+    const old = linuxAutostart(o).repair()
+    if (old !== undefined) o.log?.(`openaflow desktop: Open at login now starts ${linuxProgram(o)} (was ${old})`)
+  } catch (err) {
+    o.log?.(`openaflow desktop: updating Open at login's program failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 export type LoginReply = { on: boolean } | { error: 'forbidden' | 'bad request' | 'login item failed' }

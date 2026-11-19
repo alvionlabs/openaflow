@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { BridgeCaller } from './folder-bridge.ts'
 import type { AutostartFs } from './login-autostart.ts'
-import { createLoginBridge, LOGIN_GET_CHANNEL, LOGIN_SET_CHANNEL, loginItemFor } from './login-item.ts'
+import { createLoginBridge, LOGIN_GET_CHANNEL, LOGIN_SET_CHANNEL, loginItemFor, repairLoginItem } from './login-item.ts'
 
 // Sync calls: two quick toggles can't interleave.
 const nodeFs: AutostartFs = {
@@ -28,10 +28,10 @@ function callerOf(e: IpcMainInvokeEvent): BridgeCaller<BrowserWindow> {
   return { window: BrowserWindow.fromWebContents(e.sender) ?? undefined, isMainFrame: frame?.isMain ?? false, url: frame?.url ?? '' }
 }
 
-/** Once per app: a second handle on one channel throws. */
+/** Once per app, at start: a second handle on one channel throws. */
 export function startLoginItem(o: { env: NodeJS.ProcessEnv; origin(): string | undefined; appWindow(): BrowserWindow | undefined }): void {
   const log = (message: string) => console.error(message)
-  const item = loginItemFor({
+  const place = {
     platform: process.platform,
     packaged: app.isPackaged,
     appPath: app.getAppPath(),
@@ -39,11 +39,16 @@ export function startLoginItem(o: { env: NodeJS.ProcessEnv; origin(): string | u
     env: o.env,
     home: homedir(),
     fs: nodeFs,
+    log,
+  }
+  // Every start, a --hidden one too: an update moves the AppImage.
+  repairLoginItem(place)
+  const item = loginItemFor({
+    ...place,
     api: {
       get: (query) => app.getLoginItemSettings(query),
       set: (options) => app.setLoginItemSettings(options),
     },
-    log,
   })
   const bridge = createLoginBridge({ item, origin: o.origin, appWindow: o.appWindow, log })
   ipcMain.handle(LOGIN_GET_CHANNEL, (e) => bridge.get(callerOf(e)))

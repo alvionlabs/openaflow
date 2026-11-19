@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { AutostartFs } from './login-autostart.ts'
-import { autostartDir, AUTOSTART_FILE } from './login-autostart.ts'
+import { autostartDir, AUTOSTART_FILE, execValue } from './login-autostart.ts'
 import {
   createLoginBridge,
   createLoginItem,
@@ -8,6 +8,7 @@ import {
   loginAnswerOf,
   loginItemFor,
   loginItemOptions,
+  repairLoginItem,
   type LoginItem,
 } from './login-item.ts'
 
@@ -198,6 +199,121 @@ describe('login item', () => {
     }
     // Windows line ends and other keys don't matter.
     expect(linuxItem(fakeFs({ [FILE]: `${entry(OWN_EXEC).replaceAll('\n', '\r\n')}Comment=x\n` })).isOn()).toBe(true)
+  })
+
+  describe('linux repair at start', () => {
+    // electron-updater moves the AppImage to a new versioned name, so an on entry names a file that is gone.
+    const OLD = '/home/u/Apps/openaflow-0.1.0-x86_64.AppImage'
+    const NEW = '/home/u/Apps/openaflow-0.2.0-x86_64.AppImage'
+    const appImageEnv = { OPENAFLOW_AUTOSTART_DIR: DIR, APPIMAGE: NEW }
+    const repair = (fs: ReturnType<typeof fakeFs>, more: Partial<Parameters<typeof repairLoginItem>[0]> = {}) => {
+      const log = vi.fn((_m: string) => {})
+      repairLoginItem({ ...LINUX, env: appImageEnv, fs, log, ...more })
+      return log
+    }
+    const unchanged = (text: string, more: Partial<Parameters<typeof repairLoginItem>[0]> = {}) => {
+      const fs = fakeFs({ [FILE]: text })
+      // A start with nothing to do says nothing.
+      expect(repair(fs, more), text).not.toHaveBeenCalled()
+      expect(fs.store.get(FILE), text).toBe(text)
+      expect(fs.writeFile, text).not.toHaveBeenCalled()
+      expect([...fs.store.keys()]).toEqual([FILE])
+    }
+
+    test('an on entry for an old AppImage is rewritten and reads on', () => {
+      const fs = fakeFs({ [FILE]: entry(`"${OLD}" "--hidden"`) })
+      expect(linuxItem(fs, { env: appImageEnv }).isOn()).toBe(false)
+      const log = repair(fs)
+      expect(fs.store.get(FILE)).toBe(entry(`"${NEW}" "--hidden"`))
+      expect(fs.modes.get(FILE)).toBe(0o644)
+      // Through a temp file, as a toggle writes it.
+      expect(fs.rename).toHaveBeenCalledWith(fs.writeFile.mock.calls[0]![0], FILE)
+      expect([...fs.store.keys()]).toEqual([FILE])
+      expect(linuxItem(fs, { env: appImageEnv }).isOn()).toBe(true)
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(NEW))
+    })
+
+    test('an old path with odd characters, CRLF, and other keys', () => {
+      const tick = '`'
+      const odd = `/opt/a b/$x%"q${tick}\\w/openaflow-0.1.0.AppImage`
+      const text = `[Desktop Entry]\r\nType=Application\r\nName=OpenAFlow\r\nComment=mine\r\nExec=${execValue(odd, ['--hidden'])}\r\nX-GNOME-Autostart-enabled=true\r\n`
+      const fs = fakeFs({ [FILE]: text })
+      repair(fs)
+      // Only the Exec= line changes.
+      expect(fs.store.get(FILE)).toBe(text.replace(`Exec=${execValue(odd, ['--hidden'])}`, `Exec="${NEW}" "--hidden"`))
+      expect(linuxItem(fs, { env: appImageEnv }).isOn()).toBe(true)
+    })
+
+    test('a missing file stays missing', () => {
+      const fs = fakeFs()
+      // Most users have no entry: their start says nothing.
+      expect(repair(fs)).not.toHaveBeenCalled()
+      expect(fs.store.size).toBe(0)
+      expect(fs.mkdir).not.toHaveBeenCalled()
+      expect(fs.writeFile).not.toHaveBeenCalled()
+    })
+
+    test('a current, turned-off, or foreign entry is unchanged', () => {
+      const old = `"${OLD}" "--hidden"`
+      const cases = [
+        // Already current.
+        entry(`"${NEW}" "--hidden"`),
+        // Turned off.
+        `${entry(old)}Hidden=true\n`,
+        `${entry(old)}Hidden = true\n`,
+        entry(old).replace('X-GNOME-Autostart-enabled=true', 'X-GNOME-Autostart-enabled=false'),
+        // Not ours: another name, no name, other args, an unquoted or relative program, two Exec lines.
+        entry(old).replace('Name=OpenAFlow', 'Name=Other'),
+        entry(old).replace('Name=OpenAFlow\n', ''),
+        entry(`${old} "--extra"`),
+        // Another arg of the same length as --hidden.
+        entry(`"${OLD}" "--h1dden"`),
+        entry(`"${OLD}"`),
+        entry(`"/repo/electron" "/repo/packages/desktop" "--hidden"`),
+        entry(`${OLD} --hidden`),
+        entry('"openaflow-0.1.0-x86_64.AppImage" "--hidden"'),
+        entry(`"${OLD}" "x" "--hidden"`),
+        entry(`"${OLD}%" "--hidden"`),
+        `${entry(old)}Exec=${old}\n`,
+        '',
+      ]
+      for (const text of cases) unchanged(text)
+    })
+
+    test('only an AppImage run rewrites, and only on Linux', () => {
+      const text = entry(`"${OLD}" "--hidden"`)
+      // linux-unpacked, and an unpackaged run: their program never moves on an update.
+      unchanged(text, { env: { OPENAFLOW_AUTOSTART_DIR: DIR } })
+      unchanged(text, { env: { OPENAFLOW_AUTOSTART_DIR: DIR, APPIMAGE: '' } })
+      unchanged(text, { packaged: false })
+      for (const platform of ['win32', 'darwin'] as const) {
+        const fs = fakeFs({ [FILE]: text })
+        repair(fs, { platform })
+        expect(fs.readFile).not.toHaveBeenCalled()
+        expect(fs.writeFile).not.toHaveBeenCalled()
+      }
+    })
+
+    test('a failure is logged and the start goes on', () => {
+      const text = entry(`"${OLD}" "--hidden"`)
+      const failedWrite = fakeFs({ [FILE]: text })
+      failedWrite.rename.mockImplementation(() => {
+        throw Object.assign(new Error('EXDEV'), { code: 'EXDEV' })
+      })
+      const log = repair(failedWrite)
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('EXDEV'))
+      expect(failedWrite.store.get(FILE)).toBe(text)
+      expect([...failedWrite.store.keys()]).toEqual([FILE])
+
+      const unreadable = fakeFs({ [FILE]: text })
+      unreadable.readFile.mockImplementation(() => {
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+      })
+      expect(repair(unreadable)).toHaveBeenCalledWith(expect.stringContaining('EACCES'))
+      expect(unreadable.writeFile).not.toHaveBeenCalled()
+      // No log given: still no throw.
+      expect(() => repairLoginItem({ ...LINUX, env: appImageEnv, fs: unreadable })).not.toThrow()
+    })
   })
 
   test('autostart folder', () => {

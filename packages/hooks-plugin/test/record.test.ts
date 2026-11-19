@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,13 +14,16 @@ if (!hasSh) console.log('record.test.ts: no `sh` starts on this machine, so the 
 
 type Env = Record<string, string | undefined>
 
-/** Runs the hook the way Claude Code does: `sh <script>`, the event JSON on stdin. */
-const runHook = (input: string, env: Env) => {
+/** Runs the hook the way Claude Code does: `sh <script>`, the event JSON on stdin. `umask` sets the caller's umask first. */
+const runHook = (input: string, env: Env, umask?: string) => {
   const full: Env = { PATH: process.env.PATH, ...env }
   for (const key of Object.keys(full)) if (full[key] === undefined) delete full[key]
-  const result = spawnSync('sh', [SCRIPT], { input, env: full as NodeJS.ProcessEnv, encoding: 'utf8' })
+  const args = umask === undefined ? [SCRIPT] : ['-c', `umask ${umask}; exec sh "$1"`, 'sh', SCRIPT]
+  const result = spawnSync('sh', args, { input, env: full as NodeJS.ProcessEnv, encoding: 'utf8' })
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
+
+const modeOf = (path: string) => statSync(path).mode & 0o777
 
 let root: string
 let seq = 0
@@ -126,6 +129,36 @@ describe.skipIf(!hasSh)('record.sh', () => {
     expect(cut.payload).toBeUndefined()
     expect(cut).toMatchObject({ v: 1, cut: true, event: 'PreToolUse', session: 'sess-1' })
     expect(Object.keys(cut).sort()).toEqual(['at', 'cut', 'event', 'session', 'v'])
+  })
+})
+
+// The file holds every prompt and tool input: only the user may read it, as Claude Code keeps its own. Windows has no modes.
+describe.skipIf(!hasSh || process.platform === 'win32')('record.sh file modes', () => {
+  const event = '{"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"my secret"}'
+
+  test('a new hooks folder is 0700 and the file 0600, under a loose umask', () => {
+    const dir = freshDir()
+    expect(runHook(event, { OPENAFLOW_RUN: MARKER, OPENAFLOW_HOOKS_DIR: dir }, '022')).toEqual({ status: 0, stdout: '', stderr: '' })
+    expect(modeOf(dir).toString(8)).toBe('700')
+    expect(modeOf(join(dir, `${MARKER}.jsonl`)).toString(8)).toBe('600')
+    // A second event keeps both.
+    runHook(event, { OPENAFLOW_RUN: MARKER, OPENAFLOW_HOOKS_DIR: dir }, '022')
+    expect(lines(join(dir, `${MARKER}.jsonl`))).toHaveLength(2)
+    expect(modeOf(dir).toString(8)).toBe('700')
+    expect(modeOf(join(dir, `${MARKER}.jsonl`)).toString(8)).toBe('600')
+  })
+
+  test('a hooks folder that exists with loose modes becomes 0700', () => {
+    const dir = freshDir()
+    mkdirSync(dir)
+    chmodSync(dir, 0o755)
+    // An older run's file, written before this rule: the 0700 folder shields it.
+    const old = join(dir, '00000000-0000-4000-8000-000000000000.jsonl')
+    writeFileSync(old, '{}\n', { mode: 0o644 })
+    chmodSync(old, 0o644)
+    expect(runHook(event, { OPENAFLOW_RUN: MARKER, OPENAFLOW_HOOKS_DIR: dir }, '022')).toEqual({ status: 0, stdout: '', stderr: '' })
+    expect(modeOf(dir).toString(8)).toBe('700')
+    expect(modeOf(join(dir, `${MARKER}.jsonl`)).toString(8)).toBe('600')
   })
 })
 
