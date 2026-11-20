@@ -260,7 +260,7 @@ describe('errors', () => {
 
   it('a dead or missing token asks for a reload; it, a known word, and a dropped reply write nothing to the console', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    for (const word of [RESTARTED, NEED_RELOAD]) expect(forgetView((await failWith(word, 403)).flow.state())!.error).toBe('The app restarted. Please reload')
+    for (const word of [RESTARTED, NEED_RELOAD]) expect(forgetView((await failWith(word, 403)).flow.state())!.error).toBe('OpenAFlow restarted in the background. Reload to continue')
     await failWith('no claim', 404)
     const t = setup()
     t.flow.open(T)
@@ -272,7 +272,7 @@ describe('errors', () => {
   })
 
   it('no message ends with a period', () => {
-    for (const text of [...FORGET_ERRORS.values(), 'Something went wrong. Please try again', 'The app restarted. Please reload']) expect(text, text).not.toMatch(/\.$/)
+    for (const text of [...FORGET_ERRORS.values(), 'Something went wrong. Please try again', 'OpenAFlow restarted in the background. Reload to continue']) expect(text, text).not.toMatch(/\.$/)
     expect(FORGET_ERRORS.size).toBe(words.length)
   })
 })

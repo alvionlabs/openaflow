@@ -605,3 +605,16 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 - **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, and rename them `unit (<os>)` and `e2e (<os>)`, the words most similar projects use (done in PR #158).
 - **Why, in short:** almost every real bug CI caught after the local checks was on Windows; the Linux jobs cover Linux on the human's Windows days at no wall-clock cost; similar Electron apps (Signal, GitHub Desktop, Hyper, VS Code) do the same.
 - **Full record:** [decisions/ci.md](decisions/ci.md) — what each job does, our numbers, the comparison, naming, rejected options, and when to look again.
+
+## 2026-11-19 — reload words: "OpenAFlow restarted in the background. Reload to continue" (human decision)
+
+- **Context:** after an API restart the page's token is stale, and only a reload fixes it. "The app restarted. Please reload" read as odd, because the window does not restart.
+- **Decision:** "OpenAFlow restarted in the background. Reload to continue", with no final period, on every screen that shows the reload words (Settings load and save, Add repo, Remove repo, Forget, Auto-continue save). One constant: `RELOAD` in `packages/web/src/add-repo.ts`.
+- **Rejected:**
+  - "This page is out of date. Reload to continue": the human disliked "out of date".
+  - "Lost connection to OpenAFlow. Reload to reconnect": a real outage shows "try again", so two connection problems would ask for two actions.
+  - "Reload to continue": no reason, so a reload feels like a bug.
+  - "OpenAFlow needs a reload to continue": no cause.
+  - Any "session" wording: in OpenAFlow a session is a Claude terminal.
+  - "expired": OpenAFlow has no sign-in or timeout.
+- **From:** task PR #158 review.
