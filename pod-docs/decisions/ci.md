@@ -12,7 +12,7 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 | Runs on | PRs into `pod-staging` or `main`, and a push to `pod-staging` |
 | Doesn't run on | Wave PRs into a plan branch, fix PRs into a plan branch, or task branches |
 | How often | About once per sprint: the sprint-end check, or the final plan PR in a plan's last sprint, then the staging PR into `main` |
-| Jobs | `verify (ubuntu-latest)`, `verify (windows-latest)`, `electron (ubuntu-latest)`, `electron (windows-latest)` |
+| Jobs | `verify (ubuntu-latest)`, `verify (windows-latest)`, `electron (ubuntu-latest)`, `electron (windows-latest)`. To be renamed `unit (<os>)` and `e2e (<os>)` (Decision 3). |
 | Time | About 4 minutes of wall-clock time (the jobs run side by side), at most about 5.5 |
 | Cost | Free: the repo is public |
 | Before CI | Each engineer, the orchestrator's wave check, and the reviewer run `pnpm verify` and the `real-*` Electron tests on Linux |
@@ -61,7 +61,7 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 
 ## Decision 2 — keep `verify` and `electron` on Linux and Windows (2026-11-20, human)
 
-**Decision:** keep all four jobs, with their names. Asked after a flaky Windows failure on staging PR #157, and after the question "are the verify jobs needed?"
+**Decision:** keep all four jobs. (Their names change in Decision 3.) Asked after a flaky Windows failure on staging PR #157, and after the question "are the verify jobs needed?"
 
 **Why:**
 - Almost every real bug that CI caught after the local checks had passed was on Windows, and both Windows jobs caught some (see [Evidence: our runs](#evidence-our-runs)).
@@ -75,7 +75,29 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 | Drop `verify (ubuntu)` | About 1 min of runner time, no wall-clock time | Linux unit tests on the days the human works on Windows |
 | Drop both Linux jobs | About 3 min of runner time, no wall-clock time | Linux coverage on Windows days, and the packaged Linux app check |
 | Drop `verify (windows)` | About 2.3 min of runner time, no wall-clock time | The Windows-only terminal and job-object tests (4 real catches) |
-| Rename to `unit (<os>)` and `e2e (<os>)` | — | A change to `pod-ci.yml`, `ci-workflow.test.ts`, and any required check that names the jobs, for no new coverage (see [How other projects name jobs](#how-other-projects-name-jobs)) |
+| Rename to `unit (<os>)` and `e2e (<os>)` | — | First rejected for its cost; then chosen in Decision 3, once it was clear that no required check names the jobs |
+
+## Decision 3 — rename the jobs to `unit` and `e2e` (2026-11-20, human)
+
+**Decision:** rename `verify (<os>)` to `unit (<os>)` and `electron (<os>)` to `e2e (<os>)`. The steps inside each job don't change.
+
+**Why:**
+- `verify` names our script (`pnpm verify`), and `electron` names a tool. Neither says what kind of test the job runs.
+- `unit` and `e2e` are the words most similar projects use: Hyper ("Run Unit Tests", "Run E2E Tests"), GitHub Desktop (`E2E Smoke`), and VS Code (`Electron-Unit`, `Agent-Host-E2E`). Anyone who reads the checks knows them.
+- `e2e` fits: the job drives the whole real app, from the window to the processes it ends.
+- The cost is small: no branch protection or ruleset requires these check names (the one ruleset, `protected`, is disabled and lists no checks). Only `pod-ci.yml`, `ci-workflow.test.ts` (which pins both names), and the docs that name the jobs change.
+
+**Accepted:** `unit` also runs the type check and the build. They are short steps around the unit tests, and the job's step names in the log show them.
+
+**Rejected:**
+
+| Option | Why not |
+|---|---|
+| Keep `verify` and `electron` | Names a script and a tool, not the kind of test |
+| `build & unit (<os>)` and `e2e (<os>)` | Exact, but long; node-pty's `Build & Test` style |
+| `unit (<os>)` and `app (<os>)` | Plain, but not a term people know |
+
+**Status:** to do in the next task PR (queue 2026-11-20). Until then, the jobs keep their old names.
 
 ## Evidence: our runs
 
@@ -120,9 +142,9 @@ From each project's `.github/workflows`, read 2026-11-20.
 | GitHub Desktop | Unit tests in the build job `<OS> <arch>` | `E2E Smoke <OS> <arch>` | OS and arch |
 | Hyper | Step "Lint and Run Unit Tests" | Step "Run E2E Tests" | `build (<os>)` |
 | node-pty | `Build & Test (<os>)` | — | OS in brackets |
-| **OpenAFlow** | **`verify (<os>)`** | **`electron (<os>)`** | **OS in brackets** |
+| **OpenAFlow** | **`verify (<os>)`, to become `unit (<os>)`** | **`electron (<os>)`, to become `e2e (<os>)`** | **OS in brackets** |
 
-The common words are **unit** for the fast layer and **e2e**, **smoke**, or **integration** for the real-app layer, with the OS in the name. Our `verify` is named after the `pnpm verify` script it runs, and `electron` names the real app it drives. We keep both names (Decision 2).
+The common words are **unit** for the fast layer and **e2e**, **smoke**, or **integration** for the real-app layer, with the OS in the name. Our old `verify` and `electron` named a script and a tool; Decision 3 moves them to `unit` and `e2e`.
 
 ## When to look at this again
 
@@ -136,4 +158,5 @@ Re-open these decisions only if one of these happens:
 
 - 2026-11-14 — CI gains the `electron` jobs on Linux and Windows (plan terminal-host, host-core).
 - 2026-11-17 — Decision 1: CI once per sprint (PR #152).
-- 2026-11-20 — Decision 2: keep all four jobs and their names. This file is created, and the two `decisions.md` entries link here.
+- 2026-11-20 — Decision 2: keep all four jobs. This file is created, and the `decisions.md` entries link here.
+- 2026-11-20 — Decision 3: rename the jobs to `unit` and `e2e` (to do in the next task PR).
