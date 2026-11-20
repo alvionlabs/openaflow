@@ -12,7 +12,7 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 | Runs on | PRs into `pod-staging` or `main`, and a push to `pod-staging` |
 | Doesn't run on | Wave PRs into a plan branch, fix PRs into a plan branch, or task branches |
 | How often | About once per sprint: the sprint-end check, or the final plan PR in a plan's last sprint, then the staging PR into `main` |
-| Jobs | `verify (ubuntu-latest)`, `verify (windows-latest)`, `electron (ubuntu-latest)`, `electron (windows-latest)`. To be renamed `unit (<os>)` and `e2e (<os>)` (Decision 3). |
+| Jobs | `unit (ubuntu-latest)`, `unit (windows-latest)`, `e2e (ubuntu-latest)`, `e2e (windows-latest)` |
 | Time | About 4 minutes of wall-clock time (the jobs run side by side), at most about 5.5 |
 | Cost | Free: the repo is public |
 | Before CI | Each engineer, the orchestrator's wave check, and the reviewer run `pnpm verify` and the `real-*` Electron tests on Linux |
@@ -21,10 +21,10 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 
 | Job | Runs | Catches |
 |---|---|---|
-| `verify (<os>)` | `pnpm verify`, which runs `pnpm typecheck`, `pnpm test`, and `pnpm build`: a type check of every package, about 2,800 unit tests, and the build. On Windows it also runs the Windows-only tests that skip on Linux (`packages/pty-host/test/real-pty.test.ts`, and the real-jobs part of `packages/desktop/src/windows-jobs.test.ts`). | Logic and type errors, build breaks, and Windows terminal and job-object bugs |
-| `electron (<os>)` | `pnpm build`, then each `real-*` test file one at a time: the real Electron app with a fake `claude` starts sessions, types, quits, crashes on purpose, resumes, and changes settings. Then `pnpm package --test-hooks`, and four of the files again on the packaged app. | Wiring, process, window, and timing bugs that no unit test sees |
+| `unit (<os>)` | `pnpm verify`, which runs `pnpm typecheck`, `pnpm test`, and `pnpm build`: a type check of every package, about 2,800 unit tests, and the build. On Windows it also runs the Windows-only tests that skip on Linux (`packages/pty-host/test/real-pty.test.ts`, and the real-jobs part of `packages/desktop/src/windows-jobs.test.ts`). | Logic and type errors, build breaks, and Windows terminal and job-object bugs |
+| `e2e (<os>)` | `pnpm build`, then each `real-*` test file one at a time: the real Electron app with a fake `claude` starts sessions, types, quits, crashes on purpose, resumes, and changes settings. Then `pnpm package --test-hooks`, and four of the files again on the packaged app. | Wiring, process, window, and timing bugs that no unit test sees |
 
-`electron` doesn't run the unit tests, and `verify` never starts the app, so neither one replaces the other.
+`e2e` doesn't run the unit tests, and `unit` never starts the app, so neither one replaces the other.
 
 ## Decision 1 — CI once per sprint, not per wave PR (2026-11-17, human)
 
@@ -97,7 +97,7 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 | `build & unit (<os>)` and `e2e (<os>)` | Exact, but long; node-pty's `Build & Test` style |
 | `unit (<os>)` and `app (<os>)` | Plain, but not a term people know |
 
-**Status:** to do in the next task PR (queue 2026-11-20). Until then, the jobs keep their old names.
+**Status:** done in task `settings-retry-ci-rename` (the `pod-ci.yml` job IDs and names, and `ci-workflow.test.ts`, use the new names).
 
 ## Evidence: our runs
 
@@ -109,6 +109,8 @@ These are the job results of the 120 most recent finished `pod-ci` runs, from 20
 | `electron (ubuntu)` | 117 s | 220 s | 49 | 1 | One session-life test bug (X2). |
 | `verify (windows)` | 137 s | 171 s | 120 | 6 | Two real Windows terminal bugs in `real-pty`: a terminal that didn't pause under load (host-core H1) and no output reported (host-core wave 1). Two job-object races during the session-life and settings wave fixes. Two from the unfinished `pod-ci.yml` change. |
 | `electron (windows)` | 232 s | 337 s | 49 | 10 | Each one a Windows process-ending bug at quit or after a crash: children left running (session-life wave 3 and its fix rounds), the job helper's start race, `error 87` when a program ended before its job (settings wave 1), and the crash-before-the-job race (PR #157). |
+
+These runs happened when the jobs were called `verify` and `electron`; the table keeps those names.
 
 **Flaky test:** `real-quit › app crash leftovers` on Windows fails now and then. It is a real bug, not CI noise: if main crashes before the job helper's first assign, the leftovers aren't found. See [known-issues/real-quit-app-crash-flaky-on-windows.md](../known-issues/real-quit-app-crash-flaky-on-windows.md). Fixing it ends the false reds.
 
@@ -142,9 +144,9 @@ From each project's `.github/workflows`, read 2026-11-20.
 | GitHub Desktop | Unit tests in the build job `<OS> <arch>` | `E2E Smoke <OS> <arch>` | OS and arch |
 | Hyper | Step "Lint and Run Unit Tests" | Step "Run E2E Tests" | `build (<os>)` |
 | node-pty | `Build & Test (<os>)` | — | OS in brackets |
-| **OpenAFlow** | **`verify (<os>)`, to become `unit (<os>)`** | **`electron (<os>)`, to become `e2e (<os>)`** | **OS in brackets** |
+| **OpenAFlow** | **`unit (<os>)`** | **`e2e (<os>)`** | **OS in brackets** |
 
-The common words are **unit** for the fast layer and **e2e**, **smoke**, or **integration** for the real-app layer, with the OS in the name. Our old `verify` and `electron` named a script and a tool; Decision 3 moves them to `unit` and `e2e`.
+The common words are **unit** for the fast layer and **e2e**, **smoke**, or **integration** for the real-app layer, with the OS in the name. Our old `verify` and `electron` named a script and a tool; Decision 3 moved them to `unit` and `e2e`.
 
 ## When to look at this again
 
@@ -159,4 +161,5 @@ Re-open these decisions only if one of these happens:
 - 2026-11-14 — CI gains the `electron` jobs on Linux and Windows (plan terminal-host, host-core).
 - 2026-11-17 — Decision 1: CI once per sprint (PR #152).
 - 2026-11-20 — Decision 2: keep all four jobs. This file is created, and the `decisions.md` entries link here.
-- 2026-11-20 — Decision 3: rename the jobs to `unit` and `e2e` (to do in the next task PR).
+- 2026-11-20 — Decision 3: rename the jobs to `unit` and `e2e`.
+- Task `settings-retry-ci-rename` — Decision 3 done: `pod-ci.yml` jobs are `unit` and `e2e`.

@@ -17,9 +17,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The same name on Windows as before, so a required check still finds it. Linux: see pod-docs/decisions.md (2026-11-14).
-  verify:
-    name: verify (${{ matrix.os }})
+  # Named unit and e2e (pod-docs/decisions/ci.md, Decision 3). Linux: see pod-docs/decisions.md (2026-11-14).
+  unit:
+    name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,8 +43,8 @@ jobs:
   # `real-terminal.test` leaves out real-terminal-tab. real-start runs Electron's own binary on dist/main.cjs, so it
   # has no packaged run; real-quit, real-folder-bridge, and real-settings run unpackaged only. On Ubuntu 24.04,
   # Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
-  electron:
-    name: electron (${{ matrix.os }})
+  e2e:
+    name: e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
