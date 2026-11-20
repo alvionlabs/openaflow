@@ -345,7 +345,7 @@ describe('hidden and Windows only', () => {
   })
 })
 
-// Real processes on Windows: `verify (windows-latest)` runs these. A "session" is a node process with a port; on
+// Real processes on Windows: `unit (windows-latest)` runs these. A "session" is a node process with a port; on
 // "go" it starts a detached child with its own port. The child starts after the assign, so it is born in the job.
 const VICTIM = `
 import { createServer } from 'node:net'

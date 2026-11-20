@@ -5,7 +5,7 @@ Status: open · found 2026-11-15 · seen again on PR #157 (run 44643647866)
 
 **Who it affects:** anyone reading Windows CI. Users too: a Windows app crash in the first ~0.5 s of a session can leave the session's child processes running.
 
-**What you see:** `electron (windows-latest)` fails `real-quit › app crash leftovers` with `timed out waiting for the leftover child ended`. `desktop.log` has no `session … in a job` line for that session. The same commit can pass in the next run.
+**What you see:** `e2e (windows-latest)` fails (called `electron (windows-latest)` before 2026-11-19, so older logs use that name) `real-quit › app crash leftovers` with `timed out waiting for the leftover child ended`. `desktop.log` has no `session … in a job` line for that session. The same commit can pass in the next run.
 
 **How to reproduce:** not on demand. It is a timing race: the test crashes the app before the Windows job helper's first assign lands (0.4–0.5 s after a session starts).
 

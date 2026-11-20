@@ -17,8 +17,8 @@ type Workflow = { on?: Record<string, { branches?: string[] } | null>; jobs?: Re
 const ci = () => parse(read('pod-ci.yml')) as Workflow
 
 describe('pod-ci.yml', () => {
-  test('verify stays free of packaging', () => {
-    const steps = ci().jobs?.verify?.steps ?? []
+  test('unit stays free of packaging', () => {
+    const steps = ci().jobs?.unit?.steps ?? []
     const install = steps.find((s) => /pnpm install/.test(s.run ?? ''))
     expect(install?.env?.ELECTRON_SKIP_BINARY_DOWNLOAD).toBe('1')
     expect(steps.some((s) => s.run === 'pnpm verify')).toBe(true)
@@ -27,16 +27,15 @@ describe('pod-ci.yml', () => {
     expect(scripts.verify).not.toMatch(/package|test:install|release:check/)
   })
 
-  test('verify on both systems', () => {
+  test('unit on both systems', () => {
     const flow = ci()
     // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
     // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
     expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
     expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
     expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
-    const job = flow.jobs?.verify
-    // The Windows check keeps its name, so a required check on the branch still finds it.
-    expect(job?.name).toBe('verify (${{ matrix.os }})')
+    const job = flow.jobs?.unit
+    expect(job?.name).toBe('unit (${{ matrix.os }})')
     expect(job?.['runs-on']).toBe('${{ matrix.os }}')
     expect(job?.strategy?.['fail-fast']).toBe(false)
     expect(job?.strategy?.matrix?.os).toEqual(['windows-latest', 'ubuntu-latest'])
@@ -46,18 +45,18 @@ describe('pod-ci.yml', () => {
     expect(steps.filter((s) => s.if !== undefined)).toEqual([])
   })
 
-  test('electron jobs', () => {
+  test('e2e jobs', () => {
     const flow = ci()
     // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
     // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
     expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
     expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
     expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
-    // The electron jobs took over the pty proof's.
+    // The e2e jobs took over the pty proof's.
     expect(flow.jobs?.['pty-proof']).toBeUndefined()
 
-    const job = flow.jobs?.electron
-    expect(job?.name).toBe('electron (${{ matrix.os }})')
+    const job = flow.jobs?.e2e
+    expect(job?.name).toBe('e2e (${{ matrix.os }})')
     expect(job?.['runs-on']).toBe('${{ matrix.os }}')
     expect(job?.strategy?.['fail-fast']).toBe(false)
     const include = (job?.strategy?.matrix?.include ?? []) as { os: string; display: string; app: string }[]

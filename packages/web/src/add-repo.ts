@@ -39,7 +39,7 @@ export async function postRepo(path: string, deps: PostRepoDeps = {}): Promise<A
 export const ADD_ALREADY = 'This repo is already here'
 export const ADD_BAD_PATH = "That path doesn't look right"
 export const TRY_AGAIN = 'Something went wrong. Please try again'
-export const RELOAD = 'The app restarted. Please reload'
+export const RELOAD = 'OpenAFlow restarted in the background. Reload to continue'
 
 /** What the modal says after a refused add. `pathError`: the same path would fail again, so Add waits for a change. */
 export type AddError = { message: string; pathError: boolean }

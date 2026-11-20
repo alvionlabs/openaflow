@@ -5,7 +5,7 @@ import { ModalAlert } from '../../components/ModalAlert.tsx'
 import { loginBridge } from '../../desktop-bridge.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { readSettings, resetWrapper, saveSettings } from './settings-client.ts'
-import { createSettingsFlow, pageSections, type FieldName, type FieldState, type SettingsFlow, type SettingsState } from './settings-view.ts'
+import { createSettingsFlow, pageSections, retryLabel, type FieldName, type FieldState, type SettingsFlow, type SettingsState } from './settings-view.ts'
 import '../../components/modal.css'
 import './settings.css'
 
@@ -16,7 +16,7 @@ type Handlers = Pick<SettingsFlow, 'retry' | 'type' | 'commit' | 'escape' | 'tog
 export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [state, setState] = useState<SettingsState>({ kind: 'loading' })
   const [flow] = useState(() =>
-    createSettingsFlow({ load: () => readSettings(), save: (c) => saveSettings(c), reset: () => resetWrapper(), login: loginBridge() }, setState),
+    createSettingsFlow({ load: () => readSettings(), save: (c) => saveSettings(c), reset: () => resetWrapper(), reload: () => location.reload(), login: loginBridge() }, setState),
   )
   useEffect(() => {
     flow.start()
@@ -57,7 +57,7 @@ export function SettingsPage({ state, flow, onBack }: { state: SettingsState; fl
           <ModalAlert message={state.message} />
           <div>
             <button className="btn" type="button" onClick={flow.retry}>
-              Try again
+              {retryLabel(state)}
             </button>
           </div>
         </div>
