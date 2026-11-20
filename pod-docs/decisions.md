@@ -596,3 +596,11 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 - **Value in use:** keep as is. The session keeps running with no row, still counts toward the cap of 10, and the quit box still counts it; Dismiss and Resume answer 404. Found by reading, not run.
 - **Options:** refuse Remove while a session is live; end the session on Remove.
 - **From:** queue entry 2026-11-19, final review of plan terminal-host.
+
+## 2026-11-20 — CI keeps verify and electron on Linux and Windows (human)
+
+- **Decision:** keep all four `pod-ci` jobs: `verify (<os>)` (type check, unit tests, build) and `electron (<os>)` (the real app, unpackaged and packaged), each on Linux and Windows. Keep their names.
+- **Why:** almost every real bug that CI caught after the local checks had passed was on Windows, and both Windows jobs caught some (4 by `verify`, 10 by `electron`, in the last 120 runs). The Linux jobs cover Linux on the days the human works on Windows, and add no wall-clock time, because the jobs run side by side (about 4 minutes in all, once per sprint). Signal Desktop, GitHub Desktop, Hyper, and VS Code all run unit and real-app tests on each platform they ship to.
+- **Rejected:** dropping `verify (ubuntu)`, dropping both Linux jobs, dropping `verify (windows)`, and renaming to `unit` / `e2e`, which is the more common naming but costs a change to the workflow, its test, and the required checks.
+- **Evidence:** [research/ci-jobs.md](research/ci-jobs.md).
+- **Don't re-ask unless:** a macOS build ships (add macOS to both jobs), CI minutes stop being free, or a Linux job goes a whole plan without a catch while the human works on Windows.
