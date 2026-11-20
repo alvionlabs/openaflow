@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsView } from '@openaflow/model'
 import { RESTARTED, UNREACHABLE } from '../../actions-client.ts'
+import { RELOAD } from '../../add-repo.ts'
 import { LOAD_FAILED, LOAD_LIMIT_MS, readSettings, resetWrapper, SAVE_LIMIT_MS, SAVE_UNREADABLE, saveSettings } from './settings-client.ts'
 
 const VIEW: SettingsView = {
@@ -38,7 +39,8 @@ describe('settings client', () => {
     expect(LOAD_FAILED).toBe("Couldn't load settings. Please try again")
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const failures: (() => Promise<Response>)[] = [
-      async () => answer({ error: 'bad token' }, 403),
+      async () => answer({ error: 'bad host' }, 403),
+      async () => answer('', 403),
       async () => answer({ error: 'boom' }, 500),
       async () => answer('not json'),
       async () => answer({ scrollback: '5000' }),
@@ -52,10 +54,37 @@ describe('settings client', () => {
       await expect(readSettings({ fetch: reply, token })).resolves.toEqual({ ok: false, message: LOAD_FAILED })
     }
     expect(warn).toHaveBeenCalledTimes(failures.length)
-    // No token on the page: nothing is sent.
+  })
+
+  it('a 403 "bad token" is a restart: the reload words, flagged, whatever the page token is', async () => {
+    expect(RELOAD).toBe('The app restarted. Please reload')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchFn = vi.fn<typeof fetch>(async () => answer({ error: 'bad token' }, 403))
+    await expect(readSettings({ fetch: fetchFn, token })).resolves.toEqual({ ok: false, message: RELOAD, reload: true })
+    // The same answer again (Try again with the old token) reads the same: it never turns into the load words.
+    await expect(readSettings({ fetch: fetchFn, token })).resolves.toEqual({ ok: false, message: RELOAD, reload: true })
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(String(warn.mock.calls[0]![0])).toContain('403')
+  })
+
+  it('no token on the page: nothing is sent, and only a reload gives the page one', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => answer(VIEW))
-    await expect(readSettings({ fetch: fetchFn, token: () => null })).resolves.toEqual({ ok: false, message: LOAD_FAILED })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const none of [() => null, () => undefined, () => '']) {
+      await expect(readSettings({ fetch: fetchFn, token: none })).resolves.toEqual({ ok: false, message: RELOAD, reload: true })
+    }
     expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('an API that is down (network failure, 502 from the dev proxy) is still the load words, with no reload', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const down = async (): Promise<Response> => {
+      throw new TypeError('fetch failed')
+    }
+    await expect(readSettings({ fetch: down, token })).resolves.toEqual({ ok: false, message: LOAD_FAILED })
+    await expect(readSettings({ fetch: async () => answer('', 502), token })).resolves.toEqual({ ok: false, message: LOAD_FAILED })
+    // Back up: the same token reads again.
+    await expect(readSettings({ fetch: async () => answer(VIEW), token })).resolves.toEqual({ ok: true, view: VIEW })
   })
 
   it('waits past the scope probe’s 6 s; only no answer by the limit is a failure', async () => {

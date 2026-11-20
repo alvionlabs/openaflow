@@ -21,6 +21,7 @@ flowchart LR
 - **Text rules** (`run-wrapper.ts`): at most 1,024 characters, space-separated words, quotes group. Placeholders `{runId}` and `{unit}` fill per word. The first word must be an absolute file or a name found on PATH.
 - **At each start** (Linux, macOS): a changed wrapper is run once around `true` with a fresh id (5 s limit). A pass is kept for the server's life. A refusal answers `409 run wrapper: <word>` or `409 stop command: <word>`, and the form shows **Open settings**.
 - **Routes:** `GET /api/settings` (token, else `403`) and `POST /api/actions/settings`. `SettingsView` carries the texts, `isDefault`, and a `preview` of the full command.
+- **Load failures** (`settings-client.ts`, `settings-view.ts`): a network failure, a timeout, or any other bad answer shows "Couldn't load settings. Please try again" with **Try again**, which loads again. A `403 bad token` or a missing token shows the reload words with **Reload** (`location.reload()`). The token lives in the page, so only a reload gets a new one. The desktop shell reloads its window itself after it restarts the server (`window-rules.ts`, `afterRestart`); the button covers a page the shell didn't reload.
 - **Open at login** (`login-item.ts`, `login-autostart.ts`): Windows and macOS use Electron's login item with `--hidden`. Linux writes `<autostart dir>/openaflow.desktop`. At each AppImage start, `repairLoginItem` points our own on entry at the new file after an update.
 - **Electron checks** (`real-settings.test.ts`, fixture `settings-claude.mjs`): scrollback 200 applies to new sessions only; a changed wrapper gets the marker; a wrapper exiting 3 stops the start with Open settings; Open at login writes and deletes the file; Windows has no wrapper section. CI runs it unpackaged.
 
@@ -42,7 +43,7 @@ flowchart LR
 - `POST /api/actions/settings` is one more token-gated way to choose a program the app runs, as `tool-path` is.
 - Two AppImages at different paths: the last one started owns the entry.
 - `real-settings` writes the real `HKCU` Run value on Windows only with `CI=true`. Never set `CI=true` on your own machine. Other tests use a temp `OPENAFLOW_AUTOSTART_DIR`, never `~/.config/autostart`.
-- After an API restart, **Try again** keeps the old token and fails; reload the page (queued).
+- After an API restart the page's token is stale. A load that gets `403 bad token` (or finds no token) shows "The app restarted. Please reload" with a **Reload** button, which reloads the page: **Try again** would send the same token. A save after a restart still shows the shared action words, "The board restarted. Reload the page.", under the field (queued).
 
 ## History
 
@@ -54,3 +55,4 @@ flowchart LR
 - 2026-11-18 · settings X3 · added: `real-settings.test.ts` with the `settings-claude.mjs` fixture, and its CI step; `real-folder-bridge` joins CI.
 - 2026-11-19 · plan fix · changed: at start, an AppImage points its own on autostart entry at its new path after an update (`login-item.test.ts` › `linux repair at start`).
 - 2026-11-19 · plan terminal-host complete · folded the Electron checks into the five headings; added the diagram and example · [report](../reports/terminal-host.html), [PR #155](https://github.com/alvionlabs/openaflow/pull/155)
+- 2026-11-19 · task settings-retry-ci-rename · fixed: after an API restart the settings load shows the reload words and a Reload button, not "Try again" in a loop (`settings-client.test.ts`, `settings-view.test.ts`).
