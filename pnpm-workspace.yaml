@@ -6,3 +6,6 @@ allowBuilds:
   # Squirrel only. The NSIS target never runs it.
   electron-winstaller: false
   esbuild: true
+  # Its install script only checks for prebuilds, else runs node-gyp. The pty host loads the prebuilt binary from
+  # prebuilds/<platform>-<arch>, which the package ships for win32-x64 and linux-x64.
+  node-pty: false

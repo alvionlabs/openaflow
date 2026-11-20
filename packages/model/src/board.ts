@@ -5,6 +5,7 @@
 import type { ActionEntry } from './actions.ts'
 import type { AutoToggle } from './auto-continue.ts'
 import type { RepoModel } from './run-model.ts'
+import type { SkillId } from './skills.ts'
 
 /** One pod agent, read from its transcript. Never holds transcript text, tool input, or tool output. */
 export type AgentRun = {
@@ -86,6 +87,49 @@ export type Claim = { portBase: number; repoPath: string; plan: string }
  */
 export type GhRead = { pr: number; read: boolean } | { branch: string; staging?: true; read: boolean }
 
+/** A session record's state in `<config dir>/sessions.json` (sprint terminal-tab §3). */
+export type StoredSessionState = 'starting' | 'live' | 'ended' | 'stopped'
+
+/** Why a stopped session stopped: the terminal host crashed, or the app closed while it ran. */
+export type StopReason = 'terminals restarted' | 'app closed'
+
+/**
+ * One session the app started in its terminal host, from the session store and its hook state file.
+ * `marker` is the run marker (the host's session id); `sessionId` the id it started with.
+ * `sessions`: `sessionId` first, then every other `SessionStart` session (after `/clear`), once each.
+ * `liveSession`: the newest `SessionStart`'s session, else `sessionId`. Never holds prompt text.
+ * The rules that read it are in hosted.ts.
+ */
+export type HostedSession = {
+  marker: string
+  sessionId: string
+  liveSession: string
+  sessions: string[]
+  skill: SkillId
+  startedAt: number
+  state: StoredSessionState
+  /** Only with state `stopped`. */
+  stopReason?: StopReason
+  endedAt?: number
+  exitCode?: number
+  /** A `SessionStart` line exists. */
+  hooked: boolean
+  /** A `UserPromptSubmit` line exists. */
+  prompted: boolean
+  /** The start line went to the user to type; the text is never stored. */
+  typeYourself?: true
+  /** Whether Resume can start this session again, and why not. Only with state `ended` or `stopped`. */
+  resume?: SessionResume
+  /** The scrollback its start used (100 to 100,000). Absent on a session started before the setting. */
+  scrollback?: number
+}
+
+/**
+ * Whether a hosted session can resume. First match: the repo path isn't a folder (`no folder`); its transcript
+ * file is gone (`no conversation`); a `starting` or `live` record holds its live session (`in use`); else `ok`.
+ */
+export type SessionResume = 'ok' | 'no folder' | 'no conversation' | 'in use'
+
 export type BoardRepo = {
   id: string
   name: string
@@ -100,6 +144,8 @@ export type BoardRepo = {
   claims: Claim[]
   /** Each PR the server asks gh about. Missing when it asks about none. */
   ghReads?: GhRead[]
+  /** The repo's hosted sessions, oldest first. Missing when it has none. */
+  hosted?: HostedSession[]
 }
 
 export type Board = {

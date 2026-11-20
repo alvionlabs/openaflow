@@ -4,6 +4,7 @@
 
 import type { Board, BoardRepo, PrStatus } from './board.ts'
 import { fixPr, fixRunAgents, fixRuns } from './fix-runs.ts'
+import { rowSessions, sessionView, shownSession, type SessionView } from './hosted.ts'
 import { handBackPr, isDrafting, isPlanAgent, isRun, isRunning, pendingHandBack, planState, prByBranch, roleOf } from './pipeline.ts'
 import type { PlanModel } from './run-model.ts'
 
@@ -42,7 +43,26 @@ function repoRuns(repo: BoardRepo, now: number): RunSummary[] {
   if (!repo.model.docs.supported) return [{ ...base, where: 'update pod', state: 'unsupported' }]
   const runs = repo.model.plans.filter((p) => isRun(repo, p, now)).map((p) => planRun(repo, p, now))
   runs.push(...fixRuns(repo, now).map((f) => ({ ...base, ...f })))
-  return runs.length > 0 ? runs : [{ ...base, where: 'no active plan', state: 'idle' }]
+  const raised = runs.map((run) => raiseForWaiting(repo, run, now))
+  const unjoined = shownSession(rowSessions(repo, undefined, now))
+  if (unjoined) raised.push({ ...base, ...SESSION_ROW[sessionView(unjoined, now)] })
+  return raised.length > 0 ? raised : [{ ...base, where: 'no active plan', state: 'idle' }]
+}
+
+/** The repo row of a session that joins no run, by its shown session's view (terminal-tab §4). */
+const SESSION_ROW: Record<SessionView, Pick<RunSummary, 'where' | 'state'>> = {
+  starting: { where: 'session · no plan yet', state: 'running' },
+  live: { where: 'session · no plan yet', state: 'running' },
+  waiting: { where: 'session · waiting for you', state: 'needs-you' },
+  ended: { where: 'session ended', state: 'idle' },
+  stopped: { where: 'session stopped', state: 'idle' },
+}
+
+/** A run whose shown hosted session waits for you needs you, unless it is already blocked or needs you. */
+function raiseForWaiting(repo: BoardRepo, run: RunSummary, now: number): RunSummary {
+  if (run.state !== 'idle' && run.state !== 'running') return run
+  const shown = shownSession(rowSessions(repo, run.plan, now))
+  return shown && sessionView(shown, now) === 'waiting' ? { ...run, state: 'needs-you' } : run
 }
 
 function planRun(repo: BoardRepo, plan: PlanModel, now: number): RunSummary {

@@ -1,7 +1,20 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'vitest'
 import { stringify } from 'yaml'
-import { checkNoTestFeed, checkSize, checkUpdateFile, INSTALLER_CEILING_BYTES, INSTALLER_FLOOR_BYTES, pickInstaller, tagVersion } from './release-rules.ts'
+import {
+  APPIMAGE_CEILING_BYTES,
+  APPIMAGE_FLOOR_BYTES,
+  checkAppImageSize,
+  checkNoTestFeed,
+  checkNoTestHooks,
+  checkSize,
+  checkUpdateFile,
+  INSTALLER_CEILING_BYTES,
+  INSTALLER_FLOOR_BYTES,
+  pickAppImage,
+  pickInstaller,
+  tagVersion,
+} from './release-rules.ts'
 
 describe('tagVersion', () => {
   test('tag matches the package version', () => {
@@ -58,6 +71,14 @@ describe('checkNoTestFeed', () => {
   })
 })
 
+describe('checkNoTestHooks', () => {
+  test('no test hooks in a release', () => {
+    expect(() => checkNoTestHooks('const a = 1')).not.toThrow()
+    expect(() => checkNoTestHooks('globalThis.__openaflowTest = { terminals }')).toThrow(/__openaflowTest.*test-hooks build/)
+    expect(() => checkNoTestHooks('g.__openaflowTest ??= {}')).toThrow(/__openaflowTest/)
+  })
+})
+
 describe('pickInstaller', () => {
   test('exactly one installer counts', () => {
     const name = 'openaflow-setup-1.2.3.exe'
@@ -66,5 +87,42 @@ describe('pickInstaller', () => {
     // The name before the rename is not this app's installer.
     expect(() => pickInstaller(['pod-board-setup-1.2.3.exe', 'latest.yml'])).toThrow(/no installer/)
     expect(() => pickInstaller([name, 'openaflow-setup-1.2.4.exe'])).toThrow(/openaflow-setup-1\.2\.3\.exe.*openaflow-setup-1\.2\.4\.exe/)
+  })
+})
+
+describe('the AppImage', () => {
+  test('AppImage limits', () => {
+    // Measured on 2026-11-14: 125,831,231 bytes. 80% and 130% of that.
+    expect(APPIMAGE_FLOOR_BYTES).toBe(100_664_985)
+    expect(APPIMAGE_CEILING_BYTES).toBe(163_580_600)
+    expect(() => checkAppImageSize(125_831_231)).not.toThrow()
+    expect(() => checkAppImageSize(APPIMAGE_FLOOR_BYTES)).not.toThrow()
+    expect(() => checkAppImageSize(APPIMAGE_CEILING_BYTES)).not.toThrow()
+    expect(() => checkAppImageSize(APPIMAGE_FLOOR_BYTES - 1)).toThrow(/AppImage is \d+ bytes, below the floor/)
+    expect(() => checkAppImageSize(APPIMAGE_CEILING_BYTES + 1)).toThrow(/AppImage is \d+ bytes, above the ceiling/)
+    expect(() => checkAppImageSize(0)).toThrow(/below/)
+  })
+
+  test('exactly one x64 AppImage counts', () => {
+    const name = 'openaflow-1.2.3-x86_64.AppImage'
+    expect(pickAppImage([name, 'latest-linux.yml', 'builder-debug.yml', 'linux-unpacked'])).toBe(name)
+    expect(() => pickAppImage(['latest-linux.yml', 'linux-unpacked'])).toThrow(/no AppImage/)
+    // Another arch, or electron-builder's default name, is not this release's file.
+    expect(() => pickAppImage(['openaflow-1.2.3-arm64.AppImage'])).toThrow(/no AppImage/)
+    expect(() => pickAppImage(['OpenAFlow-1.2.3.AppImage'])).toThrow(/no AppImage/)
+    expect(() => pickAppImage([name, 'openaflow-1.2.4-x86_64.AppImage'])).toThrow(/more than one AppImage.*1\.2\.3.*1\.2\.4/)
+  })
+
+  test('latest-linux.yml is checked as latest.yml is, and its errors name it', () => {
+    const name = 'openaflow-1.2.3-x86_64.AppImage'
+    const bytes = Buffer.from('the AppImage')
+    const sha512 = createHash('sha512').update(bytes).digest('base64')
+    const good = { version: '1.2.3', files: [{ url: name, sha512, size: bytes.length, blockMapSize: 1234 }], path: name, sha512, releaseDate: '2026-11-14T00:00:00.000Z' }
+    expect(() => checkUpdateFile(stringify(good), bytes, name, 'latest-linux.yml')).not.toThrow()
+    expect(() => checkUpdateFile(stringify({ ...good, sha512: 'd3Jvbmc=' }), bytes, name, 'latest-linux.yml')).toThrow(/^latest-linux\.yml has a sha512/)
+    expect(() => checkUpdateFile(stringify({ ...good, files: [{ ...good.files[0], sha512: 'd3Jvbmc=' }] }), bytes, name, 'latest-linux.yml')).toThrow(/^latest-linux\.yml has a files sha512/)
+    expect(() => checkUpdateFile('{ not: [yaml', bytes, name, 'latest-linux.yml')).toThrow(/^latest-linux\.yml is unreadable/)
+    // The Windows file keeps its name by default.
+    expect(() => checkUpdateFile(stringify({ ...good, sha512: 'd3Jvbmc=' }), bytes, name)).toThrow(/^latest\.yml has a sha512/)
   })
 })

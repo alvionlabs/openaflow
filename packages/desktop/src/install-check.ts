@@ -1,7 +1,9 @@
 // What every install proof uses: a temp place, the machine-wide lock, the machine's state before and after, and the
-// install, launch, and uninstall steps. No `electron` import. The rules are in pod-docs/sprints/installer-and-updates.md.
+// install, launch, and uninstall steps. On Linux: the AppImage's temp place, its unpack, its start, and its end. No
+// `electron` import. The rules are in pod-docs/sprints/installer-and-updates.md and pod-docs/sprints/host-core.md (P1).
 
 import { execFile, spawn } from 'node:child_process'
+import { readdir, readFile, readlink } from 'node:fs/promises'
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -28,15 +30,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export type ProofPlace = { root: string; installDir: string; env: NodeJS.ProcessEnv; port: number }
 
 /** Inherits only what isn't this project's or the caller's: a stripped env, so a run can't reach a real folder. */
-function strippedEnv(): NodeJS.ProcessEnv {
+function keptEnv(alsoDropped: string[] = []): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(process.env)) {
     const upper = key.toUpperCase()
     const dropped = ['OPENAFLOW_', 'CLAUDE', 'ELECTRON_', 'VITEST', 'FAKE_CLAUDE', 'NODE_', 'NPM_', 'PNPM_'].some((prefix) => upper.startsWith(prefix))
-    if (!dropped && upper !== 'PATH') env[key] = value
+    if (!dropped && upper !== 'PATH' && !alsoDropped.includes(key)) env[key] = value
   }
-  return { ...env, SystemRoot: SYSTEM_ROOT, Path: SYS32 }
+  return env
 }
+
+const strippedEnv = (): NodeJS.ProcessEnv => ({ ...keptEnv(), SystemRoot: SYSTEM_ROOT, Path: SYS32 })
 
 /** Temp root named openaflow-install-proof-*; install folder, config, shell data, ports, and claude folders inside it. */
 export function proofPlace(port: number): ProofPlace {
@@ -359,3 +363,184 @@ export function proofLastLine(diff: string[]): string {
   const held = realConfig().held ? ' (a live server holds the real config folder, so realConfig reads null in both states)' : ''
   return `state diff: ${JSON.stringify(diff)}${held}`
 }
+
+// Linux: no install. The release check unpacks the AppImage to read it, then starts the AppImage itself.
+
+/** The system's tools only: no folder of the caller's, so no real `claude`. */
+const LINUX_PATH = '/usr/local/bin:/usr/bin:/bin'
+/** How long the app has to end after a SIGTERM to its process group. */
+const END_MS = 20_000
+const KILL_MS = 5_000
+const UNPACK_MS = 120_000
+/** What the release check's temp root is named: openaflow-release-check-*. */
+export const APPIMAGE_ROOT_PREFIX = 'openaflow-release-check-'
+
+/**
+ * A temp root with a temp home, config, shell data, ports, claude, and TMPDIR. With APPIMAGE_EXTRACT_AND_RUN=1 the
+ * AppImage needs no FUSE: its runtime unpacks into TMPDIR, so inside the root. installDir is where the check unpacks it.
+ */
+export function appImagePlace(port: number): ProofPlace {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), APPIMAGE_ROOT_PREFIX)))
+  const folder = (name: string) => {
+    const path = join(root, name)
+    mkdirSync(path)
+    return path
+  }
+  const home = folder('home')
+  // Also dropped: anything that points the app at the caller's home, or says it runs inside another AppImage.
+  const env = keptEnv(['HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'])
+  return {
+    root,
+    port,
+    installDir: folder('unpacked'),
+    env: {
+      ...env,
+      PATH: LINUX_PATH,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+      TMPDIR: folder('tmp'),
+      APPIMAGE_EXTRACT_AND_RUN: '1',
+      OPENAFLOW_API_PORT: String(port),
+      OPENAFLOW_CONFIG_DIR: folder('config'),
+      OPENAFLOW_DESKTOP_DATA_DIR: folder('shell'),
+      OPENAFLOW_PORTS_DIR: folder('ports'),
+      OPENAFLOW_CLAUDE_DIR: folder('claude'),
+      OPENAFLOW_CLAUDE_BIN: join(root, 'no-claude', 'claude'),
+    },
+  }
+}
+
+/** `<AppImage> --appimage-extract` in installDir, with no FUSE. Answers the unpacked `resources` folder. */
+export async function unpackAppImage(file: string, place: ProofPlace): Promise<string> {
+  if (!existsSync(file)) throw new Error(`no AppImage at ${file}: run pnpm package first`)
+  const code = await new Promise<number>((resolve, reject) => {
+    const child = spawn(file, ['--appimage-extract'], { cwd: place.installDir, env: place.env, stdio: 'ignore', windowsHide: true })
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`the unpack took over ${UNPACK_MS} ms`))
+    }, UNPACK_MS)
+    child.once('error', reject)
+    child.once('exit', (c) => {
+      clearTimeout(timer)
+      resolve(c ?? 1)
+    })
+  })
+  if (code !== 0) throw new Error(`${file} --appimage-extract exited with ${code}`)
+  return join(place.installDir, 'squashfs-root', 'resources')
+}
+
+/** What a packaged app must hold outside its asar (host-core §2). */
+const PACKAGED_PARTS = [
+  'app.asar',
+  'server',
+  'THIRD-PARTY-NOTICES.txt',
+  'pty-host/pty-host.cjs',
+  'pty-host/node_modules/node-pty/package.json',
+  'pty-host/node_modules/node-pty/prebuilds/linux-x64',
+  'hooks-plugin/.claude-plugin/plugin.json',
+  'hooks-plugin/hooks/hooks.json',
+  'hooks-plugin/scripts/record.sh',
+]
+
+/** Each part of PACKAGED_PARTS that the resources folder lacks. */
+export function missingParts(resources: string): string[] {
+  return PACKAGED_PARTS.filter((part) => !existsSync(join(resources, part)))
+}
+
+/**
+ * Starts the AppImage in its own process group, so its end reaches the runtime, Electron, and every child. Its output
+ * goes to waitForHealth's failure text.
+ */
+export async function launchAppImage(file: string, place: ProofPlace): Promise<{ pid: number; output(): string }> {
+  const child = spawn(file, [], { cwd: place.root, env: place.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  let text = ''
+  child.stdout.on('data', (d) => (text += String(d)))
+  child.stderr.on('data', (d) => (text += String(d)))
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve)
+    child.once('error', reject)
+  })
+  lastOutput = () => text
+  return { pid: child.pid!, output: () => text }
+}
+
+/**
+ * This user's processes whose executable path starts with `prefix`: an AppImage's runtime, and every Electron process
+ * that its unpack started. A process whose file was removed still counts. Never by name: the real app may run too.
+ */
+export async function processesUnder(prefix: string): Promise<number[]> {
+  const pids: number[] = []
+  for (const entry of await readdir('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      if ((await readlink(join('/proc', entry, 'exe'))).startsWith(prefix)) pids.push(Number(entry))
+    } catch {
+      // Gone, or another user's.
+    }
+  }
+  return pids.sort((a, b) => a - b)
+}
+
+const groupAlive = (pgid: number) => {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const signal = (pid: number, sig: NodeJS.Signals) => {
+  try {
+    process.kill(pid, sig)
+  } catch {
+    // already gone
+  }
+}
+
+/** The process IDs whose parent is `pid`. */
+async function childrenOf(pid: number): Promise<number[]> {
+  const out: number[] = []
+  for (const entry of await readdir('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      // The fields after the name, which can hold spaces and parentheses: state, then the parent's ID.
+      const stat = await readFile(join('/proc', entry, 'stat'), 'utf8')
+      if (Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]) === pid) out.push(Number(entry))
+    } catch {
+      // Gone.
+    }
+  }
+  return out
+}
+
+/**
+ * Ends what launchAppImage started, as a logout would: SIGTERM to the app's main process, the runtime's child, so
+ * Electron quits and ends its own children; then the runtime removes its unpack and exits. Answers each process that
+ * still ran END_MS later, from the group or from the root, then kills those. Empty means a clean end.
+ */
+export async function endAppImage(pid: number, place: ProofPlace, o: { endMs?: number } = {}): Promise<number[]> {
+  const left = async () => [...new Set([...(groupAlive(pid) ? [pid] : []), ...(await processesUnder(`${place.root}/`))])].sort((a, b) => a - b)
+  const main = await childrenOf(pid)
+  for (const p of main.length > 0 ? main : [pid]) signal(p, 'SIGTERM')
+  const waitEmpty = async (ms: number) => {
+    const end = Date.now() + ms
+    for (;;) {
+      const now = await left()
+      if (now.length === 0 || Date.now() > end) return now
+      await sleep(100)
+    }
+  }
+  const stayed = await waitEmpty(o.endMs ?? END_MS)
+  if (stayed.length > 0) {
+    signal(-pid, 'SIGKILL')
+    for (const p of stayed) signal(p, 'SIGKILL')
+    await waitEmpty(KILL_MS)
+  }
+  return stayed
+}
+
+/** Removes the root, unpack and all. */
+export const removeAppImagePlace = (place: ProofPlace): Promise<void> => removeWithRetry(place.root)

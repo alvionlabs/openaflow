@@ -133,18 +133,30 @@
   clip-path: polygon(50% 8%, 96% 90%, 4% 90%);
 }
 
+/* Add repo, then Settings beside it. Below about 240 px of sidebar the two don't fit on one row: Settings wraps under. */
 .side-foot {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   min-width: 0;
 }
 
-/* As wide as the run cards, the icon and label centred on even sides. */
+/* Fills the row, the icon and label centred on even sides. */
 .side-foot .add-repo {
-  width: 100%;
+  flex: 1 1 auto;
   justify-content: center;
   /* Centred on the ink: the plus has about 2 px of empty space on its left. */
   padding-left: 15px;
   padding-right: 17px;
+}
+
+/* Settings: the ghost style; while its page is open it keeps the hover fill (draft §6). */
+.side-foot .settings-open {
+  flex: 1 1 auto;
+}
+
+.side-foot .settings-open[aria-current="page"] {
+  background: var(--hover);
 }
 
 /*

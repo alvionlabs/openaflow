@@ -1,6 +1,6 @@
 # Idea: Settings page in the desktop app
 
-Status: planned — pod-docs/plans/terminal-host.md
+Status: built — sprint settings (plan terminal-host), PR #150 and PR #153
 
 ## The idea
 A settings page in the desktop app. Its first setting is the one that starts OpenAFlow when you sign in to Windows. PR #88 took it out of the tray menu, and `createLoginItem` in `packages/desktop/src/login-item.ts` is kept for this page.

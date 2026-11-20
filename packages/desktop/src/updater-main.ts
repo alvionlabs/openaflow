@@ -65,14 +65,19 @@ export function startUpdater(ctx: ShellContext): UpdateFlow | undefined {
   }
 
   let quitting = false
-  app.once('before-quit', () => {
+  // Not on `before-quit`: after a Cancel, the updater still asks.
+  ctx.onQuitThrough(() => {
     quitting = true
   })
 
   const flow = createUpdateFlow({
     packaged: app.isPackaged,
+    platform: process.platform,
+    appImage: ctx.env.APPIMAGE,
     updater: () => realUpdater(feed),
     ask,
+    // Before the stop: the windows still show the Ending overlay while the sessions end.
+    endSessions: () => ctx.endSessions(),
     stop: () => {
       // The page has no server from here on.
       hideWindows(BrowserWindow.getAllWindows())

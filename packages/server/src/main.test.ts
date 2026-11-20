@@ -155,6 +155,8 @@ describe('main.ts', () => {
   test.skipIf(WIN)('exits 0 on SIGTERM', async () => {
     const b = await boot()
     child = b.child
+    // The listening line comes a moment before the signal handlers. An answer means the start has ended.
+    expect((await fetch(`http://127.0.0.1:${b.api}/api/health`)).status).toBe(200)
     b.child.kill('SIGTERM')
     expect(await exitOf(b.child)).toBe(0)
   }, 60_000)

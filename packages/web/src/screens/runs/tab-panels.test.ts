@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildFixPipeline, buildPipeline, buildRepoModel, listRuns, type AgentRun, type BoardRepo, type PrStatus, type RunSummary } from '@openaflow/model'
+import { buildFixPipeline, buildPipeline, buildRepoModel, listRuns, type AgentRun, type BoardRepo, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
 import { LogTab } from './LogTab.tsx'
-import { nextSteps, type NextItem } from './next-step.ts'
+import { DESKTOP_TERMINAL, nextSteps, type NextItem } from './next-step.ts'
+import { RunsScreen } from './RunsScreen.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
 
 // chess-web as in next-step.test.ts: plan sparring-ladder on wave 3 of sprint ladder, three PENDING entries for you.
@@ -249,5 +250,89 @@ describe('answer form', () => {
     expect(html.indexOf('answer-entry')).toBeLessThan(html.indexOf('<textarea'))
     // Without it, no entry line.
     expect(renderToStaticMarkup(createElement(AnswerForm, { state, flow, note: 'n' }))).not.toMatch(/answer-entry/)
+  })
+})
+
+describe('terminal tab on the screen', () => {
+  /** Renders with `window.openaflow.connectTerminals` on the page, as the desktop app's preload puts it. */
+  function inDesktop<T>(fn: () => T): T {
+    const g = globalThis as { window?: unknown }
+    const had = 'window' in g
+    const before = g.window
+    g.window = { openaflow: { connectTerminals: () => Promise.resolve() } }
+    try {
+      return fn()
+    } finally {
+      if (had) g.window = before
+      else delete g.window
+    }
+  }
+  const session = (over: Partial<HostedSession> = {}): HostedSession => ({
+    marker: '7f3c9a12-0000-4000-8000-00000000abcd',
+    sessionId: 'sess-x',
+    liveSession: 'sess-x',
+    sessions: ['sess-x'],
+    skill: 'plan',
+    startedAt: NOW - 120_000,
+    state: 'live',
+    hooked: true,
+    prompted: true,
+    ...over,
+  })
+  const files = { 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': '' }
+  const bare = (extra: Partial<BoardRepo> = {}): BoardRepo => ({ id: 'notes', name: 'notes-app', path: '/n', source: 'registered', model: buildRepoModel(files), agents: [], prs: [], claims: [], ...extra })
+  const tabStore = (value: string | null) => {
+    let v = value
+    return { getItem: () => v, setItem: (_k: string, x: string) => void (v = x), removeItem: () => void (v = null) }
+  }
+  function screen(repo: BoardRepo, tab: string | null = null): string {
+    const board = { generatedAt: NOW, gh: 'ok' as const, repos: [repo], actions: [] }
+    const runs = listRuns(board, NOW)
+    const selected = runs.find((r) => r.plan === undefined)!
+    return renderToStaticMarkup(createElement(RunsScreen, { board, stream: 'live', runs, selected, view: 'pipeline', slice: undefined, now: NOW, storage: tabStore(tab) }))
+  }
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  const tabsOf = (html: string) =>
+    [...html.matchAll(/<button[^>]*class="tab"[^>]*>([\s\S]*?)<\/button>/g)].map((m) => ({ label: text(m[1]!), open: /aria-expanded="true"/.test(m[0]), dot: /class="status s-run[ "]/.test(m[1]!) }))
+
+  it('tab order', () => {
+    // In the desktop app, a row with a hosted session lists Terminal after Waiting and Log.
+    const live = bare({ hosted: [session()] })
+    const desk = inDesktop(() => screen(live))
+    expect(tabsOf(desk).map((t) => t.label)).toEqual(['Waiting 0', 'Log', 'Terminal'])
+    // Closed until opened; its dot shows while the session runs.
+    expect(tabsOf(desk).map((t) => t.open)).toEqual([false, false, false])
+    expect(tabsOf(desk).map((t) => t.dot)).toEqual([false, false, true])
+    expect(desk).not.toContain('class="terminal-panel"')
+
+    // A stored Terminal opens it: the panel holds the terminal.
+    const open = inDesktop(() => screen(live, 'terminal'))
+    expect(tabsOf(open).map((t) => t.open)).toEqual([false, false, true])
+    expect(open).toMatch(/<div id="tab-terminal" class="tab-slot"><div class="terminal-panel">/)
+
+    // An ended session: the tab stays, with no dot, and opens on the stop bar.
+    const ended = bare({ hosted: [session({ state: 'ended', exitCode: 0, endedAt: NOW - 60_000 })] })
+    const stop = inDesktop(() => screen(ended, 'terminal'))
+    expect(tabsOf(stop).map((t) => [t.label, t.dot])).toEqual([['Waiting 0', false], ['Log', false], ['Terminal', false]])
+    expect(stop).toContain('class="stop-bar"')
+
+    // No hosted session: no Terminal tab, and a stored Terminal reads closed.
+    const none = inDesktop(() => screen(bare(), 'terminal'))
+    expect(tabsOf(none).map((t) => t.label)).toEqual(['Waiting 0', 'Log'])
+    expect(none).not.toContain('tab-terminal')
+
+    // The browser build: no Terminal tab, a stored Terminal reads closed, and the session's status shows under the card.
+    const web = screen(live, 'terminal')
+    expect(tabsOf(web).map((t) => t.label)).toEqual(['Waiting 0', 'Log'])
+    expect(web).not.toContain('tab-terminal')
+    expect(web).toContain('class="term-note"')
+    expect(text(web)).toContain('Live')
+    // The running card already says to open the desktop app: the note doesn't say it twice.
+    expect(text(web).split(DESKTOP_TERMINAL).length - 1).toBe(1)
+    // An ended session's card has no desktop note, so the line under it says it.
+    const webEnded = screen(ended)
+    expect(webEnded).toContain('class="term-note"')
+    expect(text(webEnded)).toContain('Ended · Claude exited')
+    expect(text(webEnded).split(DESKTOP_TERMINAL).length - 1).toBe(1)
   })
 })

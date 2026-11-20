@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan report: Terminal host</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fff; --fg: #1b1b1f; --muted: #5d5d66; --line: #d9d9e0; --soft: #f4f4f7;
+  --accent: #3554d1; --ok: #1d7a3e; --bad: #b42318; --warn: #a15c07;
+  --display: system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #131316; --fg: #ececf1; --muted: #a2a2ad; --line: #34343c; --soft: #1d1d22;
+          --accent: #8da2ff; --ok: #5cc98a; --bad: #ff8a80; --warn: #f0b45c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.55 system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.25; }
+h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+h2 { font-size: 1.4rem; margin: 2.5rem 0 .75rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; margin: 1.25rem 0 .5rem; }
+a { color: var(--accent); }
+code, pre { font: 15px/1.45 ui-monospace, Consolas, monospace; }
+pre { background: var(--soft); padding: .75rem; overflow-x: auto; border-radius: 6px; }
+.meta { color: var(--muted); margin: 0 0 1rem; }
+nav.toc { background: var(--soft); border-radius: 8px; padding: .75rem 1rem; }
+nav.toc ol { margin: 0; padding-left: 1.25rem; columns: 2 14rem; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+th, td { border: 1px solid var(--line); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+th { background: var(--soft); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: 1rem 0 .25rem; }
+.stat { background: var(--soft); border-radius: 8px; padding: .5rem .75rem; }
+.stat b { display: block; font-size: 1.3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat span { color: var(--muted); font-size: .9rem; }
+.note { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+.pill { display: inline-block; padding: 0 .5rem; border-radius: 99px; font-size: .9rem; border: 1px solid currentColor; white-space: nowrap; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); } .muted { color: var(--muted); }
+.lead { font-size: 1.1rem; font-weight: 600; margin: 0 0 .75rem; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: .5rem .9rem; margin: .5rem 0; }
+details > summary { cursor: pointer; font-weight: 600; }
+details[open] > summary { margin-bottom: .5rem; }
+table.decisions td:first-child { font-weight: 600; min-width: 12rem; }
+.shots { display: grid; grid-template-columns: 3fr 1fr; gap: .75rem; align-items: start; }
+.shots figure { margin: 0; } .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+figcaption { color: var(--muted); font-size: .9rem; }
+.small { display: block; color: var(--muted); font-size: .9rem; }
+table.risks td:first-child { font-weight: 600; }
+pre.mermaid { background: var(--soft); text-align: center; }
+@media (max-width: 520px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { body { font-size: 16px; } .shots { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Terminal host</h1>
+<p class="meta">Plan <code>terminal-host</code> · final PR <a href="https://github.com/alvionlabs/openaflow/pull/155">#155</a> (verdict <b>fix</b>, 2 rounds) · written 2026-11-19 by pod:reporter</p>
+
+<nav class="toc" aria-label="Contents"><ol>
+  <li><a href="#glance">At a glance</a></li>
+  <li><a href="#features">Key features</a></li>
+  <li><a href="#proof">Proof</a></li>
+  <li><a href="#risks">Risks and undo</a></li>
+  <li><a href="#fit">How it fits together, as built</a></li>
+  <li><a href="#decisions">Key decisions</a></li>
+  <li><a href="#left">What's left</a></li>
+</ol></nav>
+
+<section id="glance">
+<h2>At a glance</h2>
+<p><b>Goal:</b> OpenAFlow hosts its own terminals, so you start, watch, type into, resume, and end <code>claude</code> sessions in the app and use no separate terminal.</p>
+<p><b>Shipped:</b></p>
+<ul>
+  <li>New session: pick a pod skill, type a line, and the real <code>claude</code> starts in the repo.</li>
+  <li>A Terminal tab that survives a closed window, a server crash, and a host crash.</li>
+  <li>A quit that asks first, then ends every session process; Resume after a restart.</li>
+  <li>A settings page: Open at login, scrollback, and (Linux, macOS) the run wrapper and stop command.</li>
+  <li>The desktop app now starts on Linux and ships as an AppImage beside the Windows installer.</li>
+</ul>
+<div class="stats">
+  <div class="stat"><b>4 · 12 · 35</b><span>sprints · waves · slices</span></div>
+  <div class="stat"><b>15</b><span>PRs</span></div>
+  <div class="stat"><b>241 · +28,943 −431</b><span>files · lines changed</span></div>
+  <div class="stat"><b>~4.8 days</b><span>wall time</span></div>
+  <div class="stat"><b>~7.7M</b><span>agent context</span></div>
+  <div class="stat"><b>fix</b><span>review, 2 rounds</span></div>
+</div>
+<p class="note">Wall time is calendar time from the first to the last branch commit, nights included. Context is final size, not tokens billed.</p>
+<p class="note">PRs: 12 wave PRs, #152, #156, and the final #155; 25 closed CI-check drafts not counted. Slices leave out fix passes; context leaves out the reviewer and the #156 engineer.</p>
+<p class="note">Review: round 1 <code>fix</code> (two findings, fixed in #156). Round 2 <code>fix</code> (one finding: the PR body missed the #156 step; applied). No round has passed yet.</p>
+<h3>Look here first</h3>
+<ol>
+  <li><code>packages/desktop/src/session-ender.ts</code>, <code>windows-jobs.ts</code>, <code>quit-flow.ts</code>: a confirmed quit ends every process a session started, and a one-way door. The Windows job helper has never been run by hand, and <code>real-exit</code> and <code>real-toast</code> never ran anywhere.</li>
+  <li><code>packages/server/src/run-wrapper.ts</code> and <code>settings-routes.ts</code>: a setting now chooses a program the app runs, and a changed wrapper is run once around <code>true</code> as a check. The route is token-gated.</li>
+  <li><code>packages/hooks-plugin/plugin/scripts/record.sh</code>: it records every prompt and tool input. Round 1 found the file readable by other users; fixed, but a session already running at update time keeps its old 0644 file.</li>
+  <li><code>packages/desktop/src/login-item.ts</code> and <code>login-autostart.ts</code>: they rewrite your autostart entry at each AppImage start. The reviewer ran the repair on Linux; nobody ran Open at login on a real Windows machine.</li>
+  <li><code>packages/server/src/session-routes.ts</code> and <code>session-store.ts</code>: a start that times out leaves its record <code>starting</code> and blocks that repo's New session. Remove repo while a session is live leaves it running with no row.</li>
+</ol>
+</section>
+
+<section id="features">
+<h2>Key features</h2>
+<p class="lead">You can now do your whole <code>claude</code> work inside the desktop app, and the browser build only shows state.</p>
+<div class="scroll"><table>
+  <tr><th>Feature</th><th>What changed</th><th>Shown by</th></tr>
+  <tr><td>New session</td><td>⋯ menu → "Start with" list of five pod skills and Plain session, one text field</td><td>screenshots 2</td></tr>
+  <tr><td>Terminal tab and Next step card</td><td>The repo row says "A session runs in this repo's terminal" with Open terminal; xterm shows the live session</td><td>screenshots 1</td></tr>
+  <tr><td>Session life</td><td>Close and reopen keeps the screen; quit asks, then ends the tree; a stopped session shows its last screen with Resume and Dismiss</td><td>Results in Proof (no screenshot)</td></tr>
+  <tr><td>Settings</td><td>Open at login, Scrollback, wrapper, stop command, full-command preview</td><td>screenshots 3</td></tr>
+  <tr><td>Linux app</td><td>The app starts on Linux; <code>pnpm package</code> makes an AppImage with <code>latest-linux.yml</code></td><td><code>release:check</code> passed with <code>processes left: []</code> (reviewer)</td></tr>
+  <tr><td>Updates</td><td>An update installs only after the quit question</td><td>Packaged AppImage with a test feed (engineer); no screenshot</td></tr>
+</table></div>
+<h3>1. Terminal tab</h3>
+<div class="shots">
+  <figure><img alt="Terminal tab on a repo row with a live session, dark theme" src="terminal-host/terminal-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same screen at 375 px" src="terminal-host/terminal-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>2. New session</h3>
+<div class="shots">
+  <figure><img alt="New session dialog with the Start with list open" src="terminal-host/new-session-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same dialog at 375 px" src="terminal-host/new-session-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>3. Settings</h3>
+<div class="shots">
+  <figure><img alt="Settings page with General, Terminals and Run wrapper" src="terminal-host/settings-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same page at 375 px" src="terminal-host/settings-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<p class="note">Shots come from the desktop app on Linux with temp folders and a fake <code>claude</code>, dark theme. The 375 px shots are emulated. The stop bar, quit box, and host banner have no shot.</p>
+</section>
+
+<section id="proof">
+<h2>Proof</h2>
+<p class="lead">4 of 6 rows met, all on a fake <code>claude</code>; 2 were never checked, and no human drove the installed app on Windows.</p>
+<div class="scroll"><table>
+  <tr><th>Criterion or feature</th><th>Result</th><th>Checked by</th><th>How</th></tr>
+  <tr><td>Real <code>claude</code>, signed in: folder-trust prompt, Resume that brings the conversation back, tool hooks; the installed Windows app</td><td><span class="pill warn">not checked</span></td><td>nobody</td><td>The start argument ran with real <code>claude</code> once on Linux (host-core A1, real <code>~/.claude</code>); the other real-<code>claude</code> tests wait for a signed-in test folder</td></tr>
+  <tr><td>Quit rewrite on Windows (<code>real-exit</code>, <code>real-toast</code>)</td><td><span class="pill warn">not checked</span></td><td>nobody</td><td>Windows-only, not in CI, skipped on Linux</td></tr>
+  <tr><td><code>/clear</code> keeps the same run with the new session ID</td><td><span class="pill ok">met</span></td><td>engineer's tests</td><td>Unit tests on hook lines (<code>hook-state</code>, <code>board-service</code>); never with real <code>claude</code></td></tr>
+  <tr><td>Window close and reopen, server kill, host kill, app kill, Resume, quit leaves no <code>claude</code> or child</td><td><span class="pill ok">met</span></td><td>engineer's tests, reviewer</td><td><code>real-terminal</code>, <code>real-quit</code>, <code>real-resume</code> with a fake <code>claude</code>; CI green on both systems; reviewer reran them on Linux</td></tr>
+  <tr><td>Settings change scrollback and wrapper; a broken wrapper stops the start with Open settings</td><td><span class="pill ok">met</span></td><td>engineer's tests, reviewer</td><td><code>real-settings</code> and the reviewer's drive of the app</td></tr>
+  <tr><td>Linux AppImage starts; Linux and Windows CI run</td><td><span class="pill ok">met</span></td><td>reviewer</td><td><code>release:check</code>; all four CI jobs green on the head after #156</td></tr>
+</table></div>
+<h3>Not checked by this report</h3>
+<ul>
+  <li>I did not rerun the test suite or CI. Results come from the sprint summaries, PR #155, and its two review comments.</li>
+  <li>Round 2 did not rerun the <code>features.md</code> rows; round 1 ran them all.</li>
+  <li>The 12 wave PR bodies, and the sprint docs beyond their Sprint summary. Their proof notes are unread.</li>
+</ul>
+</section>
+
+<section id="risks">
+<h2>Risks and undo</h2>
+<p class="lead">Four one-way doors were declared, plus new data on disk; the reviewer found their reverts no longer apply clean, so each undo needs hand-merged conflicts.</p>
+<div class="scroll"><table class="risks">
+  <tr><th>Risk</th><th>Undo</th></tr>
+  <tr><td>Saved screens can hold secrets, kept in <code>screens/</code> (0600)<span class="small"><code>packages/pty-host/src/screen-file.ts</code>, <code>screen-route.ts</code></span></td><td>Revert S3 (<code>git revert -m 1 9f5c5e5</code>), then delete <code>screens/</code>; Dismiss deletes one session's screen</td></tr>
+  <tr><td>Quit ends every session process; leftovers end at the next start<span class="small"><code>packages/desktop/src/session-ender.ts</code></span></td><td>Revert <code>982be2a aaeae2c</code>, then <code>-m 1 9eb9b14</code>; ended processes stay ended</td></tr>
+  <tr><td>Release workflow now builds and publishes an AppImage on a tag<span class="small"><code>.github/workflows/release.yml</code></span></td><td><code>git revert -m 1 508a32f</code> before the next tag</td></tr>
+  <tr><td>Config folder copy keeps file times<span class="small"><code>packages/server/src/config-move.ts</code></span></td><td><code>git revert -m 1 3fa5f7d</code>; a copy that already ran stays</td></tr>
+  <tr><td>Hook file holds every prompt and tool input<span class="small"><code>record.sh</code></span></td><td>Dismiss deletes a session's hook file; running sessions from before the update keep 0644 until a new run</td></tr>
+  <tr><td>New data and token-gated routes: <code>sessions.json</code>, the screen route, New session, Resume, Dismiss<span class="small"><code>session-store.ts</code>, <code>session-routes.ts</code></span></td><td>Additive file: delete <code>sessions.json</code> to forget records; routes go with a revert of the terminal-tab waves</td></tr>
+  <tr><td>A setting picks a program the app runs, and Open at login writes an autostart file<span class="small"><code>settings-routes.ts</code>, <code>login-item.ts</code></span></td><td>Reset to default, turn the switch off, or delete <code>settings.json</code></td></tr>
+</table></div>
+</section>
+
+<section id="fit">
+<h2>How it fits together, as built</h2>
+<p class="lead">The page asks the server, the server asks Electron's main process, and main asks the pty host; the window types into the host over a direct port.</p>
+<pre class="mermaid">
+flowchart LR
+  A["TerminalTab.tsx"] -- "New session, Resume, Dismiss" --> B["session-routes.ts"]
+  B -- "argv" --> C["session-command.ts"]
+  B -- "wrapper plan" --> D["run-wrapper.ts"]
+  B -- "records" --> E["session-store.ts"]
+  E -- "hook state" --> K["hook-state.ts"]
+  K -- "reads its file" --> L["record.sh"]
+  B -- "start, list, sweep" --> F["terminal-channel.ts"]
+  F -- "parentPort messages" --> G["terminal-relay.ts"]
+  G -- "start, kill, list" --> H["pty-host-starter.ts"]
+  H -- "protocol" --> I["pty-host service.ts"]
+  A -- "MessagePort" --> I
+  M["shell-main.ts"] -- "quit, leftovers" --> J["session-ender.ts"]
+</pre>
+<h3>Differences from the plan</h3>
+<ul>
+  <li>The plan drew routes straight to main. As built, the server has <code>terminal-channel.ts</code> over <code>parentPort</code>, and main relays it. Only a server main started has it, so <code>pnpm dev</code> and <code>pnpm start</code> answer <code>409 no terminal host</code>.</li>
+  <li>New: <code>run-wrapper.ts</code> runs a changed wrapper around <code>true</code> before first use, so a broken wrapper shows a word on the page and not inside the terminal.</li>
+  <li>New: <code>windows-jobs.ts</code>, a PowerShell and C# Job Object helper, and later fixes for children started before its first assign.</li>
+  <li>New: <code>screen-route.ts</code> serves a session's saved screen, token required.</li>
+  <li>New from review: at each AppImage start, <code>repairLoginItem</code> points Open at login at the new file after an update.</li>
+</ul>
+</section>
+
+<section id="decisions">
+<h2>Key decisions</h2>
+<p class="lead">The human made the five biggest calls; agents recorded 26 defaults on open details, and each has a <code>decisions.md</code> entry.</p>
+<div class="scroll"><table class="decisions">
+  <tr><th>Decision</th><th>By</th><th>Why</th><th>Instead of</th><th>Consequence</th></tr>
+  <tr><td><a href="../decisions.md#2026-11-13--no-release-before-the-terminal-host-human-decision">No release before the terminal host</a></td><td>human</td><td>Without it the app is only a monitor</td><td>Release after <code>ui-rework</code></td><td>v0.1.0 waits for this plan and <code>openaflow-plugin</code></td></tr>
+  <tr><td><a href="../decisions.md#2026-11-13--the-terminal-host-is-three-plans-in-a-row-human-decision">Three plans in a row</a></td><td>human</td><td>Over the 4-sprint cap; one review for too much code</td><td>One plan</td><td>No automatic input yet: Continue opens the Terminal tab</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-13--keep-node-pty-after-the-windows-test-human-decision">Keep node-pty 1.2.0-beta.18, pinned</a></td><td>human</td><td>It runs VS Code's terminal; the human's Windows test passed</td><td>A fork or <code>zigpty</code>; fallback <code>@lydell/node-pty</code></td><td>A beta in a packaged app; proved in CI only</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-13--new-session-picks-a-pod-skill-from-a-dropdown-human-decision">New session uses a skill dropdown</a></td><td>human</td><td>Pick, not type</td><td>Typing the command, or writing it into the pty</td><td>The skill goes in the start argument; nothing is typed into a session</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-17--ci-once-per-sprint-not-per-wave-pr-human">CI once per sprint</a></td><td>human</td><td>A wave is a piece, not a feature</td><td>CI on every wave PR</td><td>A Windows bug shows at sprint end</td></tr>
+  <tr><td>Ship Linux as an AppImage</td><td>agent</td><td>Any distro, no root, updatable in place</td><td><code>.deb</code>, <code>.rpm</code>, Flatpak</td><td>Needs FUSE 2 on some distros</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-19--a-hosted-session-joins-a-run-only-through-an-agents-session-id-agent-default--override-anytime">A session joins a run only by an agent's session ID</a></td><td>agent</td><td>Replaces the research's first transcript mention</td><td>Also join by the plan doc</td><td>A fresh <code>/pod:plan</code> stays on the repo row; unchecked on a real transcript</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-19--a-start-or-resume-that-times-out-keeps-the-record-starting-agent-default--override-anytime">A timed-out start keeps its record <code>starting</code></a></td><td>agent</td><td>The contract says so</td><td>Mark it failed; drop the old record on a late <code>started</code></td><td>That repo answers <code>409 session starting</code>; a late Resume leaves two rows</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-19--quit-box-on-sigterm-and-on-a-failed-box-agent-default--override-anytime">SIGTERM with a live session asks the quit box</a></td><td>agent</td><td>Nothing may end without a yes</td><td>End sessions with no box</td><td>A failed box reads as Cancel, so the app cannot quit</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-19--electron-sandbox-off-on-ubuntu-2404-appimages-agent-default--override-anytime">Accept the Electron sandbox off on Ubuntu 24.04 AppImages</a></td><td>agent</td><td>AppRun adds <code>--no-sandbox</code> when <code>unshare</code> fails</td><td>Refuse the start and ask for an AppArmor profile</td><td>The sandbox is probably off there; <code>docs/install.md</code> says so</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-19--remove-repo-while-a-session-is-live-agent-default--override-anytime">Remove repo while a session is live: keep as is</a></td><td>agent</td><td>Product choice, found by reading</td><td>Refuse, or end the session</td><td>It runs with no row, and counts toward the cap of 10</td></tr>
+  </table></div>
+</section>
+
+<section id="left">
+<h2>What's left</h2>
+<p class="lead">17 queue entries are open: 2 to fix next, 9 before hosting, 6 someday. Another agent was sorting the queue as I wrote, so counts may move.</p>
+<h3>Fix next</h3><ul>
+  <li>Sign in once in a separate Claude Code folder so the real-<code>claude</code> proofs can run (human task).</li>
+  <li>Settings page: Try again after an API restart keeps the old token and shows the same error; only a reload helps.</li>
+</ul>
+<h3>Before hosting</h3><ul>
+  <li>Windows checks by hand: <code>real-exit</code>, <code>real-toast</code>, real <code>claude</code> through the <code>claude.cmd</code> shim, a session's background command at quit.</li>
+  <li>Linux checks with real <code>claude</code>: the folder-trust prompt, and Resume after a host kill.</li>
+  <li>Two Windows job-helper gaps: a main crash before the first assign, and a grandchild whose parent ended first.</li>
+  <li>A silent window port with 5,000 to 100,000 unacked characters keeps a session paused for good.</li>
+  <li>A 512 px Linux icon, and an <code>actionlint</code> pass on the release workflow's Linux build.</li>
+</ul>
+<h3>Someday</h3><ul>
+  <li>Server reads the whole hook file on each change; <code>record.sh</code> chmod only at a run's first line.</li>
+  <li>Two AppImages at different paths: the last one started owns the autostart entry.</li>
+  <li>Server SIGTERM just after "listening" skips a clean stop; <code>readShim</code> export; <code>test:electron</code> substring match.</li>
+</ul>
+</section>
+
+
+</main>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "strict" });
+</script>
+</body>
+</html>

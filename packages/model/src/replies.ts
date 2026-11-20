@@ -131,7 +131,7 @@ function fixReplies(repo: BoardRepo, name: string, now: number): RunReply[] {
 }
 
 /** The run's agents a session can come from: a plan's agents, or a fix run's engineers and reviewers. */
-function runAgents(repo: BoardRepo, run: string, now: number): AgentRun[] {
+export function runAgents(repo: BoardRepo, run: string, now: number): AgentRun[] {
   const plan = repo.model.plans.find((p) => p.slug === run)
   if (plan) return repo.agents.filter((a) => isPlanAgent(a, plan))
   return fixRunAgents(repo, run, now)

@@ -59,13 +59,20 @@ export function boardSignature(board: Board): string {
   )
 }
 
-/** What to watch for a Board: the config file, the claims, and each repo's pod docs and transcripts. */
+/**
+ * What to watch for a Board: the config file and the session store beside it, the hosted sessions' hook files, the
+ * claims, and each repo's pod docs and transcripts.
+ */
 export function watchTargets(board: Board, o: Pick<BoardWatcherOptions, 'configFile' | 'portsDir' | 'claudeDir'>): Target[] {
   const configFile = path.resolve(o.configFile)
   const configDir = path.dirname(configFile)
+  const sessionsFile = path.join(configDir, 'sessions.json')
+  const hooksDir = path.join(configDir, 'hooks')
   const targets: Target[] = [
     // chokidar runs `ignored` on the watched folder too, so the folder must be kept.
-    { dir: configDir, depth: 0, keep: (p) => p === configDir || p === configFile },
+    { dir: configDir, depth: 0, keep: (p) => p === configDir || p === configFile || p === sessionsFile },
+    // The hooks plugin makes this folder at a session's first line; until then its parent is watched for it.
+    { dir: hooksDir, depth: 0, keep: (p, isDir) => p === hooksDir || (isDir !== true && p.endsWith('.jsonl')) },
     { dir: path.resolve(o.portsDir), depth: 0, keep: () => true },
   ]
   for (const repo of board.repos) {

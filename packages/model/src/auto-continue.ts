@@ -2,6 +2,7 @@
 // Pure. The rules and why are in pod-docs/feature-details/queue-and-replies.md.
 
 import type { Board, BoardRepo } from './board.ts'
+import { isHostedSession } from './hosted.ts'
 import { SEND_SIGNALS, replySession, runReplies, type RunReply } from './replies.ts'
 
 /**
@@ -60,9 +61,10 @@ export function autoMaySend(repo: BoardRepo, reply: RunReply, now: number): bool
 
 /**
  * The `continue` sends due now: for each toggle, in order, its repo on the Board, a sendable
- * `continue` whose key isn't the toggle's `lastKey` and that `autoMaySend` allows, a session with a safe id, and that session idle.
+ * `continue` whose key isn't the toggle's `lastKey` and that `autoMaySend` allows, a session with a safe id that the app
+ * doesn't host (`isHostedSession`, any state: `-p` never goes to a session in the terminal host), and that session idle.
  * At most one per session, the first toggle's. Never `go`, `try`, or a queue answer. `idle` is only
- * asked about a safe session id.
+ * asked about a safe session id the app doesn't host.
  */
 export function autoSends(board: Board, toggles: AutoToggle[], now: number, idle: (repo: BoardRepo, session: string) => boolean): AutoSend[] {
   const out: AutoSend[] = []
@@ -76,6 +78,7 @@ export function autoSends(board: Board, toggles: AutoToggle[], now: number, idle
     if (!autoMaySend(repo, reply, now)) continue
     const session = replySession(repo, t.run, now)
     if (!session?.resume || taken.has(session.id)) continue
+    if (isHostedSession(repo, session.id)) continue
     if (!idle(repo, session.id)) continue
     taken.add(session.id)
     out.push({ repoId: repo.id, run: t.run, session: session.id, key: reply.key })

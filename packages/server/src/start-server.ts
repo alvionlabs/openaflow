@@ -16,8 +16,9 @@ import { createAutoContinue } from './auto-continue.ts'
 import { createAutoContinueStore } from './auto-continue-store.ts'
 import { createBoardService } from './board-service.ts'
 import { portsDir } from './claims.ts'
+import { resolveBin } from './bin-path.ts'
 import { claudeBin, createClaudeRunner } from './claude-runner.ts'
-import { configPath, listenConfig, liveConfigDir, oldConfigDir, portFromEnv, type Env } from './config.ts'
+import { configPath, envValue, listenConfig, liveConfigDir, oldConfigDir, portFromEnv, type Env } from './config.ts'
 import { moveOldConfig } from './config-move.ts'
 import { createFoundGhExec, createGhReader, defaultGhExec } from './gh.ts'
 import { openWithFallback, wantedPort } from './listen.ts'
@@ -25,11 +26,18 @@ import { createRemoveRepoRoutes } from './remove-repo-routes.ts'
 import { createForgetRunRoutes } from './forget-run-routes.ts'
 import { addRepo, removeRepo } from './repos-config.ts'
 import { createResumeRoutes } from './resume-routes.ts'
+import { scopeProbe, type ScopeProbe } from './run-wrapper.ts'
 import { createIdleCheck } from './session-activity.ts'
 import { createOwnerFile } from './owner-file.ts'
-import { createStopPath, guardOutput, linkParent } from './parent-link.ts'
+import { createStopPath, guardOutput, linkParent, type ParentChannel } from './parent-link.ts'
+import { createScreenRoutes } from './screen-route.ts'
+import { createSessionRoutes } from './session-routes.ts'
+import { createSettingsActions, createSettingsRead, type SettingsRouteDeps } from './settings-routes.ts'
+import { createSettingsStore } from './settings-store.ts'
+import { createHookReader, createSessionStore, followChannel, reconcileSessions, type StoredSession } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
 import { createShutdown, createWorkTracker } from './shutdown.ts'
+import { createTerminalChannel } from './terminal-channel.ts'
 import { createToolFinder } from './tool-finder.ts'
 import { claudeDir, transcriptDays } from './transcript-files.ts'
 import { createBoardWatcher } from './watcher.ts'
@@ -59,7 +67,14 @@ async function pickConfigDir(env: Env, platform: NodeJS.Platform): Promise<strin
   return liveConfigDir(env, platform, home)
 }
 
-export async function startServer(env: Env, o: { production?: Production; exit?: (code: number) => void } = {}): Promise<Started> {
+/**
+ * `terminals`: the parent channel to the desktop's main process (`linkParent`'s), which relays to the terminal host.
+ * With none, the session routes answer `409 no terminal host` and `sessions.json` is only read.
+ */
+export async function startServer(
+  env: Env,
+  o: { production?: Production; exit?: (code: number) => void; terminals?: ParentChannel | undefined } = {},
+): Promise<Started> {
   const platform = process.platform
   const production = o.production
   const { want, extraPorts } = portPlan(env, production)
@@ -102,7 +117,28 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
     ? createClaudeRunner({ bin: () => tools.path('claude'), env: () => tools.env(), logDir })
     : createClaudeRunner({ bin: settings.claudeBin, logDir })
   const gh = createGhReader({ exec: ghExec, ...(tools ? { ghFound: () => tools.path('gh') !== undefined } : {}) })
-  const service = createBoardService({ ...settings, platform, gh, actions: log.recent, autoContinue: store.list })
+  // The hosted sessions: written only with a terminal channel, and every change of theirs rebuilds the Board.
+  const terminals = o.terminals ? createTerminalChannel({ link: o.terminals, log: (line) => console.log(line) }) : undefined
+  const sessions = createSessionStore({ file: join(configDir, 'sessions.json'), writable: terminals !== undefined, now: Date.now, log: (line) => console.log(line) })
+  if (terminals) followChannel(sessions, terminals)
+  // Main keeps the newest labels for its quit dialog: sent at the first build, then when they change.
+  const hosted = { list: sessions.list, hooks: createHookReader(join(configDir, 'hooks')), ...(terminals ? { labels: terminals.labels } : {}) }
+  // The env a session starts from: the tool finder's in production, read at each start.
+  const sessionEnv = () => (tools ? tools.env() : env)
+  // The scope probe runs once per start, and only with a terminal channel; set once the tools are checked.
+  let probe: (() => Promise<ScopeProbe>) | undefined
+  // The settings file, read at each use by every mode; the session routes read it at each start.
+  const settingsStore = createSettingsStore({ file: join(configDir, 'settings.json'), log: (line) => console.log(line) })
+  const pluginDir = envValue(env, 'OPENAFLOW_HOOKS_PLUGIN')
+  const settingsDeps = (): SettingsRouteDeps => ({
+    store: settingsStore,
+    platform,
+    ...(probe ? { probe } : {}),
+    // The claude a new session would start: the tool finder's in production, else the PATH lookup's.
+    claude: () => (tools ? tools.path('claude') : resolveBin(settings.claudeBin, env, platform)),
+    pluginDir,
+  })
+  const service = createBoardService({ ...settings, platform, gh, actions: log.recent, autoContinue: store.list, hosted })
   const watcher = createBoardWatcher({ service, ...settings, poll: env.OPENAFLOW_POLL === '1' })
 
   // The resume route and the automatic check share one set of sessions being resumed.
@@ -115,6 +151,7 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
     idle: createIdleCheck({ claudeDir: settings.claudeDir, now: Date.now }),
     inFlight: new Set<string>(),
   }
+  sessions.onChange(() => void watcher.rebuild())
   const owner = createOwnerFile({ dir: configDir })
   const auto = createAutoContinue({ ...resume, subscribe: (fn) => watcher.subscribe(fn), owner: owner.check })
 
@@ -128,6 +165,8 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
       source: watcher,
       web,
       tools,
+      screens: createScreenRoutes({ store: sessions, configDir }),
+      settings: createSettingsRead(settingsDeps()),
       addRepo: (p) => addRepo(configFile, p, platform),
       timeline: createTimelineSource({ board: () => watcher.board(), ...settings, now: Date.now }).timeline,
       actions: new Hono()
@@ -144,6 +183,7 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
           }),
         )
         .route('/', createAnswerRoutes({ board: () => watcher.board(), rebuild: () => watcher.rebuild(), log }))
+        .route('/', createSettingsActions(settingsDeps()))
         .route('/', createResumeRoutes(resume))
         .route(
           '/',
@@ -153,6 +193,26 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
             rebuild: () => watcher.rebuild(),
             forgetToggles: store.forgetPath,
             log,
+          }),
+        )
+        .route(
+          '/',
+          createSessionRoutes({
+            board: () => watcher.board(),
+            rebuild: () => watcher.rebuild(),
+            log,
+            store: sessions,
+            terminals,
+            claude: () => tools?.path('claude'),
+            pluginDir,
+            configDir,
+            hooks: hosted.hooks,
+            claudeDir: settings.claudeDir,
+            ...(probe ? { probe } : {}),
+            settings: settingsStore,
+            env: sessionEnv,
+            platform,
+            now: Date.now,
           }),
         )
         .route(
@@ -189,6 +249,11 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
   let bound: Awaited<ReturnType<typeof open>>
   // Before the watcher: its first Board already asks gh.
   await tools?.check()
+  if (terminals) {
+    // Started now: it can take seconds, and the first New session or Resume waits for its answer.
+    probe = scopeProbe({ env: sessionEnv(), platform, log: (line) => console.log(line) })
+    void probe()
+  }
 
   try {
     await watcher.start()
@@ -205,9 +270,27 @@ export async function startServer(env: Env, o: { production?: Production; exit?:
   // After the bind: a server that can't start holds no file and sends no `continue` to anyone's run.
   // A second server on this folder stays off until it restarts, also after the first exits.
   if (owner.take()) auto.start()
+  // After the bind, never awaited: main forks the terminal host only after this server's first ready.
+  // Then main ends whatever the sessions it set to `stopped · app closed` left, with each one's scope stop.
+  if (terminals) void reconcileSessions(sessions, { list: () => terminals.list() }).then((closed) => sweep(terminals, closed, sessions.list()))
 
+  // The terminal channel stays open through the drain: a start in flight still gets its answer, or its 30 s limit.
   const stop = createShutdown({ auto, server: bound.server, work, watcher, release: owner.release, exit: o.exit ?? ((code) => process.exit(code)) })
   return { port: bound.port, stop }
+}
+
+/**
+ * One `sweep` naming each closed session with the stop its start used, as its record keeps it; none for a record
+ * without one, whatever the settings are now. No closed session: no message.
+ */
+function sweep(terminals: { sweep(s: { id: string; stop?: string[] }[]): void }, closed: string[], records: readonly StoredSession[]): void {
+  if (closed.length === 0) return
+  terminals.sweep(
+    closed.map((id) => {
+      const stop = records.find((r) => r.marker === id)?.stop
+      return stop ? { id, stop } : { id }
+    }),
+  )
 }
 
 /**
@@ -224,7 +307,7 @@ export async function runMain(o: { production?: Production } = {}): Promise<void
       guardOutput(process.stderr)
       link = linkParent({ env: process.env, stops })
     }
-    const { port, stop } = await startServer(process.env, o)
+    const { port, stop } = await startServer(process.env, { ...o, terminals: link?.terminals })
     // Ready first: a stop that waited for the start then exits after it.
     link?.ready(port)
     stops.attach(stop)

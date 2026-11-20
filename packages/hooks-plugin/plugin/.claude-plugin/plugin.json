@@ -1,0 +1,5 @@
+{
+  "name": "openaflow-hooks",
+  "version": "0.1.0",
+  "description": "Records Claude Code hook events to a file that OpenAFlow reads. It adds no skills and changes no behavior."
+}
