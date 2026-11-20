@@ -15,4 +15,4 @@ Status: open · found 2026-11-15 · seen again on PR #157 (run 44643647866)
 
 **Fix idea:** store each session's pid and start time on its record, and have the sweep in `start-server.ts` and `terminal-channel.ts` end leftovers by them when the session has no job.
 
-**Evidence:** PR #157's pull_request run failed it, while the push run on the same commit (`610f97c`) passed. Details: [research/ci-jobs.md](../research/ci-jobs.md).
+**Evidence:** PR #157's pull_request run failed it, while the push run on the same commit (`610f97c`) passed. Details: [decisions/ci.md](../decisions/ci.md).

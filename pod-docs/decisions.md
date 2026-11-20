@@ -4,6 +4,8 @@ _Shared: you and the agents both write here, and agents must follow what it says
 
 > Stub — authoritative architectural decisions for your project. One entry per decision; agents link here from `handoff-queue.md` Resolution lines.
 
+> A decision with a lot of evidence, or several linked decisions on one topic, gets its own detailed file in [`decisions/`](decisions/). Its entry here stays short and links to that file. Files: [`decisions/ci.md`](decisions/ci.md) (CI: what runs, when, and why).
+
 <!-- ## YYYY-MM-DD — <title>
 Context: <why this came up>
 Decision: <what was decided>
@@ -440,6 +442,7 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 - **Rejected:** CI on every PR (slow, and it tests pieces); non-blocking CI per wave (still tests pieces); CI opt-in by a `ci` label on risky waves (one more rule to get right); Windows-only CI per wave (saves runners, not time); a manual `workflow_dispatch` trigger (works only once it is on `main`); CI on every push (wave PRs would run twice); a scheduled nightly run (GitHub schedules only from the default branch).
 - **Risk accepted:** a Windows bug shows only at sprint end, mixed with up to three waves of changes. Revisit if that bites.
 - **For autopilot:** a wave PR with zero checks meets the "CI passed" criterion by this decision; the sprint-end check and the final plan PR still need passing checks.
+- **Full record:** [decisions/ci.md](decisions/ci.md).
 
 ## 2026-11-19 — Electron sandbox off on Ubuntu 24.04 AppImages (agent default — override anytime)
 
@@ -599,8 +602,6 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 
 ## 2026-11-20 — CI keeps verify and electron on Linux and Windows (human)
 
-- **Decision:** keep all four `pod-ci` jobs: `verify (<os>)` (type check, unit tests, build) and `electron (<os>)` (the real app, unpackaged and packaged), each on Linux and Windows. Keep their names.
-- **Why:** almost every real bug that CI caught after the local checks had passed was on Windows, and both Windows jobs caught some (4 by `verify`, 10 by `electron`, in the last 120 runs). The Linux jobs cover Linux on the days the human works on Windows, and add no wall-clock time, because the jobs run side by side (about 4 minutes in all, once per sprint). Signal Desktop, GitHub Desktop, Hyper, and VS Code all run unit and real-app tests on each platform they ship to.
-- **Rejected:** dropping `verify (ubuntu)`, dropping both Linux jobs, dropping `verify (windows)`, and renaming to `unit` / `e2e`, which is the more common naming but costs a change to the workflow, its test, and the required checks.
-- **Evidence:** [research/ci-jobs.md](research/ci-jobs.md).
-- **Don't re-ask unless:** a macOS build ships (add macOS to both jobs), CI minutes stop being free, or a Linux job goes a whole plan without a catch while the human works on Windows.
+- **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, with their names.
+- **Why, in short:** almost every real bug CI caught after the local checks was on Windows; the Linux jobs cover Linux on the human's Windows days at no wall-clock cost; similar Electron apps (Signal, GitHub Desktop, Hyper, VS Code) do the same.
+- **Full record:** [decisions/ci.md](decisions/ci.md) — what each job does, our numbers, the comparison, naming, rejected options, and when to look again.
