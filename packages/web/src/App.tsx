@@ -4,7 +4,7 @@ import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { createBoardStream, healthProbe, type StreamState } from './board-stream.ts'
 import { boardSlices } from './screens/board/board-view.ts'
 import { RunsScreen } from './screens/runs/RunsScreen.tsx'
-import { followRepoId, rememberRepoPaths, resolveSelection, startClock } from './selection.ts'
+import { backHash, followRepoId, nextBack, rememberRepoPaths, resolveSelection, startClock } from './selection.ts'
 
 export function App() {
   const [board, setBoard] = useState<Board>()
@@ -56,6 +56,9 @@ function BoardView({ board, stream, now, hash, setHash }: BoardViewProps) {
   const knownRepos = useRef(new Map<string, string>())
   rememberRepoPaths(knownRepos.current, board?.repos ?? [])
   const follow = (h: string) => followRepoId(h, knownRepos.current, board?.repos ?? [])
+  // The hash before `#settings`, for the settings page's Back. A reload on `#settings` has none.
+  const trail = useRef<{ hash: string; back: string | undefined }>({ hash, back: undefined })
+  if (trail.current.hash !== hash) trail.current = { hash, back: nextBack(trail.current.back, trail.current.hash, hash) }
   const selection = resolveSelection(runs, follow(hash), slicesOf, agentsOf, fallback === undefined ? undefined : follow(fallback))
   const navigate = (h: string) => {
     window.history.replaceState(null, '', h === '' ? window.location.pathname + window.location.search : h)
@@ -70,6 +73,18 @@ function BoardView({ board, stream, now, hash, setHash }: BoardViewProps) {
   }, [board, selection.hash, hash])
 
   return (
-    <RunsScreen board={board} stream={stream} runs={runs} selected={selection.run} view={selection.view} slice={selection.slice} agent={selection.agent} now={now} planFallback={setFallback} navigate={navigate} />
+    <RunsScreen
+      board={board}
+      stream={stream}
+      runs={runs}
+      selected={selection.run}
+      view={selection.view}
+      slice={selection.slice}
+      agent={selection.agent}
+      now={now}
+      planFallback={setFallback}
+      navigate={navigate}
+      settings={selection.settings ? { back: backHash(trail.current.back) } : undefined}
+    />
   )
 }

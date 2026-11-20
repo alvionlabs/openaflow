@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildRepoModel, listRuns, type AgentRun, type BoardRepo, type Claim, type PrStatus, type RunSummary } from '@openaflow/model'
+import { buildRepoModel, listRuns, WAITING_AFTER_MS, type AgentRun, type BoardRepo, type Claim, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
-import { gateTitle, nextSteps, type NextItem, type NextSteps } from './next-step.ts'
+import { cardTerminal, codeParts, DESKTOP_START, DESKTOP_TERMINAL, gateTitle, nextSteps, START_DETAIL, START_TITLE, WAITING_DETAIL, WAITING_TITLE, type NextItem, type NextSteps } from './next-step.ts'
 import { emptyMessage } from './view.ts'
 
 // Boards built from the chess-web fixture: plan sparring-ladder, an autopilot run on wave 3 of sprint ladder
@@ -234,7 +234,8 @@ describe('next step', () => {
     expect(oldRun.state).toBe('unsupported')
     expect(nextSteps(oldRun, old, NOW)?.card.detail).toBe(emptyMessage(oldRun, old))
     const row: RunSummary = { repoId: 'chess', repo: 'chess-web', where: 'no active plan', state: 'idle' }
-    expect(nextSteps(row, chess(), NOW)?.card).toMatchObject({ tier: 'nothing', detail: 'No active plan in this repo. A plan shows here once pod starts one.' })
+    // A plan-less row is the place to start a session: the start card (N1), still calm.
+    expect(nextSteps(row, chess(), NOW)?.card).toMatchObject({ tier: 'nothing', title: 'No active plan', detail: 'Pick what to start, then describe it.' })
 
     // No run, no repo, or another repo's run: nothing at all.
     expect(nextSteps(undefined, chess(), NOW)).toBeUndefined()
@@ -376,7 +377,7 @@ describe('next step', () => {
     const row: RunSummary = { repoId: 'chess', repo: 'chess-web', where: 'no active plan', state: 'idle' }
     const s = defined(nextSteps(row, repo, NOW))
     // It stays listed, but an entry with no plan is no row's headline.
-    expect(order(s)).toEqual(['nothing nothing', `pending ${entryKey(UNJOINED)}`])
+    expect(order(s)).toEqual(['nothing new-session', `pending ${entryKey(UNJOINED)}`])
   })
 
   it('pending entries sort by kind: now, decision, before, other, someday', () => {
@@ -505,5 +506,224 @@ describe('gate titles', () => {
     const plain = steps(chess([onlyQueue(T1_BLOCKED)]))
     expect(plain.card.title).toBe("T1 can't reach the rates file.")
     expect(plain.card).not.toHaveProperty('titleLink')
+  })
+})
+
+// Hosted sessions (terminal-tab N1): the start card on a repo row, the waiting card, and a hosted run's reply.
+describe('hosted sessions', () => {
+  const session = (over: Partial<HostedSession> = {}): HostedSession => ({
+    marker: 'mark-1',
+    sessionId: 'sess-x',
+    liveSession: 'sess-x',
+    sessions: ['sess-x'],
+    skill: 'plan',
+    startedAt: NOW - 2 * MIN,
+    state: 'live',
+    hooked: true,
+    prompted: true,
+    ...over,
+  })
+  /** A repo with pod docs and no plan: its one row is the repo row. */
+  const bare = (extra: Partial<BoardRepo> = {}): BoardRepo => ({
+    id: 'notes',
+    name: 'notes-app',
+    path: '/n',
+    source: 'registered',
+    model: buildRepoModel({ 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': '' }),
+    agents: [],
+    prs: [],
+    claims: [],
+    ...extra,
+  })
+  const repoRow = (repo: BoardRepo) => {
+    const row = runs(repo).find((r) => r.plan === undefined)
+    if (!row) throw new Error('no repo row')
+    return row
+  }
+  const rowSteps = (repo: BoardRepo, now = NOW) => defined(nextSteps(repoRow(repo), repo, now))
+
+  it('start card', () => {
+    // No session: the start card, calm, with the New session action.
+    const none = bare()
+    expect(rowSteps(none).card).toEqual<NextItem>({
+      key: 'new-session',
+      tier: 'nothing',
+      status: 'idle',
+      title: START_TITLE,
+      detail: START_DETAIL,
+      action: { kind: 'new-session', repoId: 'notes' },
+    })
+    expect(START_TITLE).toBe('No active plan')
+    expect(START_DETAIL).toBe('Pick what to start, then describe it.')
+    // Ended or stopped: you can start another.
+    for (const state of ['ended', 'stopped'] as const) {
+      expect(rowSteps(bare({ hosted: [session({ state })] })).card.action, state).toEqual({ kind: 'new-session', repoId: 'notes' })
+    }
+    // Starting or live (hooked, so not waiting): no start card, the running card.
+    for (const state of ['starting', 'live'] as const) {
+      const card = rowSteps(bare({ hosted: [session({ state })] })).card
+      expect(card.action.kind, state).toBe('open-terminal')
+      expect(card.tier).toBe('nothing')
+    }
+    // An old ended session beside a live one: the live one is shown, so no start card.
+    const both = bare({ hosted: [session({ marker: 'm0', state: 'ended', startedAt: NOW - 9 * MIN }), session()] })
+    expect(rowSteps(both).card.key).toBe('running:mark-1')
+    // An error or unsupported repo never offers one.
+    const broken = bare({ error: 'folder not found' })
+    expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card.action.kind).toBe('none')
+    const old: BoardRepo = { ...bare(), model: buildRepoModel(loadFixture('speak-out')) }
+    expect(nextSteps(runs(old)[0]!, old, NOW)?.card.action.kind).toBe('none')
+    // A plan run never gets it.
+    expect(steps(chess([onlyQueue()])).card.action.kind).toBe('none')
+    // A real stop that joins no plan keeps the repo row's card.
+    const halted = bare({ model: buildRepoModel({ 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': `${UNJOINED.replace('PENDING', 'BLOCKED')}\n` }) })
+    expect(rowSteps(halted).card.tier).toBe('blocked')
+
+    // The desktop app shows the form; the browser build says to open the desktop app, with no form.
+    const card = rowSteps(none).card
+    expect(cardTerminal(card, true)).toEqual({ detail: START_DETAIL, form: true, openTerminal: false })
+    expect(cardTerminal(card, false)).toEqual({ detail: DESKTOP_START, form: false, openTerminal: false })
+    expect(DESKTOP_START).toBe('Open the desktop app to start a session.')
+  })
+
+  it('waiting card', () => {
+    // Live with no SessionStart line 10 s after its start: Claude waits for you in the terminal.
+    const waiting = bare({ hosted: [session({ hooked: false, startedAt: NOW - WAITING_AFTER_MS })] })
+    const s = rowSteps(waiting)
+    expect(s.card).toEqual<NextItem>({
+      key: 'waiting:mark-1',
+      tier: 'pending',
+      status: 'needs-you',
+      goesOn: true,
+      title: WAITING_TITLE,
+      detail: WAITING_DETAIL,
+      action: { kind: 'open-terminal' },
+    })
+    expect(WAITING_TITLE).toBe('Claude waits for you in the terminal')
+    expect(WAITING_DETAIL).toBe('It may ask you to trust this folder or to sign in. The app never answers for you.')
+    // One second earlier it is still live: the running card.
+    expect(rowSteps(waiting, NOW - 1000).card.key).toBe('running:mark-1')
+    // On the plan run the session joins (its agent holds the session), the same card.
+    const joined = chess([onlyQueue()], { agents: [engineer({ session: 'sess-x' })], hosted: [session({ hooked: false })] })
+    expect(steps(joined).card).toMatchObject({ key: 'waiting:mark-1', tier: 'pending', action: { kind: 'open-terminal' } })
+    // A real stop outranks it; the card goes to the rest.
+    const blocked = chess([onlyQueue(T1_BLOCKED)], { agents: [engineer({ session: 'sess-x' })], hosted: [session({ hooked: false })] })
+    expect(order(steps(blocked))).toEqual([`blocked ${entryKey(T1_BLOCKED)}`, 'pending waiting:mark-1'])
+    // Open terminal in the desktop app; the desktop note in the browser.
+    expect(cardTerminal(s.card, true)).toEqual({ detail: WAITING_DETAIL, form: false, openTerminal: true })
+    expect(cardTerminal(s.card, false)).toEqual({ detail: WAITING_DETAIL, form: false, openTerminal: false, note: DESKTOP_TERMINAL })
+    expect(DESKTOP_TERMINAL).toBe('Open the desktop app to use the terminal.')
+  })
+
+  it('running card', () => {
+    // A starting or live session on the repo row: it runs in the terminal, with the run's status (the sidebar's Running).
+    for (const state of ['starting', 'live'] as const) {
+      const s = rowSteps(bare({ hosted: [session({ state, hooked: state === 'live', prompted: false })] }))
+      expect(s.card, state).toEqual({
+        key: 'running:mark-1',
+        tier: 'nothing',
+        status: 'running',
+        title: 'A session runs in this repo\'s terminal',
+        detail: 'It started with `/pod:plan`.',
+        action: { kind: 'open-terminal' },
+      })
+      expect(s.rest).toEqual([])
+    }
+    // The start line went to you to type and you haven't yet: no "It started with", the card's Type line says what to do.
+    const toType = rowSteps(bare({ hosted: [session({ typeYourself: true, prompted: false })] })).card
+    expect(toType.key).toBe('running:mark-1')
+    expect(toType.detail).toBeUndefined()
+    expect(rowSteps(bare({ hosted: [session({ typeYourself: true, prompted: true })] })).card.detail).toBe('It started with `/pod:plan`.')
+    // Each skill names its command; a plain session has none.
+    const detail = (skill: HostedSession['skill']) => rowSteps(bare({ hosted: [session({ skill })] })).card.detail
+    expect(detail('ship')).toBe('It started with `/pod:ship`.')
+    expect(detail('task')).toBe('It started with `/pod:task`.')
+    expect(detail('research')).toBe('It started with `/pod:research`.')
+    expect(detail('idea')).toBe('It started with `/pod:idea`.')
+    expect(detail('plain')).toBe('It started with no prompt.')
+    // Open terminal in the desktop app; the desktop note and no button in the browser.
+    const card = rowSteps(bare({ hosted: [session()] })).card
+    expect(cardTerminal(card, true)).toEqual({ detail: 'It started with `/pod:plan`.', form: false, openTerminal: true })
+    expect(cardTerminal(card, false)).toEqual({ detail: 'It started with `/pod:plan`.', form: false, openTerminal: false, note: DESKTOP_TERMINAL })
+    // Ten seconds live with no SessionStart: the waiting card takes over.
+    expect(rowSteps(bare({ hosted: [session({ hooked: false, startedAt: NOW - WAITING_AFTER_MS })] })).card.key).toBe('waiting:mark-1')
+    // A real stop on the repo row outranks it.
+    const halted = bare({
+      model: buildRepoModel({ 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n', 'pod-docs/handoff-queue.md': `${UNJOINED.replace('PENDING', 'BLOCKED')}\n` }),
+      hosted: [session()],
+    })
+    expect(rowSteps(halted).card.tier).toBe('blocked')
+    // An unreadable repo keeps its error, a session or not, as the sidebar does.
+    const broken = bare({ error: 'folder not found', hosted: [session()] })
+    expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card).toMatchObject({ key: 'nothing', detail: emptyMessage(runs(broken)[0]!, broken) })
+    // A plan run with a live session it joins keeps its own card.
+    const joined = chess([onlyQueue()], { agents: [engineer({ session: 'sess-x' })], hosted: [session()] })
+    expect(steps(joined).card).toMatchObject({ key: 'nothing', action: { kind: 'none' } })
+  })
+
+  // Wave PR #78 merged, the engineer's session sess-1: pod waits for a continue the board could send.
+  const merged = (hosted?: HostedSession[]) => chess([onlyQueue(), manual, t1Pushed], { prs: [gh(78, 'merged')], agents: [engineer()], ...(hosted ? { hosted } : {}) })
+  const held = (over: Partial<HostedSession> = {}) => session({ sessionId: 'sess-1', liveSession: 'sess-1', sessions: ['sess-1'], ...over })
+
+  it('hosted reply', () => {
+    // An outside run keeps Continue.
+    const outside = steps(merged()).card
+    expect(outside).toMatchObject({ tier: 'reply', status: 'ready', title: 'Send continue' })
+    expect(outside.action.kind === 'reply' && outside.action.panel.rows[0]?.send).toBe('continue')
+    expect(outside.action.kind === 'reply' && outside.action.panel.hosted).toBeUndefined()
+    expect(cardTerminal(outside, true)).toEqual({ form: false, openTerminal: false })
+
+    // A hosted run: the same title, no row sends, Open terminal with the word to type.
+    for (const over of [{ state: 'live' as const }, { state: 'starting' as const }, { state: 'live' as const, hooked: false }]) {
+      const card = steps(merged([held(over)])).card
+      expect(card, JSON.stringify(over)).toMatchObject({ key: `reply:${PLAN}`, tier: 'reply', status: 'needs-you', title: 'Send continue', detail: 'Open the terminal and type `continue`.' })
+      if (card.action.kind !== 'reply') throw new Error('not a reply')
+      expect(card.action.panel.rows.every((r) => r.send === undefined)).toBe(true)
+      expect(card.action.panel.hosted).toEqual({ word: 'continue', stopped: false })
+      // No `claude --resume` to copy: the session lives in the app's terminal.
+      expect(card.action.panel.session).toBeUndefined()
+      expect(cardTerminal(card, true)).toEqual({ detail: 'Open the terminal and type `continue`.', form: false, openTerminal: true })
+      expect(cardTerminal(card, false)).toEqual({ detail: 'Open the terminal and type `continue`.', form: false, openTerminal: false, note: DESKTOP_TERMINAL })
+    }
+    // A session held under a later id (after /clear) is hosted too.
+    const cleared = steps(merged([session({ sessionId: 'sess-0', liveSession: 'sess-1', sessions: ['sess-0', 'sess-1'] })])).card
+    expect(cleared.detail).toBe('Open the terminal and type `continue`.')
+    // The detail's word shows as code.
+    expect(codeParts('Open the terminal and type `continue`.')).toEqual([
+      { code: false, text: 'Open the terminal and type ' },
+      { code: true, text: 'continue' },
+      { code: false, text: '.' },
+    ])
+    expect(codeParts('no code')).toEqual([{ code: false, text: 'no code' }])
+  })
+
+  it('stopped hosted reply', () => {
+    for (const over of [{ state: 'ended' as const, exitCode: 0 }, { state: 'stopped' as const, stopReason: 'app closed' as const }, { state: 'stopped' as const, stopReason: 'terminals restarted' as const }]) {
+      const card = steps(merged([held(over)])).card
+      expect(card.detail, JSON.stringify(over)).toBe("This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before.")
+      expect(card.detail).not.toContain('type')
+      if (card.action.kind !== 'reply') throw new Error('not a reply')
+      expect(card.action.panel.hosted).toEqual({ word: 'continue', stopped: true })
+      expect(card.action.panel.rows.every((r) => r.send === undefined)).toBe(true)
+      expect(cardTerminal(card, true)).toMatchObject({ openTerminal: true })
+    }
+
+    // Resume works (`resume` is ok): the card says to resume it in the Terminal tab, then type the word.
+    const resumable = steps(merged([held({ state: 'ended', exitCode: 0, resume: 'ok' })])).card
+    expect(resumable.detail).toBe("This run's terminal has stopped. Resume it in the Terminal tab, then type `continue`.")
+    if (resumable.action.kind !== 'reply') throw new Error('not a reply')
+    expect(resumable.action.panel.hosted).toEqual({ word: 'continue', stopped: true, resumable: true })
+    expect(cardTerminal(resumable, true)).toMatchObject({ openTerminal: true, detail: resumable.detail })
+    const stopped = steps(merged([held({ state: 'stopped', stopReason: 'app closed', resume: 'ok' })])).card
+    expect(stopped.detail).toBe("This run's terminal has stopped. Resume it in the Terminal tab, then type `continue`.")
+    // Any other answer keeps today's line: Dismiss it first.
+    for (const resume of ['no folder', 'no conversation', 'in use'] as const) {
+      const card = steps(merged([held({ state: 'ended', exitCode: 0, resume })])).card
+      expect(card.detail, resume).toBe("This run's terminal has stopped. Dismiss it in the Terminal tab, then Continue works as before.")
+      expect(card.action.kind === 'reply' && card.action.panel.hosted).toEqual({ word: 'continue', stopped: true })
+    }
+    // A session still open never says to resume, whatever `resume` holds.
+    const open = steps(merged([held({ state: 'live', resume: 'ok' })])).card
+    expect(open.detail).toBe('Open the terminal and type `continue`.')
   })
 })

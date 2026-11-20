@@ -2,9 +2,9 @@ import { realpathSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildRepoModel, type AgentRun, type Board, type BoardRepo, type NewActionEntry, type PrStatus, type RepoFiles } from '@openaflow/model'
+import { buildRepoModel, type AgentRun, type Board, type BoardRepo, type HostedSession, type NewActionEntry, type PrStatus, type RepoFiles } from '@openaflow/model'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { AUTO_TICK_MS, createAutoContinue } from './auto-continue.ts'
+import { AUTO_TICK_MS, createAutoContinue, runResume } from './auto-continue.ts'
 import { createAutoContinueStore, type AutoContinueStore } from './auto-continue-store.ts'
 import type { StartResult } from './claude-runner.ts'
 
@@ -347,6 +347,73 @@ describe('automatic check', () => {
   })
 })
 
+describe('hosted sessions', () => {
+  test('runResume refuses a hosted session', async () => {
+    const states: [HostedSession['state'], Partial<HostedSession>][] = [
+      ['starting', {}],
+      ['live', {}],
+      ['ended', { exitCode: 3 }],
+      ['stopped', { stopReason: 'terminals restarted' }],
+    ]
+    for (const [state, over] of states) {
+      for (const word of ['continue', 'go'] as const) {
+        for (const auto of [true, false]) {
+          const runner = fakeRunner()
+          const logged: NewActionEntry[] = []
+          const log = { append: async (e: NewActionEntry) => (logged.push(e), true) }
+          // The run's agent writes under the id the session got after /clear.
+          const repo = hostedIn(planRepo(SPRINT_DONE, { session: 'sess-new' }), state, ['sess-start', 'sess-new'], over)
+          const label = `${state} ${word} ${auto}`
+          const result = await runResume({ runner, log }, { repo, run: 'alpha', session: 'sess-new', word, auto })
+          expect(result, label).toEqual({ outcome: 'failed', message: 'hosted session', logged: true })
+          expect(runner.starts, label).toEqual([])
+          expect(logged, label).toEqual([{ action: 'resume', repoId: 'id-r', repo: 'r', target: `alpha · ${word}`, result: 'failed', message: 'hosted session', reply: word, auto }])
+        }
+      }
+    }
+    // A session the app doesn't host, beside a hosted one in the same repo, still starts.
+    const runner = fakeRunner()
+    const repo = hostedIn(planRepo(SPRINT_DONE), 'live', ['sess-other'])
+    expect(await runResume({ runner, log: { append: async () => true } }, { repo, run: 'alpha', session: 'sess-1', word: 'continue', auto: false })).toEqual({ outcome: 'started', logged: true })
+    expect(runner.starts).toHaveLength(1)
+  })
+
+  test('the check skips hosted sessions quietly', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(hostedIn(planRepo(SPRINT_DONE), 'live', ['sess-1'])), store })
+    s.auto.start()
+    await s.auto.settled()
+    // New Boards, ticks, and a stopped session: still nothing.
+    s.emit(boardOf(hostedIn(planRepo(SPRINT_DONE), 'stopped', ['sess-1'], { stopReason: 'app closed' })))
+    await vi.advanceTimersByTimeAsync(AUTO_TICK_MS * 2)
+    await s.auto.settled()
+    expect(s.runner.starts).toEqual([])
+    // No log entry, no rebuild, no saved key, no failed mark, and no session held.
+    expect(s.logged).toEqual([])
+    expect(s.events).toEqual([])
+    expect(store.list()).toEqual([{ path: '/r', run: 'alpha' }])
+    expect(s.inFlight.size).toBe(0)
+    s.auto.stop()
+  })
+
+  test('dismissed is not hosted', async () => {
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(hostedIn(planRepo(SPRINT_DONE), 'ended', ['sess-1'], { exitCode: 0 })), store })
+    await s.auto.check()
+    expect(s.runner.starts).toEqual([])
+    // Dismiss removes the record: the next Board has no hosted session, and the same stop is sent once, by today's rules.
+    s.emit(boardOf(planRepo(SPRINT_DONE)))
+    await s.auto.settled()
+    await s.auto.check()
+    expect(s.runner.starts).toEqual([{ session: 'sess-1', word: 'continue', cwd: '/r' }])
+    expect(s.logged).toEqual([{ action: 'resume', repoId: 'id-r', repo: 'r', target: 'alpha · continue', result: 'started', reply: 'continue', auto: true }])
+    expect(store.list()).toEqual([{ path: '/r', run: 'alpha', lastKey: 'sprint-done:one' }])
+  })
+})
+
 // ---- Inline Boards: a plan run at a chosen stop, built with the model's own parser. ----
 
 
@@ -442,3 +509,9 @@ function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string 
 }
 
 const boardOf = (...repos: BoardRepo[]): Board => ({ generatedAt: NOW, gh: 'ok', repos })
+
+/** `repo` with one hosted session in `state`, holding `sessions`. */
+function hostedIn(repo: BoardRepo, state: HostedSession['state'], sessions: string[], over: Partial<HostedSession> = {}): BoardRepo {
+  const hosted: HostedSession = { marker: `m-${repo.id}`, sessionId: sessions[0]!, liveSession: sessions.at(-1)!, sessions, skill: 'plan', startedAt: NOW - 30 * MIN, state, hooked: true, prompted: true, ...over }
+  return { ...repo, hosted: [hosted] }
+}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunSummary } from '@openaflow/model'
-import { followRepoId, hashFor, parseHash, rememberRepoPaths, resolveSelection, startClock, LIVE_TICK_MS } from './selection.ts'
+import { backHash, followRepoId, moveAfterRemoval, hashFor, nextBack, parseHash, rememberRepoPaths, resolveSelection, SETTINGS_HASH, startClock, LIVE_TICK_MS } from './selection.ts'
 
 const run = (repoId: string, plan?: string): RunSummary => ({
   repoId,
@@ -236,5 +236,50 @@ describe('a repo whose id changed', () => {
     rememberRepoPaths(known, [{ id: 'p', path: 'E:\\a' }])
     rememberRepoPaths(known, [{ id: 'p', path: 'E:\\b' }])
     expect(followRepoId('#/p/alpha', known, [{ id: 'p', path: 'E:\\b' }])).toBe('#/p/alpha')
+  })
+})
+
+describe('settings route', () => {
+  it('#settings is the settings view: no run, no repo, and never a hash to write back', () => {
+    expect(SETTINGS_HASH).toBe('#settings')
+    expect(parseHash('#settings')).toBeUndefined()
+    const shown = { run: undefined, view: 'pipeline', slice: undefined, hash: undefined, settings: true }
+    expect(resolveSelection(runs, '#settings')).toEqual(shown)
+    // No runs would give the empty hash; a remove's fallback would name a run. Neither rewrites the page.
+    expect(resolveSelection([], '#settings')).toEqual(shown)
+    expect(resolveSelection(runs, '#settings', () => [], () => [], '#/e--projects-a/beta')).toEqual(shown)
+    // Any other hash is no settings view.
+    for (const hash of ['', '#/e--projects-a/alpha', '#settings/', '#Settings', '#/settings']) expect(resolveSelection(runs, hash).settings).toBeUndefined()
+  })
+
+  it('a repo id change never moves #settings', () => {
+    const known = new Map([['old', '/p']])
+    expect(followRepoId('#settings', known, [{ id: 'new', path: '/p' }])).toBe('#settings')
+  })
+
+  it('Back goes to the hash before #settings, else the empty hash', () => {
+    // A reload on #settings: nothing before it.
+    expect(backHash(undefined)).toBe('')
+    const run = '#/e--projects-a/beta'
+    let back = nextBack(undefined, run, SETTINGS_HASH)
+    expect(backHash(back)).toBe(run)
+    // #settings again (the tray, or W5's Open settings) keeps the first one.
+    back = nextBack(back, SETTINGS_HASH, SETTINGS_HASH)
+    expect(backHash(back)).toBe(run)
+    // Leaving the page forgets it, so the next visit records its own.
+    back = nextBack(back, SETTINGS_HASH, '#/e--projects-b')
+    expect(back).toBeUndefined()
+    expect(backHash(nextBack(back, '#/e--projects-b', SETTINGS_HASH))).toBe('#/e--projects-b')
+    // From no hash at all: back to none.
+    expect(backHash(nextBack(undefined, '', SETTINGS_HASH))).toBe('')
+    // Moves between runs record nothing.
+    expect(nextBack(undefined, run, '#/e--projects-b')).toBeUndefined()
+  })
+
+  it('a remove or forget from the sidebar never moves the page off #settings', () => {
+    expect(moveAfterRemoval('#/e--projects-b', false)).toBe('#/e--projects-b')
+    expect(moveAfterRemoval(undefined, false)).toBeUndefined()
+    expect(moveAfterRemoval('#/e--projects-b', true)).toBeUndefined()
+    expect(moveAfterRemoval('', true)).toBeUndefined()
   })
 })

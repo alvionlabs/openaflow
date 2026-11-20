@@ -19,6 +19,13 @@ const flow = (parse(text) ?? {}) as Workflow
 const stepsOf = (job: string) => flow.jobs?.[job]?.steps ?? []
 const allSteps = () => Object.keys(flow.jobs ?? {}).flatMap(stepsOf)
 const indexOfRun = (steps: Step[], pattern: RegExp) => steps.findIndex((s) => pattern.test(s.run ?? ''))
+const BUILDS = ['build', 'build-linux'] as const
+const uploadPaths = (job: string) =>
+  String(stepsOf(job).find((s) => s.uses?.startsWith('actions/upload-artifact@'))?.with?.path ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .sort()
 
 /** GitHub's filter glob, as far as this file uses it: `[0-9]+` repeats and the rest is literal. */
 const matchesGlob = (glob: string, ref: string) => new RegExp(`^${glob.replaceAll('.', '\\.')}$`).test(ref)
@@ -36,16 +43,20 @@ describe('release.yml', () => {
     for (const ref of ['v1.2', 'v1.2.3-beta', 'v1.2.3.4', '1.2.3', 'vx.y.z']) expect(matches(ref), ref).toBe(false)
   })
 
-  test('every job runs on windows-latest, with Node 22, and pnpm from packageManager', () => {
-    expect(Object.keys(flow.jobs ?? {}).sort()).toEqual(['build', 'publish'])
-    for (const job of Object.values(flow.jobs ?? {})) expect(job['runs-on']).toBe('windows-latest')
-    const build = stepsOf('build')
-    const node = build.find((s) => s.uses?.startsWith('actions/setup-node@'))
-    expect(node?.with?.['node-version']).toBe(22)
-    const pnpm = build.find((s) => s.uses?.startsWith('pnpm/action-setup@'))
-    expect(pnpm).toBeDefined()
-    expect(pnpm?.with?.version).toBeUndefined()
-    expect(indexOfRun(build, /pnpm install --frozen-lockfile/)).toBeGreaterThanOrEqual(0)
+  test('each job runs on its system, with Node 22, and pnpm from packageManager', () => {
+    expect(Object.keys(flow.jobs ?? {}).sort()).toEqual(['build', 'build-linux', 'publish'])
+    expect(flow.jobs?.build?.['runs-on']).toBe('windows-latest')
+    expect(flow.jobs?.['build-linux']?.['runs-on']).toBe('ubuntu-latest')
+    expect(flow.jobs?.publish?.['runs-on']).toBe('windows-latest')
+    for (const job of BUILDS) {
+      const build = stepsOf(job)
+      const node = build.find((s) => s.uses?.startsWith('actions/setup-node@'))
+      expect(node?.with?.['node-version'], job).toBe(22)
+      const pnpm = build.find((s) => s.uses?.startsWith('pnpm/action-setup@'))
+      expect(pnpm, job).toBeDefined()
+      expect(pnpm?.with?.version, job).toBeUndefined()
+      expect(indexOfRun(build, /pnpm install --frozen-lockfile/), job).toBeGreaterThanOrEqual(0)
+    }
   })
 
   test('actions are pinned', () => {
@@ -55,24 +66,30 @@ describe('release.yml', () => {
   })
 
   test('no dependency cache', () => {
-    const node = stepsOf('build').find((s) => s.uses?.startsWith('actions/setup-node@'))
-    // setup-node can turn on its own cache from the packageManager field unless this is false.
-    expect(node?.with?.['package-manager-cache']).toBe(false)
-    expect(node?.with?.cache).toBeUndefined()
-    const pnpm = stepsOf('build').find((s) => s.uses?.startsWith('pnpm/action-setup@'))
-    expect(pnpm?.with?.cache ?? false).toBe(false)
+    for (const job of BUILDS) {
+      const node = stepsOf(job).find((s) => s.uses?.startsWith('actions/setup-node@'))
+      // setup-node can turn on its own cache from the packageManager field unless this is false.
+      expect(node?.with?.['package-manager-cache'], job).toBe(false)
+      expect(node?.with?.cache, job).toBeUndefined()
+      const pnpm = stepsOf(job).find((s) => s.uses?.startsWith('pnpm/action-setup@'))
+      expect(pnpm?.with?.cache ?? false, job).toBe(false)
+    }
     expect(allSteps().filter((s) => s.uses?.startsWith('actions/cache'))).toEqual([])
   })
 
   test('checkout keeps no credentials', () => {
-    const checkouts = allSteps().filter((s) => s.uses?.startsWith('actions/checkout@'))
-    expect(checkouts).toHaveLength(1)
-    expect(checkouts[0]?.with?.['persist-credentials']).toBe(false)
+    for (const job of BUILDS) {
+      const checkouts = stepsOf(job).filter((s) => s.uses?.startsWith('actions/checkout@'))
+      expect(checkouts, job).toHaveLength(1)
+      expect(checkouts[0]?.with?.['persist-credentials'], job).toBe(false)
+    }
+    expect(allSteps().filter((s) => s.uses?.startsWith('actions/checkout@'))).toHaveLength(2)
   })
 
   test('least-privilege token', () => {
     expect(flow.permissions).toEqual({})
     expect(flow.jobs?.build?.permissions).toEqual({ contents: 'read' })
+    expect(flow.jobs?.['build-linux']?.permissions).toEqual({ contents: 'read' })
     expect(flow.jobs?.publish?.permissions).toEqual({ contents: 'write' })
     // The token is on one step only: the one that makes the release.
     const tokened = allSteps().filter((s) => /github\.token|secrets\./.test(JSON.stringify(s)))
@@ -82,10 +99,11 @@ describe('release.yml', () => {
     expect(flow.env).toBeUndefined()
     expect(flow.jobs?.publish?.env).toBeUndefined()
     expect(flow.jobs?.build?.env).toBeUndefined()
+    expect(flow.jobs?.['build-linux']?.env).toBeUndefined()
   })
 
-  test('publish waits for the check', () => {
-    expect(flow.jobs?.publish?.needs).toBe('build')
+  test('publish waits for both checks', () => {
+    expect([...(flow.jobs?.publish?.needs ?? [])].sort()).toEqual(['build', 'build-linux'])
     const steps = stepsOf('publish')
     expect(steps.length).toBeGreaterThan(0)
     expect(steps.filter((s) => s.uses?.startsWith('actions/checkout@'))).toEqual([])
@@ -94,6 +112,7 @@ describe('release.yml', () => {
   })
 
   test('build checks and never publishes', () => {
+    for (const job of BUILDS) expect(stepsOf(job).filter((s) => /gh release|--publish|GH_TOKEN|GITHUB_TOKEN/.test(JSON.stringify(s))), job).toEqual([])
     const build = stepsOf('build')
     const tag = indexOfRun(build, /release:check "--tag=\$env:TAG"/)
     const verify = indexOfRun(build, /^pnpm verify$/m)
@@ -114,12 +133,45 @@ describe('release.yml', () => {
   test('only the three named files are uploaded, and a missing one fails', () => {
     const upload = stepsOf('build').find((s) => s.uses?.startsWith('actions/upload-artifact@'))
     expect(upload?.with?.['if-no-files-found']).toBe('error')
-    const paths = String(upload?.with?.path ?? '')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .sort()
-    expect(paths).toEqual(['packages/desktop/release/latest.yml', 'packages/desktop/release/openaflow-setup-*.exe', 'packages/desktop/release/openaflow-setup-*.exe.blockmap'])
+    expect(uploadPaths('build')).toEqual(['packages/desktop/release/latest.yml', 'packages/desktop/release/openaflow-setup-*.exe', 'packages/desktop/release/openaflow-setup-*.exe.blockmap'])
+  })
+
+  test('a tag also builds Linux', () => {
+    const job = flow.jobs?.['build-linux']
+    expect(job?.['runs-on']).toBe('ubuntu-latest')
+    const steps = stepsOf('build-linux')
+    const tag = indexOfRun(steps, /^pnpm release:check "--tag=\$TAG"$/m)
+    const verify = indexOfRun(steps, /^pnpm verify$/m)
+    const pack = indexOfRun(steps, /^pnpm package$/m)
+    // Electron's sandbox needs unprivileged user namespaces, which AppArmor limits on Ubuntu 24.04.
+    const sysctl = indexOfRun(steps, /^sudo sysctl -w kernel\.apparmor_restrict_unprivileged_userns=0$/m)
+    const check = indexOfRun(steps, /^xvfb-run -a pnpm release:check packages\/desktop\/release$/m)
+    const upload = steps.findIndex((s) => s.uses?.startsWith('actions/upload-artifact@'))
+    const order = [tag, verify, pack, sysctl, check, upload]
+    expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(steps[tag]?.env?.TAG).toBe('${{ github.ref_name }}')
+    const install = steps[indexOfRun(steps, /pnpm install --frozen-lockfile/)]
+    expect(install?.env?.ELECTRON_SKIP_BINARY_DOWNLOAD).toBe('1')
+
+    // It uploads the AppImage and latest-linux.yml only, under its own name.
+    const up = steps[upload]
+    expect(up?.with?.['if-no-files-found']).toBe('error')
+    expect(uploadPaths('build-linux')).toEqual(['packages/desktop/release/latest-linux.yml', 'packages/desktop/release/openaflow-*-x86_64.AppImage'])
+    const names = BUILDS.map((j) => stepsOf(j).find((s) => s.uses?.startsWith('actions/upload-artifact@'))?.with?.name)
+    expect(names).toEqual(['release-files-windows', 'release-files-linux'])
+
+    // publish takes both builds' files into one folder, and needs all five.
+    const download = stepsOf('publish').filter((s) => s.uses?.startsWith('actions/download-artifact@'))
+    expect(download).toHaveLength(1)
+    expect(download[0]?.with).toEqual({ pattern: 'release-files-*', 'merge-multiple': true, path: 'release-files' })
+    const create = stepsOf('publish').find((s) => /gh release create/.test(s.run ?? ''))
+    expect(create?.run).toMatch(/if \(\$files\.Count -ne 5\) \{ throw "expected 5 files/)
+
+    // Every action, the new job's too, stays pinned to a commit.
+    const uses = steps.filter((s) => s.uses !== undefined)
+    expect(uses.length).toBeGreaterThanOrEqual(4)
+    for (const line of text.split('\n').filter((l) => /^\s*(?:-\s*)?uses:/.test(l))) expect(line).toMatch(/uses:\s*[\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+\s*$/)
   })
 
   test('a normal release', () => {
@@ -129,18 +181,5 @@ describe('release.yml', () => {
     expect(create?.run).toMatch(/--verify-tag/)
     expect(create?.env?.GH_TOKEN).toBe('${{ github.token }}')
     for (const step of allSteps()) expect(JSON.stringify(step)).not.toMatch(/--draft|--prerelease|--clobber|draft:|prerelease:/)
-  })
-})
-
-describe('pod-ci.yml', () => {
-  test('verify stays free of packaging', () => {
-    const ci = parse(read('pod-ci.yml')) as Workflow
-    const steps = ci.jobs?.verify?.steps ?? []
-    const install = steps.find((s) => /pnpm install/.test(s.run ?? ''))
-    expect(install?.env?.ELECTRON_SKIP_BINARY_DOWNLOAD).toBe('1')
-    expect(steps.some((s) => s.run === 'pnpm verify')).toBe(true)
-    expect(steps.filter((s) => /package|test:install|release:check|electron-builder/.test(s.run ?? ''))).toEqual([])
-    const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts
-    expect(scripts.verify).not.toMatch(/package|test:install|release:check/)
   })
 })

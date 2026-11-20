@@ -1,0 +1,157 @@
+/*
+ * The Terminal tab (plan terminal-host, ## Look; draft sections 1 and 3). No new tokens: the terminal's box takes
+ * --surface and --border like the draft's, and xterm's own colours come from terminal-theme.ts. The stop bar: status
+ * dot and word, one muted line, Resume and Dismiss; the last screen, or the saved one, faded under it.
+ */
+
+.terminal-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  min-width: 0;
+}
+
+/* The box: 12 px by 16 px inside, as the draft's; xterm fills the rest. */
+.term {
+  height: clamp(280px, 60vh, 640px);
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.term[hidden] {
+  display: none;
+}
+
+.term {
+  display: flex;
+}
+
+/* xterm's own element: no padding or border, so the fit addon reads the space it really has. */
+.term-fit {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.term .xterm {
+  height: 100%;
+}
+
+/* xterm's own scroll area takes the theme's background; keep it off the box's rounded corners. */
+.term .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.term.faded {
+  opacity: 0.45;
+  height: clamp(180px, 40vh, 480px);
+}
+
+/* A stopped session's saved screen (session-life §9): its text in the terminal's font, faded like the last screen. */
+.term.saved {
+  display: block;
+  overflow: hidden;
+}
+
+.term-saved {
+  height: 100%;
+  margin: 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--size-small);
+  line-height: 1.2;
+  color: var(--fg);
+  /* Long lines wrap, as the terminal wraps them: no sideways scroll in a faded box. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--muted);
+  min-width: 0;
+}
+
+.term-where {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.term-lost {
+  margin: 0;
+  font-size: var(--size-dense);
+}
+
+/* The stop bar: one bordered row; the text takes the space, Dismiss sits at the right. */
+.stop-wrap {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stop-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.stop-text {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The stop word in --fg, as the draft's bold word; only the dot takes the status colour. */
+.stop-bar .status {
+  color: var(--fg);
+  font-size: var(--size-dense);
+  white-space: normal;
+}
+
+.stop-line {
+  margin: 0;
+  font-size: var(--size-dense);
+}
+
+/* The browser build: the session's status and lines under the card, no buttons. */
+.term-note {
+  display: grid;
+  gap: 4px;
+  margin-top: 16px;
+  font-size: var(--size-dense);
+  min-width: 0;
+}
+
+.term-note p {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .stop-bar {
+    flex-wrap: wrap;
+  }
+
+  /* The text takes the whole row, so Resume and Dismiss wrap under it instead of squeezing it. */
+  .stop-text {
+    flex-basis: 100%;
+  }
+
+  .term {
+    height: clamp(220px, 50vh, 480px);
+  }
+}

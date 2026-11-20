@@ -42,9 +42,17 @@ export type UpdaterPort = {
 
 export type UpdateFlowOptions = {
   packaged: boolean
+  platform: NodeJS.Platform
+  /** The `APPIMAGE` env var: the AppImage's own path, which its runtime sets. On Linux the updater can only replace that file. */
+  appImage: string | undefined
   /** Called once, at the start of a packaged app. */
   updater(): UpdaterPort
   ask(version: string): Promise<'restart' | 'later'>
+  /**
+   * The quit question, before a Restart now stops anything: true when no session is live or the user confirmed and the
+   * sessions ended; false on Cancel. `ctx.endSessions` in the app.
+   */
+  endSessions(): Promise<boolean>
   stop(): Promise<unknown>
   quit(): void
   quitting(): boolean
@@ -70,7 +78,8 @@ export type UpdateFlow = {
   /**
    * After the server failed for good: one check now. Resolves when the app may quit: no update, a failed check, a Later,
    * LAST_CHANCE_MS gone during the check or the download, or a reopen. It asks again for a version put off earlier in
-   * this run. After a Restart now, it resolves only if the app still runs INSTALL_LIMIT_MS after the call to the installer.
+   * this run. After a Restart now, it resolves only if the app still runs INSTALL_LIMIT_MS after the call to the installer;
+   * a Cancel of the quit question that Restart now asks counts as Later.
    */
   lastChance(): Promise<void>
   /**
@@ -197,11 +206,27 @@ export function createUpdateFlow(o: UpdateFlowOptions): UpdateFlow {
     } catch (error) {
       o.log(`${LOG} box failed: ${reason(error)}`)
     }
-    boxOpen = false
     // lastChance may have cleared the set while this box was open.
     asked.add(version)
     o.log(`${LOG} ${version}: ${answer}`)
-    if (answer === 'restart' && !o.quitting()) await restart()
+    let go = answer === 'restart' && !o.quitting()
+    // The quit question counts as this box: no check and no second box while it is open.
+    if (go) go = await sessionsEnded(version)
+    boxOpen = false
+    // A quit that went through during the question: it stops the app, so nothing installs.
+    if (go && !o.quitting()) await restart()
+  }
+
+  /** Cancel, or a question that failed, keeps this version, as Later does. */
+  const sessionsEnded = async (version: string): Promise<boolean> => {
+    let ended = false
+    try {
+      ended = await o.endSessions()
+    } catch (error) {
+      o.log(`${LOG} quit question failed: ${reason(error)}`)
+    }
+    if (!ended) o.log(`${LOG} ${version}: kept, sessions are active`)
+    return ended
   }
 
   const ENDED = Symbol('ended')
@@ -218,6 +243,11 @@ export function createUpdateFlow(o: UpdateFlowOptions): UpdateFlow {
     start() {
       if (!o.packaged || started) return
       started = true
+      // A packaged Linux app outside an AppImage, such as linux-unpacked: electron-updater has no file to replace.
+      if (o.platform === 'linux' && !o.appImage) {
+        o.log(`${LOG} off: not started from an AppImage`)
+        return
+      }
       try {
         port = o.updater()
         port.onDownloaded((version) => void onDownloaded(version))

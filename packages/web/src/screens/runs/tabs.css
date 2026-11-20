@@ -160,3 +160,10 @@
   justify-self: stretch;
   min-width: 0;
 }
+
+/* Terminal: the run dot before its label while the session runs (draft section 1); 8 px to the label. */
+.tab:has(> .tab-dot) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

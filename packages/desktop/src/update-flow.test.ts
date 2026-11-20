@@ -53,7 +53,18 @@ function deferred<T = void>() {
   return { promise, resolve, reject }
 }
 
-function setup(o: { packaged?: boolean; firstCheckMs?: number; stop?: () => Promise<unknown>; updaterThrows?: boolean; ask?: (v: string) => Promise<Answer> } = {}) {
+function setup(
+  o: {
+    packaged?: boolean
+    platform?: NodeJS.Platform
+    appImage?: string | undefined
+    firstCheckMs?: number
+    stop?: () => Promise<unknown>
+    updaterThrows?: boolean
+    ask?: (v: string) => Promise<Answer>
+    endSessions?: () => Promise<boolean>
+  } = {},
+) {
   const events: string[] = []
   const logs: string[] = []
   const clock = fakeClock()
@@ -78,6 +89,8 @@ function setup(o: { packaged?: boolean; firstCheckMs?: number; stop?: () => Prom
   const answers: Answer[] = []
   const flow = createUpdateFlow({
     packaged: o.packaged ?? true,
+    platform: o.platform ?? 'win32',
+    appImage: 'appImage' in o ? o.appImage : undefined,
     firstCheckMs: o.firstCheckMs,
     updater: () => {
       made++
@@ -96,6 +109,7 @@ function setup(o: { packaged?: boolean; firstCheckMs?: number; stop?: () => Prom
         events.push('stop')
         return 'stopped'
       }),
+    endSessions: o.endSessions ?? (async () => true),
     quit: () => void events.push('quit'),
     quitting: () => quitting,
     clock,
@@ -421,6 +435,161 @@ describe('createUpdateFlow', () => {
     stop.resolve('stopped')
     await settle()
     expect(t.events).toEqual(['ask 1.0.1', 'install'])
+  })
+
+  describe('Restart now asks the quit question', () => {
+    /** An `endSessions` that records its call and answers when the test says so. */
+    const sessionsAsk = (t: () => { events: string[] }) => {
+      const answers: Array<ReturnType<typeof deferred<boolean>>> = []
+      return {
+        answers,
+        endSessions: () => {
+          t().events.push('end sessions')
+          const d = deferred<boolean>()
+          answers.push(d)
+          return d.promise
+        },
+      }
+    }
+
+    test('restart with live sessions', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart', 'restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      q.answers[0]!.resolve(false)
+      await settle()
+      // Cancel: like Later.
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      expect(t.logs).toContain('openaflow desktop: update 1.0.1: kept, sessions are active')
+      // No install limit runs, and the timed checks go on.
+      await t.clock.advance(INSTALL_LIMIT_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check'])
+
+      // No second ask for this version in this run, but a newer version asks.
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check'])
+      await t.download('1.0.2')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check', 'ask 1.0.2', 'end sessions'])
+    })
+
+    test('restart after the quit question', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      // The sessions end before the server stops and the installer starts.
+      await t.clock.advance(RECHECK_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      q.answers[0]!.resolve(true)
+      await settle()
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'stop', 'install'])
+      expect(t.logs.join('\n')).not.toContain('kept')
+    })
+
+    test('restart with no sessions', async () => {
+      // endSessions gives true at once when no session is live: today's restart.
+      const t = setup({
+        endSessions: async () => {
+          t.events.push('end sessions')
+          return true
+        },
+      })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'stop', 'install'])
+
+      // The last chance follows the same rule.
+      const last = setup({
+        endSessions: async () => {
+          last.events.push('end sessions')
+          return true
+        },
+      })
+      last.answers.push('restart')
+      last.port.nextCheck = async () => {
+        await last.download('1.0.1')
+        return null
+      }
+      last.flow.start()
+      let done = false
+      void last.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(last.events).toEqual(['check', 'ask 1.0.1', 'end sessions', 'stop', 'install'])
+      expect(done).toBe(false)
+    })
+
+    test('while the quit question is open: no check, no box, and a second launch waits', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      await t.clock.advance(FIRST_CHECK_MS + RECHECK_MS)
+      await t.download('1.0.2')
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+      void t.flow.lastChance()
+      await settle()
+      expect(t.flow.reopen()).toBe('wait')
+      expect(t.checks()).toBe(0)
+    })
+
+    test('a quit that goes through during the question installs nothing', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      t.beginQuit()
+      q.answers[0]!.resolve(true)
+      await settle()
+      await t.clock.advance(INSTALL_LIMIT_MS)
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions'])
+    })
+
+    test('an endSessions that fails keeps the version and logs no message', async () => {
+      const t = setup({ endSessions: () => Promise.reject(Object.assign(new Error('https://example.com'), { code: 'EBOX' })) })
+      t.answers.push('restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      expect(t.events).toEqual(['ask 1.0.1'])
+      expect(t.logs.join('\n')).toContain('EBOX')
+      expect(t.logs).toContain('openaflow desktop: update 1.0.1: kept, sessions are active')
+      expect(t.logs.join()).not.toContain('example.com')
+    })
+
+    test('in the last chance, Cancel resolves, and a version kept earlier asks again', async () => {
+      let t!: ReturnType<typeof setup>
+      const q = sessionsAsk(() => t)
+      t = setup({ endSessions: q.endSessions })
+      t.answers.push('restart', 'restart')
+      t.flow.start()
+      await t.download('1.0.1')
+      q.answers[0]!.resolve(false)
+      await settle()
+
+      t.port.nextCheck = async () => {
+        await t.download('1.0.1')
+        return null
+      }
+      let done = false
+      void t.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(t.events).toEqual(['ask 1.0.1', 'end sessions', 'check', 'ask 1.0.1', 'end sessions'])
+      expect(done).toBe(false)
+      q.answers[1]!.resolve(false)
+      await settle()
+      expect(done).toBe(true)
+      expect(t.events).not.toContain('install')
+    })
   })
 
   describe('last chance, after the server failed', () => {
@@ -814,5 +983,46 @@ describe('createUpdateFlow', () => {
         expect(t.checks()).toBe(0)
       }
     })
+  })
+
+  test('outside an AppImage the updater stays off', async () => {
+    // A packaged Linux app that runs from linux-unpacked or from an extracted AppImage: electron-updater can't replace it.
+    for (const appImage of [undefined, '']) {
+      const t = setup({ platform: 'linux', appImage })
+      t.flow.start()
+      t.flow.start()
+      await t.clock.advance(RECHECK_MS * 3)
+      expect(t.made()).toBe(0)
+      expect(t.checks()).toBe(0)
+      expect(t.clock.count()).toBe(0)
+      expect(t.logs).toEqual(['openaflow desktop: update off: not started from an AppImage'])
+      expect(t.flow.willCheck()).toBe(false)
+      // After a server failure, the app quits at once: no check, no wait.
+      let done = false
+      void t.flow.lastChance().then(() => (done = true))
+      await settle()
+      expect(done).toBe(true)
+      expect(t.checks()).toBe(0)
+    }
+
+    // Inside an AppImage, the updater runs as on Windows.
+    const inside = setup({ platform: 'linux', appImage: '/home/u/Apps/openaflow-1.2.3-x86_64.AppImage' })
+    inside.flow.start()
+    await inside.clock.advance(FIRST_CHECK_MS)
+    expect(inside.made()).toBe(1)
+    expect(inside.checks()).toBe(1)
+    expect(inside.logs).toEqual([])
+
+    // Windows has no AppImage, and an unpackaged Linux app logs nothing.
+    const windows = setup({ platform: 'win32', appImage: undefined })
+    windows.flow.start()
+    await windows.clock.advance(FIRST_CHECK_MS)
+    expect(windows.checks()).toBe(1)
+    expect(windows.logs).toEqual([])
+    const dev = setup({ platform: 'linux', appImage: undefined, packaged: false })
+    dev.flow.start()
+    await dev.clock.advance(FIRST_CHECK_MS)
+    expect(dev.checks()).toBe(0)
+    expect(dev.logs).toEqual([])
   })
 })

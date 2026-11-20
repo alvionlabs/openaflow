@@ -1,9 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { buildConfig, builderOptions, checkVersion, EXE_NAME, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
+import { appImageName, buildConfig, builderOptions, checkVersion, EXE_NAME, LINUX_UPDATE_FILE, packageTarget, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
+import { hooksPluginDir } from './pty-host-launch.ts'
 import { CONFIG_DIR_NAME } from '@openaflow/server/config'
 import { APP_ID, APP_NAME } from './shell-config.ts'
 import { RELEASES_URL } from './update-flow.ts'
@@ -12,7 +13,8 @@ const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 type Manifest = { version: string; dependencies?: Record<string, string>; devDependencies: Record<string, string> }
 const manifest = () => JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')) as Manifest
 const NOTICES = 'C:\\tmp\\THIRD-PARTY-NOTICES.txt'
-const config = (o: { version?: string; output?: string } = {}) => buildConfig({ noticesFile: NOTICES, ...o })
+const NODE_PTY = join('C:', 'repo', 'node_modules', '.pnpm', 'node-pty@1.2.0-beta.18', 'node_modules', 'node-pty')
+const config = (o: { version?: string; output?: string; platform?: 'win32' | 'linux' } = {}) => buildConfig({ noticesFile: NOTICES, nodePtyDir: NODE_PTY, ...o })
 
 describe('electron-builder config', () => {
   test("per-user NSIS with the shell's identity", () => {
@@ -72,6 +74,68 @@ describe('electron-builder config', () => {
     expect(c.nodeGypRebuild).toBe(false)
   })
 
+  test('node-pty and the pty host sit outside the asar', () => {
+    // A native .node file can't load from inside an asar. The host's bundle and node-pty sit in resources/pty-host,
+    // so the bundle's require('node-pty') finds node_modules/node-pty beside it.
+    for (const [platform, prebuilds] of [['win32', 'win32-x64'], ['linux', 'linux-x64']] as const) {
+      const c = config({ platform })
+      expect(c.extraResources).toContainEqual({ from: '../pty-host/dist/pty-host.cjs', to: 'pty-host/pty-host.cjs' })
+      const pty = (c.extraResources as { from: string; to: string; filter?: string[] }[]).find((r) => r.to === 'pty-host/node_modules/node-pty')
+      expect(pty?.from, platform).toBe(NODE_PTY)
+      // Its package.json, its JavaScript (with lib/worker, which Windows uses), its licence, and this platform's prebuilt binaries.
+      expect(pty?.filter, platform).toEqual(['package.json', 'LICENSE', 'lib/**/*.js', '!lib/**/*.test.js', `prebuilds/${prebuilds}/**/*`, '!**/*.pdb'])
+      expect(c.files, platform).not.toContainEqual(expect.stringContaining('pty-host'))
+      expect(c.asarUnpack, platform).toBeUndefined()
+    }
+    // By default, pnpm's link resolved to the real folder, which holds the pinned version.
+    const real = (buildConfig({ noticesFile: NOTICES }).extraResources as { from: string; to: string }[]).find((r) => r.to === 'pty-host/node_modules/node-pty')!.from
+    expect(real).not.toContain(`pty-host${sep}node_modules`)
+    expect((JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')) as { version: string }).version).toBe('1.2.0-beta.18')
+  })
+
+  test('Linux builds one x64 AppImage', () => {
+    const c = config({ platform: 'linux' })
+    expect(c.linux?.target).toEqual([{ target: 'AppImage', arch: ['x64'] }])
+    expect(c.linux?.executableName).toBe('openaflow')
+    // One name for every x64 build: electron-builder's ${arch} would say x64 in some places and x86_64 in others.
+    const name = c.appImage?.artifactName
+    for (const version of ['0.1.0', '1.2.3', '10.20.30']) {
+      expect(name?.replace('${version}', version).replace('${ext}', 'AppImage')).toBe(`openaflow-${version}-x86_64.AppImage`)
+      expect(appImageName(version)).toBe(`openaflow-${version}-x86_64.AppImage`)
+    }
+    expect(name).not.toMatch(/\s/)
+    // electron-builder writes latest-linux.yml beside the AppImage when the config has a publish provider.
+    expect(LINUX_UPDATE_FILE).toBe('latest-linux.yml')
+    expect((c.publish as { provider?: string }).provider).toBe('github')
+  })
+
+  test('package target per platform', () => {
+    expect(packageTarget('win32')).toEqual({ platform: 'win32', target: 'nsis' })
+    expect(packageTarget('linux')).toEqual({ platform: 'linux', target: 'AppImage' })
+    // Each target is the one the config names for that system.
+    expect(config({ platform: 'win32' }).win?.target).toEqual([{ target: packageTarget('win32').target, arch: ['x64'] }])
+    expect(config({ platform: 'linux' }).linux?.target).toEqual([{ target: packageTarget('linux').target, arch: ['x64'] }])
+    for (const other of ['darwin', 'freebsd', 'aix'] as const) {
+      expect(() => packageTarget(other), other).toThrow(new RegExp(`Windows and Linux only, not ${other}`))
+    }
+  })
+
+  test('the hooks plugin sits outside the asar', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const c = config({ platform })
+      const plugin = (c.extraResources as { from: string; to: string }[]).find((r) => r.to === 'hooks-plugin')
+      expect(plugin, platform).toEqual({ from: '../hooks-plugin/plugin', to: 'hooks-plugin' })
+      expect(c.files, platform).not.toContainEqual(expect.stringContaining('hooks-plugin'))
+      // The folder the app looks in, dev and packaged, is the one the build copies.
+      expect(hooksPluginDir({ packaged: true, appPath: 'unused', resourcesPath: join('R', 'resources') })).toBe(join('R', 'resources', plugin!.to))
+      expect(hooksPluginDir({ packaged: false, appPath: pkg, resourcesPath: 'unused' })).toBe(join(pkg, plugin!.from))
+    }
+    // The folder exists and holds the plugin's hooks and its script.
+    const dir = join(pkg, '..', 'hooks-plugin', 'plugin')
+    expect(readdirSync(join(dir, 'hooks'))).toContain('hooks.json')
+    expect(readdirSync(join(dir, 'scripts'))).toContain('record.sh')
+  })
+
   test('artifact names have no spaces', () => {
     const name = config().nsis!.artifactName!
     for (const version of ['0.1.0', '1.2.3', '10.20.30']) {
@@ -93,7 +157,7 @@ describe('electron-builder config', () => {
   })
 
   test('a local build never publishes and never signs', () => {
-    const o = builderOptions({ noticesFile: NOTICES, version: '1.2.3', output: 'C:\\tmp\\out' })
+    const o = builderOptions({ noticesFile: NOTICES, nodePtyDir: NODE_PTY, version: '1.2.3', output: 'C:\\tmp\\out' })
     expect(o.publish).toBe('never')
     expect(o.projectDir).toBe(pkg)
     expect(o.config.forceCodeSigning).toBe(false)
@@ -123,6 +187,9 @@ describe('electron-builder config', () => {
     // pnpm passes a separator through from `pnpm package -- --version=...`.
     expect(parsePackageArgs(['--', '--version=1.2.3'])).toEqual({ version: '1.2.3' })
     expect(parsePackageArgs(['--test-feed'])).toEqual({ testFeed: true })
+    expect(parsePackageArgs(['--test-hooks'])).toEqual({ testHooks: true })
+    expect(parsePackageArgs(['--test-hooks', '--test-feed'])).toEqual({ testHooks: true, testFeed: true })
+    expect(() => parsePackageArgs(['--test-hooks=1'])).toThrow(/--test-hooks=1/)
     expect(parsePackageArgs(['--version=1.2.3', '--test-feed', '--output=C:\o'])).toEqual({ version: '1.2.3', output: 'C:\o', testFeed: true })
     expect(() => parsePackageArgs(['--test-feed=1'])).toThrow(/--test-feed=1/)
     expect(() => parsePackageArgs(['--version=1.2'])).toThrow(/version/)

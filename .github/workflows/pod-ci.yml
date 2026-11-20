@@ -1,7 +1,11 @@
 name: pod-ci
 
 on:
+  # A wave PR into the plan branch runs no CI: it merges on the local wave check. CI runs once per sprint, on a PR
+  # into pod-staging (the sprint-end check or the final plan PR), and on the staging PR into main.
+  # See pod-docs/decisions.md (2026-11-17).
   pull_request:
+    branches: [pod-staging, main]
   push:
     branches: [pod-staging]
 
@@ -13,9 +17,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The same name on Windows as before, so a required check still finds it. Linux: see pod-docs/decisions.md (2026-11-14).
   verify:
-    name: verify (windows-latest)
-    runs-on: windows-latest
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
       # Version comes from packageManager in package.json.
@@ -28,3 +37,59 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: pnpm verify
+
+  # The real Electron app, unpackaged, then a `pnpm package --test-hooks` build of it, which never leaves the runner.
+  # One test file a step: vitest runs files side by side. A step's name picks every file that holds it, so
+  # `real-terminal.test` leaves out real-terminal-tab. real-start runs Electron's own binary on dist/main.cjs, so it
+  # has no packaged run; real-quit, real-folder-bridge, and real-settings run unpackaged only. On Ubuntu 24.04,
+  # Electron's sandbox needs unprivileged user namespaces, which AppArmor limits.
+  electron:
+    name: electron (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            display: ""
+            app: packages/desktop/release/win-unpacked/OpenAFlow.exe
+          - os: ubuntu-latest
+            display: xvfb-run -a
+            app: packages/desktop/release/linux-unpacked/openaflow
+    steps:
+      - uses: actions/checkout@v7
+      # Version comes from packageManager in package.json.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # pnpm skips Electron's install script, so fetch its binary here.
+      - run: node node_modules/electron/install.js
+        working-directory: packages/desktop
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if: runner.os == 'Linux'
+      - run: pnpm build
+      - run: ${{ matrix.display }} pnpm test:electron real-start
+      - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal.test
+      - run: ${{ matrix.display }} pnpm test:electron real-session
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal-tab
+      - run: ${{ matrix.display }} pnpm test:electron real-quit
+      - run: ${{ matrix.display }} pnpm test:electron real-resume
+      - run: ${{ matrix.display }} pnpm test:electron real-folder-bridge
+      - run: ${{ matrix.display }} pnpm test:electron real-settings
+      - run: pnpm package --test-hooks
+      - run: ${{ matrix.display }} pnpm test:electron real-pty-proof
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
+      - run: ${{ matrix.display }} pnpm test:electron real-terminal.test
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
+      - run: ${{ matrix.display }} pnpm test:electron real-session
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}
+      - run: ${{ matrix.display }} pnpm test:electron real-resume
+        env:
+          OPENAFLOW_PACKAGED_APP: ${{ github.workspace }}/${{ matrix.app }}

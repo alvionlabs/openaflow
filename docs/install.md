@@ -1,6 +1,6 @@
 # Install OpenAFlow
 
-OpenAFlow runs on your Windows PC. It shows your pod runs across your repos.
+OpenAFlow runs on your Windows PC, and on x64 Linux as an AppImage. It shows your pod runs across your repos. For Linux, see [Linux](#linux).
 
 ## Download
 
@@ -15,6 +15,33 @@ This build has no code signature, so Windows can warn you.
 
 - **SmartScreen** shows "Windows protected your PC". Select **More info**, then **Run anyway**.
 - **Smart App Control** can block the app, and it gives you no **Run anyway** button. If it blocks the app, tell the person who sent you this note. A code signature fixes this, and that work comes later.
+
+## Linux
+
+OpenAFlow runs on x64 Linux as one AppImage file. You don't need admin rights to run it.
+
+1. Open the [latest release](https://github.com/alvionlabs/openaflow/releases/latest).
+2. Download `openaflow-<version>-x86_64.AppImage`.
+3. Make the file executable: `chmod +x openaflow-<version>-x86_64.AppImage`.
+4. Start the file. Keep it in one folder, such as `~/Applications`, because an update replaces this file.
+
+Install `git`, `gh`, and `claude` with your package manager or from the links under [Tools you need](#tools-you-need).
+
+### If the AppImage doesn't start
+
+- **FUSE 2.** An AppImage needs FUSE 2. Some systems don't install it, such as Fedora and Ubuntu 24.04. On Ubuntu and Debian, install `libfuse2` (on Ubuntu 24.04 the package is `libfuse2t64`). On Fedora, install `fuse-libs`.
+- **No FUSE.** Start the file with `--appimage-extract-and-run`. The AppImage then unpacks itself into a temp folder each time, so it starts more slowly.
+- **The sandbox on Ubuntu 24.04.** Ubuntu 24.04 and later limit the unprivileged user namespaces that Electron's sandbox uses. An AppImage can't carry the file permission that lets the sandbox start without them. When the AppImage's start script can't make a user namespace, it starts the app with Chromium's sandbox turned off. This note gives no change for that limit. If it matters to you, tell the person who sent you this note.
+
+### The tray icon
+
+The app keeps an icon in the system tray, and its menu has **Open** and **Quit**. GNOME shows no tray icons by default. To see it, install the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension. With no tray icon, a closed window stays hidden: start the AppImage again to show it.
+
+### Files on Linux
+
+- Your settings: `~/.config/openaflow-server`, or `openaflow-server` in `$XDG_CONFIG_HOME` when you set it.
+- The log: `~/.config/OpenAFlow/desktop.log`.
+- To remove the app, delete the AppImage file. To remove your settings too, delete `~/.config/openaflow-server`.
 
 ## Tools you need
 
@@ -45,6 +72,8 @@ OpenAFlow drops every other `CLAUDE*` variable. To use another one, put it in th
 ## Updates
 
 The app checks for updates and downloads them for you. When an update is ready, it asks you. Select **Restart now** to install, or **Later** to wait. It asks again the next time you start the app. Your running `claude` sessions keep running through an update.
+
+On Linux, the app updates only when you start it from the AppImage file. It doesn't update a copy that you unpacked yourself.
 
 ## Report a bug
 
