@@ -2,7 +2,7 @@
 // token. Every failure comes back as words, never as a throw; a failed load puts its exact cause in the console.
 
 import type { SettingsChange, SettingsView } from '@openaflow/model'
-import { pageToken, postAction, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
+import { NEED_RELOAD, pageToken, postAction, RESTARTED, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
 import { RELOAD } from '../../add-repo.ts'
 import { parseSettingsView } from './settings-view.ts'
 
@@ -98,7 +98,10 @@ export async function saveSettings(change: SettingsChange, deps: ActionDeps = {}
   } finally {
     clearTimeout(timer)
   }
-  if (!reply.ok) return reply
+  if (!reply.ok) {
+    // A restart (or no token) leaves the page's token stale: say what the other screens say. Never `invalid`: the status stays as it came.
+    return reply.message === RESTARTED || reply.message === NEED_RELOAD ? { ...reply, message: RELOAD } : reply
+  }
   const view = parseSettingsView(reply.data)
   return view ? { ok: true, data: view } : { ok: false, status: 200, message: SAVE_UNREADABLE }
 }

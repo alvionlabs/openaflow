@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsView } from '@openaflow/model'
-import { RESTARTED, UNREACHABLE } from '../../actions-client.ts'
+import { UNREACHABLE } from '../../actions-client.ts'
 import { RELOAD } from '../../add-repo.ts'
 import { LOAD_FAILED, LOAD_LIMIT_MS, readSettings, resetWrapper, SAVE_LIMIT_MS, SAVE_UNREADABLE, saveSettings } from './settings-client.ts'
 
@@ -150,7 +150,11 @@ describe('settings client', () => {
     const said = (body: unknown, status: number) => saveSettings({ runWrapper: 'a "b' }, { fetch: async () => answer(body, status), token })
     await expect(said({ error: 'run wrapper: unclosed quote' }, 400)).resolves.toEqual({ ok: false, status: 400, message: 'run wrapper: unclosed quote' })
     await expect(said({ error: 'not saved' }, 500)).resolves.toEqual({ ok: false, status: 500, message: 'not saved' })
-    await expect(said({ error: 'bad token' }, 403)).resolves.toEqual({ ok: false, status: 403, message: RESTARTED })
+    await expect(said({ error: 'bad token' }, 403)).resolves.toEqual({ ok: false, status: 403, message: RELOAD })
+    // No page token: the same reload words, and no request goes out.
+    const noToken = vi.fn<typeof fetch>()
+    await expect(saveSettings({ scrollback: 200 }, { fetch: noToken, token: () => null })).resolves.toEqual({ ok: false, status: 0, message: RELOAD })
+    expect(noToken).not.toHaveBeenCalled()
     await expect(said({ scrollback: 'x' }, 200)).resolves.toEqual({ ok: false, status: 200, message: SAVE_UNREADABLE })
     const down = saveSettings({ scrollback: 200 }, {
       fetch: async () => {

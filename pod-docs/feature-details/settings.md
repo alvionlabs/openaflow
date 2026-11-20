@@ -43,7 +43,7 @@ flowchart LR
 - `POST /api/actions/settings` is one more token-gated way to choose a program the app runs, as `tool-path` is.
 - Two AppImages at different paths: the last one started owns the entry.
 - `real-settings` writes the real `HKCU` Run value on Windows only with `CI=true`. Never set `CI=true` on your own machine. Other tests use a temp `OPENAFLOW_AUTOSTART_DIR`, never `~/.config/autostart`.
-- After an API restart the page's token is stale. A load that gets `403 bad token` (or finds no token) shows "The app restarted. Please reload" with a **Reload** button, which reloads the page: **Try again** would send the same token. A save after a restart still shows the shared action words, "The board restarted. Reload the page.", under the field (queued).
+- After an API restart the page's token is stale. A load that gets `403 bad token` (or finds no token) shows "The app restarted. Please reload" with a **Reload** button, which reloads the page: **Try again** would send the same token. A save after a restart (or with no token) shows the same words, "The app restarted. Please reload", under the field, with no Reload button and no `aria-invalid`.
 
 ## History
 
@@ -56,3 +56,4 @@ flowchart LR
 - 2026-11-19 · plan fix · changed: at start, an AppImage points its own on autostart entry at its new path after an update (`login-item.test.ts` › `linux repair at start`).
 - 2026-11-19 · plan terminal-host complete · folded the Electron checks into the five headings; added the diagram and example · [report](../reports/terminal-host.html), [PR #155](https://github.com/alvionlabs/openaflow/pull/155)
 - 2026-11-19 · task settings-retry-ci-rename · fixed: after an API restart the settings load shows the reload words and a Reload button, not "Try again" in a loop (`settings-client.test.ts`, `settings-view.test.ts`).
+- 2026-11-19 · task settings-retry-ci-rename · fixed: a settings save after an API restart (or with no token) shows "The app restarted. Please reload", not the shared "The board restarted" words (`settings-client.test.ts` › `a refused save`).

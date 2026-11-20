@@ -360,7 +360,7 @@ describe('saves at once', () => {
   it('other failures show their words under the field, not marked invalid, with the text kept', async () => {
     for (const [status, message] of [
       [500, 'not saved'],
-      [403, 'The board restarted. Reload the page.'],
+      [403, RELOAD],
       [0, "Can't reach the board."],
     ] as const) {
       const { flow } = await started({ answer: () => ({ ok: false, status, message }) })
