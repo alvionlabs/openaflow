@@ -602,6 +602,6 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 
 ## 2026-11-20 — CI keeps verify and electron on Linux and Windows (human)
 
-- **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, and rename them `unit (<os>)` and `e2e (<os>)`, the words most similar projects use (to do in the next task PR).
+- **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, and rename them `unit (<os>)` and `e2e (<os>)`, the words most similar projects use (done in PR #158).
 - **Why, in short:** almost every real bug CI caught after the local checks was on Windows; the Linux jobs cover Linux on the human's Windows days at no wall-clock cost; similar Electron apps (Signal, GitHub Desktop, Hyper, VS Code) do the same.
 - **Full record:** [decisions/ci.md](decisions/ci.md) — what each job does, our numbers, the comparison, naming, rejected options, and when to look again.
