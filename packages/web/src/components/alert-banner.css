@@ -1,0 +1,52 @@
+/*
+ * The app's alert banner at the top of the main column (draft terminal-host-look, section 4): a blocked-bordered
+ * box with the dot, a bold title and a muted note. The terminal host banner and the Reload banner share it.
+ * Tokens only.
+ */
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--blocked);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.alert-banner-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blocked);
+}
+
+.alert-banner-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--size-body);
+  overflow-wrap: anywhere;
+}
+
+.alert-banner-text b {
+  font-weight: 500;
+}
+
+.alert-banner-text b::after {
+  content: "";
+  display: block;
+}
+
+.alert-banner-note {
+  color: var(--muted);
+  font-size: var(--size-dense);
+}
+
+/* The banner's one action, such as Reload: it keeps its size while the words wrap. */
+.alert-banner > .btn {
+  flex: none;
+}
