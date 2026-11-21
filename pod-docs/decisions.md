@@ -608,6 +608,8 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 
 ## 2026-11-19 — reload words: "OpenAFlow restarted in the background. Reload to continue" (human decision)
 
+_Partly replaced on 2026-11-20: the full words now show only in the Reload banner. See [the 2026-11-20 entry](#2026-11-20--reload-banner-and-the-short-line-human-decision)._
+
 - **Context:** after an API restart the page's token is stale, and only a reload fixes it. "The app restarted. Please reload" read as odd, because the window does not restart.
 - **Decision:** "OpenAFlow restarted in the background. Reload to continue", with no final period, on every screen that shows the reload words (Settings load and save, Add repo, Remove repo, Forget, Auto-continue save). One constant: `RELOAD` in `packages/web/src/add-repo.ts`.
 - **Rejected:**
@@ -618,3 +620,15 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
   - Any "session" wording: in OpenAFlow a session is a Claude terminal.
   - "expired": OpenAFlow has no sign-in or timeout.
 - **From:** task PR #158 review.
+
+## 2026-11-20 — Reload banner and the short line (human decision)
+
+- **Decision:** after an API restart, one app-wide banner says "OpenAFlow restarted in the background." / "Reload to continue." and holds the only **Reload** button. The failed action's own line says "Reload, then try again", with no final period, for Settings save and load, Add repo, Remove repo, Forget, and the Auto-continue save. The Settings load error has no button of its own.
+- **Why, in short:** the desktop app has no menu, so Ctrl+R does nothing. One banner gives one way to reload on every screen, and the full sentence shows one time, next to its button.
+- **Rejected:**
+  - A Reload button on each screen: many buttons for one fix.
+  - Turning Ctrl+R back on: nobody would know to press it.
+  - The full words under the field as well as in the banner (option a): the same sentence twice on one screen.
+  - "Not saved", "Couldn't save", "Changes lost: reload above", and no line at all: the human disliked "Not saved", and the others do not say what to do.
+- **Draft:** [reload-banner-choices.html](design-drafts/reload-banner-choices.html) (option b, with the words changed).
+- **From:** task PR #159.
