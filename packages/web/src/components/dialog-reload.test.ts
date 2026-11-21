@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
+
+// React's store hook reads the snapshot at once, so a test can call DialogAlert as a function and press the button
+// it returns. Only the hook is replaced; the rest is React's own.
+vi.mock('react', async (actual) => ({ ...(await actual<typeof import('react')>()), useSyncExternalStore: (_: unknown, get: () => unknown) => get() }))
 import { renderToStaticMarkup } from 'react-dom/server'
 import { postAction, RELOAD } from '../actions-client.ts'
 import { TRY_AGAIN } from '../add-repo.ts'
@@ -40,8 +44,11 @@ describe("a dialog's Reload", () => {
     expect(html).toContain('<p class="modal-alert-text">Reload, then try again</p>')
     expect(html).toMatch(RELOAD_BUTTON)
     expect(reloadButtons(html)).toBe(1)
-    const [button] = buttons(ModalAlert({ message: RELOAD, onReload: reload }))
-    button!.props!.onClick!()
+    // The dialog's own button, as DialogAlert draws it, calls the reload it was given.
+    const drawn = buttons(DialogAlert({ message: RELOAD, flag: on(), reload }))
+    expect(drawn).toHaveLength(1)
+    expect(reload).not.toHaveBeenCalled()
+    drawn[0]!.props!.onClick!()
     expect(reload).toHaveBeenCalledOnce()
   })
 
