@@ -68,9 +68,8 @@ function setup(over: Partial<SettingsDeps> & { view?: SettingsView; answer?: (c:
   const reset = vi.fn(over.reset ?? (async () => answer({ runWrapper: null, stopCommand: null })))
   const load = vi.fn(over.load ?? (async (): Promise<SettingsRead> => ({ ok: true, view })))
   const states: SettingsState[] = []
-  const reload = vi.fn(over.reload ?? (() => {}))
-  const flow = createSettingsFlow({ load, save, reset, reload, ...(over.login ? { login: over.login } : {}) }, (s) => states.push(s))
-  return { flow, save, reset, load, reload, states }
+  const flow = createSettingsFlow({ load, save, reset, ...(over.login ? { login: over.login } : {}) }, (s) => states.push(s))
+  return { flow, save, reset, load, states }
 }
 
 const ready = (flow: SettingsFlow) => {
@@ -171,7 +170,7 @@ describe('sections per build and platform', () => {
 
   it('while the API is down, Try again keeps loading again, and shows the page once it is back', async () => {
     const down: SettingsRead = { ok: false, message: "Couldn't load settings. Please try again" }
-    const { flow, load, reload } = setup({ load: async () => down })
+    const { flow, load } = setup({ load: async () => down })
     flow.start()
     await vi.waitFor(() => expect(flow.state().kind).toBe('failed'))
     expect(html(flow.state())).toMatch(/<button[^>]*>Try again<\/button>/)
@@ -182,43 +181,23 @@ describe('sections per build and platform', () => {
     load.mockImplementation(async () => ({ ok: true, view: LINUX }))
     flow.retry()
     await vi.waitFor(() => expect(flow.state().kind).toBe('ready'))
-    expect(reload).not.toHaveBeenCalled()
   })
 
-  it('after an API restart the page says so and offers Reload, which reloads the page and loads nothing', async () => {
+  it('after an API restart the page shows the short line and no button of its own: the Reload banner has the only one', async () => {
     const restarted: SettingsRead = { ok: false, message: RELOAD, reload: true }
-    const { flow, load, reload } = setup({ load: async () => restarted })
+    const { flow, load } = setup({ load: async () => restarted })
     flow.start()
     await vi.waitFor(() => expect(flow.state().kind).toBe('failed'))
     const page = html(flow.state())
-    expect(text(page)).toContain(RELOAD)
+    expect(text(page)).toContain('Reload, then try again')
     expect(page).toMatch(/class="modal-alert" role="alert"/)
-    expect(page).toMatch(/<button[^>]*>Reload<\/button>/)
-    expect(page).not.toContain('Try again')
+    // Back is the page's only button: no Reload, and no Try again, which would send the same stale token.
+    expect(page.match(/<button/g)).toHaveLength(1)
+    expect(page).toMatch(/<button[^>]*>Back<\/button>/)
+    // A retry, however it comes, loads nothing: the same token would fail the same way.
     flow.retry()
-    expect(reload).toHaveBeenCalledOnce()
     expect(load).toHaveBeenCalledTimes(1)
     expect(flow.state().kind).toBe('failed')
-  })
-
-  it('Reload is the Reload button: it calls retry, as Try again does', () => {
-    const retry = vi.fn()
-    const el = createElement(SettingsPage, { state: { kind: 'failed', message: RELOAD, reload: true }, flow: { ...handlers, retry }, onBack: noop })
-    const button = (node: unknown): { props: { onClick: () => void; children: string } } | undefined => {
-      const n = node as { type?: unknown; props?: { children?: unknown } }
-      if (n?.type === 'button' && (n.props?.children === 'Reload' || n.props?.children === 'Try again')) return n as never
-      const kids = n?.props?.children
-      for (const k of Array.isArray(kids) ? kids : [kids]) {
-        const found = k && typeof k === 'object' ? button(k) : undefined
-        if (found) return found
-      }
-      return undefined
-    }
-    const rendered = (SettingsPage as unknown as (p: typeof el.props) => unknown)(el.props)
-    const b = button(rendered)
-    expect(b?.props.children).toBe('Reload')
-    b!.props.onClick()
-    expect(retry).toHaveBeenCalledOnce()
   })
 })
 
