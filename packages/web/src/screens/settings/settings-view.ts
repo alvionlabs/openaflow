@@ -46,15 +46,16 @@ export type SettingsState =
 
 export type SettingsDeps = {
   load: () => Promise<SettingsRead>
-  /** Loads the page again, for the one state a retry can't help: the API restarted. */
-  reload: () => void
   save: (change: SettingsChange) => Promise<ActionReply<SettingsView>>
   reset: () => Promise<ActionReply<SettingsView>>
   login?: LoginBridge | undefined
 }
 
-/** The failed page's one button. */
-export const retryLabel = (s: Extract<SettingsState, { kind: 'failed' }>) => (s.reload ? 'Reload' : 'Try again')
+/**
+ * Whether the failed page has its own Try again. Not after an API restart: a new load would send the same stale
+ * token, so the app-wide Reload banner offers the only way out.
+ */
+export const canRetry = (s: Extract<SettingsState, { kind: 'failed' }>) => !s.reload
 
 export type PageSections = { general: boolean; wrapper?: { reset: boolean; fallback?: string; stopNote?: string } }
 
@@ -192,10 +193,9 @@ export function createSettingsFlow(deps: SettingsDeps, onChange: (s: SettingsSta
       if (deps.login) readLogin(deps.login)
       load()
     },
-    /** Try again, after a failed load; after an API restart, Reload: a new load would send the same stale token. */
+    /** Try again, after a failed load. Not after an API restart: a new load would send the same stale token. */
     retry() {
-      if (state.kind !== 'failed') return
-      if (state.reload) return deps.reload()
+      if (state.kind !== 'failed' || !canRetry(state)) return
       show({ kind: 'loading' })
       load()
     },

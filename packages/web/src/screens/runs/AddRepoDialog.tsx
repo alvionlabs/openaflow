@@ -5,7 +5,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { postRepo } from '../../add-repo.ts'
 import { Modal } from '../../components/Modal.tsx'
-import { ModalAlert } from '../../components/ModalAlert.tsx'
+import { DialogAlert } from '../../components/DialogAlert.tsx'
 import { folderBridge } from '../../desktop-bridge.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { canAdd, createAddRepoFlow, pathHint, type AddRepoFlow, type AddRepoState } from './add-repo-flow.ts'
@@ -94,7 +94,7 @@ export function AddRepoForm({ state, flow }: FormProps) {
           </p>
         )}
       </div>
-      {state.error && !pathError && <ModalAlert id={errorId} message={state.error} />}
+      {state.error && !pathError && <DialogAlert id={errorId} message={state.error} />}
       <div className="modal-actions">
         <button className="btn quiet" type="button" disabled={state.busy} onClick={flow.cancel}>
           Cancel

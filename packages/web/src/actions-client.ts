@@ -4,6 +4,7 @@
 // can act on, never as a throw.
 
 import type { ResumeSessionResult } from '@openaflow/model'
+import { noToken, staleToken, type ReloadFlag } from './reload-flag.ts'
 
 export type ActionReply<T> = { ok: true; data: T } | { ok: false; status: number; message: string }
 
@@ -11,10 +12,20 @@ export type ActionDeps = {
   fetch?: typeof fetch
   /** The session token; by default the page's token meta, read on each call. */
   token?: () => string | null | undefined
+  /** The flag a stale or missing token sets; by default the page's (reload-flag.ts). */
+  flag?: ReloadFlag
 }
 
-export const NEED_RELOAD = 'Actions need a page reload.'
-export const RESTARTED = 'The board restarted. Reload the page.'
+/**
+ * A stale or missing token: every failed action's short line, the words for both causes. Screens show the client's
+ * message as it came, so these are the screen's words; the Reload banner (reload-flag.ts) says why and has the button.
+ * Short and warm, with no period at the end (DESIGN.md, "Forms and errors").
+ */
+export const RELOAD = 'Reload, then try again'
+/** No token on the page. */
+export const NEED_RELOAD = RELOAD
+/** A token from before an API restart (`403 bad token`). */
+export const RESTARTED = RELOAD
 export const UNREACHABLE = "Can't reach the board."
 
 /** The page's session token, from the `openaflow-token` meta tag. */
@@ -26,7 +37,10 @@ export const pageToken = () => document.querySelector('meta[name="openaflow-toke
  */
 export async function postAction<T>(path: string, body: object, deps: ActionDeps = {}): Promise<ActionReply<T>> {
   const token = (deps.token ?? pageToken)()
-  if (!token) return { ok: false, status: 0, message: NEED_RELOAD }
+  if (!token) {
+    noToken(deps.flag)
+    return { ok: false, status: 0, message: NEED_RELOAD }
+  }
   let res: Response
   try {
     res = await (deps.fetch ?? fetch)(`/api/actions/${path}`, {
@@ -54,7 +68,7 @@ export async function postAction<T>(path: string, body: object, deps: ActionDeps
   }
   if (res.ok && parsed) return { ok: true, data: data as T }
   const error = parsed && typeof data === 'object' && data !== null ? (data as { error?: unknown }).error : undefined
-  if (res.status === 403 && error === 'bad token') return { ok: false, status: 403, message: RESTARTED }
+  if (staleToken(res.status, error, deps.flag)) return { ok: false, status: 403, message: RESTARTED }
   const message = typeof error === 'string' && error.trim() !== '' ? error : `HTTP ${res.status}`
   return { ok: false, status: res.status, message }
 }
@@ -78,6 +92,7 @@ export async function savedScreen(marker: string, deps: ActionDeps = {}): Promis
   if (!token || !MARKER.test(marker)) return undefined
   try {
     const res = await (deps.fetch ?? fetch)(`/api/sessions/${marker}/screen`, { method: 'GET', headers: { 'X-OpenAFlow-Token': token } })
+    if (res.status === 403) staleToken(403, ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error, deps.flag)
     if (res.status !== 200) return undefined
     const data = (await res.json()) as { text?: unknown } | null
     return typeof data?.text === 'string' ? data.text : undefined

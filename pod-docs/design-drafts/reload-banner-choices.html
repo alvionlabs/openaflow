@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reload banner: the failed screen's words</title>
+<style>
+@font-face { font-family: "Geist"; font-weight: 400; src: url("../../packages/web/public/fonts/geist-400.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-weight: 500; src: url("../../packages/web/public/fonts/geist-500.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-weight: 400; src: url("../../packages/web/public/fonts/geist-mono-400.woff2") format("woff2"); }
+
+/* Page frame: follows the OS theme. */
+:root { color-scheme: light dark; }
+body { margin: 0; padding: 32px; font: 400 16px/1.5 "Geist", system-ui, sans-serif; background: Canvas; color: CanvasText; }
+h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+h2 { font-size: 18px; font-weight: 500; margin: 32px 0 4px; }
+.lede, .what { margin: 0 0 16px; opacity: 0.8; max-width: 80ch; }
+.cols { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.col { width: 375px; }
+.col-head { font-size: 14px; margin-bottom: 8px; }
+.col-head b { font-weight: 500; }
+.tag { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; }
+.tag.rec { color: #1a8a45; }
+.cap { font-size: 13px; opacity: 0.8; margin: 2px 0 0; }
+.why { margin: 16px 0 0; font-size: 14px; }
+.reply { margin-top: 32px; font: 500 16px "Geist Mono", monospace; }
+.legend { font-size: 13px; opacity: 0.8; margin: 8px 0 0; }
+
+/* Options: the product's dark tokens (tokens.css). */
+.app {
+  --bg: #000; --surface: #0a0a0a; --hover: #1a1a1a; --border: #262626; --border-strong: #3a3a3a;
+  --fg: #ededed; --muted: #a1a1a1; --blocked: #ff5f5f; --danger: #ff5f5f;
+  --radius-sm: 6px; --radius-md: 8px;
+  background: var(--bg); color: var(--fg); padding: 16px; border: 1px solid #444; border-radius: 8px;
+  font: 400 16px/1.5 "Geist", system-ui, sans-serif;
+}
+.host-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding: 12px 16px; border: 1px solid var(--blocked); border-radius: var(--radius-md); }
+.host-banner-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
+.host-banner-text { flex: 1; min-width: 0; margin: 0; font-size: 16px; }
+.host-banner-text b { font-weight: 500; display: block; }
+.host-banner-note { color: var(--muted); font-size: 14px; }
+.btn { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; font: 500 14px/1 "Geist", sans-serif; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--bg); color: var(--fg); white-space: nowrap; }
+.btn.ghost { border-color: transparent; }
+.bar { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.title { font-size: 18px; font-weight: 500; margin: 0; }
+.head { padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 18px; font-weight: 500; margin: 0 0 16px; }
+.field { display: grid; justify-items: start; gap: 8px; }
+.label { font-size: 14px; font-weight: 500; }
+.row { display: flex; align-items: center; gap: 12px; }
+.input { height: 40px; width: 140px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg); font: 13px "Geist Mono", monospace; display: flex; align-items: center; }
+.muted { color: var(--muted); font-size: 14px; }
+.err { display: flex; gap: 8px; margin: 0; font-size: 14px; line-height: 20px; color: var(--danger); }
+.err svg { flex: none; margin-top: 2px; stroke: var(--blocked); }
+.help { font-size: 14px; line-height: 20px; color: var(--muted); }
+.mark { outline: 1px dashed #f5a623; outline-offset: 3px; }
+</style>
+</head>
+<body>
+<h1>Reload banner: the failed screen's words</h1>
+<p class="lede">After an API restart, any request that fails with <code>bad token</code> shows one banner with a Reload button at the top of the window. The banner is the same in both options. This page shows only the line under the field that failed.</p>
+
+<h2>1. The line under the failed field</h2>
+<p class="what">This choice sets what the Settings field, the Add repo form, Remove repo, Forget, and the Auto-continue save show while the banner is visible.</p>
+
+<div class="cols">
+  <div class="col">
+    <div class="col-head"><b>a. Full words</b><span class="tag">now</span></div>
+    <p class="cap">The field repeats the banner's sentence. Today it shows this sentence with no banner.</p>
+    <div class="app" style="margin-top:8px">
+      <div class="host-banner" role="status">
+        <span class="host-banner-dot"></span>
+        <p class="host-banner-text"><b>OpenAFlow restarted in the background.</b><span class="host-banner-note">Reload to continue.</span></p>
+        <span class="btn">Reload</span>
+      </div>
+      <div class="bar"><span class="btn ghost">← Back</span><h1 class="title">Settings</h1></div>
+      <h2 class="head">Terminals</h2>
+      <div class="field">
+        <span class="label">Scrollback</span>
+        <div class="row"><span class="input">5000</span><span class="muted">lines per terminal</span></div>
+        <p class="err mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span>OpenAFlow restarted in the background. Reload to continue</span></p>
+        <small class="help">Kept for the screen you see after a reopen and next to Resume. Applies to new sessions.</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head"><b>b. Short line</b><span class="tag rec">recommended</span></div>
+    <p class="cap">The field says only that the save did not happen. The banner gives the reason and the fix.</p>
+    <div class="app" style="margin-top:8px">
+      <div class="host-banner" role="status">
+        <span class="host-banner-dot"></span>
+        <p class="host-banner-text"><b>OpenAFlow restarted in the background.</b><span class="host-banner-note">Reload to continue.</span></p>
+        <span class="btn">Reload</span>
+      </div>
+      <div class="bar"><span class="btn ghost">← Back</span><h1 class="title">Settings</h1></div>
+      <h2 class="head">Terminals</h2>
+      <div class="field">
+        <span class="label">Scrollback</span>
+        <div class="row"><span class="input">5000</span><span class="muted">lines per terminal</span></div>
+        <p class="err mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span>Not saved</span></p>
+        <small class="help">Kept for the screen you see after a reopen and next to Resume. Applies to new sessions.</small>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="legend">The dashed outline marks the only difference between the options.</p>
+<p class="why"><b>Why b:</b> with b, the sentence shows one time, next to its button. With a, the same sentence shows twice on one screen. The field still says what failed: "Not saved", "Not added", or "Not removed", depending on the action.</p>
+
+<p class="reply">Reply: 1 b</p>
+</body>
+</html>
