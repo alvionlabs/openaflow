@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -94,5 +95,23 @@ describe('where the Reload banner shows', () => {
 
   it('nowhere while no request found the token stale', () => {
     for (const html of [screen(createReloadFlag()), screen(createReloadFlag(), { back: '' })]) expect(count(html, 'reload-banner')).toBe(0)
+  })
+})
+
+describe('the Reload banner stays in view', () => {
+  const css = readFileSync(new URL('./alert-banner.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const rule = (selector: string) => new RegExp(`(^|\\n)${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`).exec(css)?.[2] ?? ''
+
+  it('sticks to the top of the window as the page scrolls, in its own place in the column', () => {
+    const own = rule('.reload-banner')
+    // Sticky, not fixed: it keeps its place in the flow, so nothing starts under it when it first shows.
+    expect(own).toMatch(/position:\s*sticky;/)
+    expect(own).toMatch(/top:\s*0;/)
+    // Above the column's content as it scrolls under it, and the sidebar's resize handle (z-index 1).
+    expect(own).toMatch(/z-index:\s*2;/)
+    // Opaque, so the content under it doesn't show through.
+    expect(rule('.alert-banner')).toMatch(/background:\s*var\(--bg\);/)
+    // Only the Reload banner: the host banner scrolls with the page.
+    expect(rule('.alert-banner')).not.toMatch(/position:/)
   })
 })

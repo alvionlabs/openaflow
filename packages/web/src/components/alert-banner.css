@@ -50,3 +50,14 @@
 .alert-banner > .btn {
   flex: none;
 }
+
+/*
+ * The Reload banner stays in view as the page scrolls: a save far down a long page still has its Reload. Sticky, not
+ * fixed, so it keeps its place in the column and nothing starts under it when it first shows. Above the column's
+ * content and the sidebar's resize handle (z-index 1). The host banner under it scrolls with the page.
+ */
+.reload-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
