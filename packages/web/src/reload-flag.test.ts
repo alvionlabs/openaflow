@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ReloadBanner } from './components/ReloadBanner.tsx'
 import { postAction, savedScreen } from './actions-client.ts'
 import { postRepo } from './add-repo.ts'
 import { createReloadFlag, reloadFlag, staleToken, type ReloadFlag } from './reload-flag.ts'
@@ -103,9 +106,11 @@ describe('the reload flag', () => {
     expect(flag.get()).toBe(true)
   })
 
-  it('with no flag given, the page flag is set', async () => {
+  it('with no flag given, a bad token sets the page flag, and the banner with no props shows', async () => {
     expect(reloadFlag.get()).toBe(false)
+    expect(renderToStaticMarkup(createElement(ReloadBanner))).toBe('')
     await postAction('merge', {}, { fetch: fetchOf(() => json(403, { error: 'bad token' })), token: () => TOKEN })
     expect(reloadFlag.get()).toBe(true)
+    expect(renderToStaticMarkup(createElement(ReloadBanner))).toContain('class="alert-banner reload-banner"')
   })
 })
