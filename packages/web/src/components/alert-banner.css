@@ -61,3 +61,18 @@
   top: 0;
   z-index: 2;
 }
+
+/*
+ * While the Reload banner shows, a field that takes focus (Tab, Shift+Tab) scrolls clear of it: the scroll room is
+ * the banner's height and a 16 px gap. One line on wide screens (about 76 px); at 480 px and below its title wraps
+ * (about 100 px at 375 px).
+ */
+html:has(.reload-banner) {
+  scroll-padding-top: 92px;
+}
+
+@media (max-width: 480px) {
+  html:has(.reload-banner) {
+    scroll-padding-top: 124px;
+  }
+}

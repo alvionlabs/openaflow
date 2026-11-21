@@ -100,7 +100,7 @@ describe('where the Reload banner shows', () => {
 
 describe('the Reload banner stays in view', () => {
   const css = readFileSync(new URL('./alert-banner.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
-  const rule = (selector: string) => new RegExp(`(^|\\n)${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`).exec(css)?.[2] ?? ''
+  const rule = (selector: string) => new RegExp(`(^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`).exec(css)?.[2] ?? ''
 
   it('sticks to the top of the window as the page scrolls, in its own place in the column', () => {
     const own = rule('.reload-banner')
@@ -113,5 +113,13 @@ describe('the Reload banner stays in view', () => {
     expect(rule('.alert-banner')).toMatch(/background:\s*var\(--bg\);/)
     // Only the Reload banner: the host banner scrolls with the page.
     expect(rule('.alert-banner')).not.toMatch(/position:/)
+  })
+
+  it('keeps scroll room above a focused field, as tall as the banner and a gap, at each width', () => {
+    // The banner is about 76 px tall on one line and about 100 px at 375 px, where its title wraps.
+    const pad = (body: string) => Number(/scroll-padding-top:\s*(\d+)px;/.exec(body)?.[1] ?? 0)
+    expect(pad(rule('html:has(.reload-banner)'))).toBeGreaterThanOrEqual(76 + 16)
+    const narrow = /@media \(max-width: 480px\)\s*\{\s*html:has\(\.reload-banner\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? ''
+    expect(pad(narrow)).toBeGreaterThanOrEqual(101 + 16)
   })
 })
