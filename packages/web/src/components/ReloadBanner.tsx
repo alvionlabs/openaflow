@@ -13,7 +13,8 @@ export function ReloadBannerView({ onReload }: { onReload: () => void }) {
   )
 }
 
-const reloadPage = () => location.reload()
+/** Loads the page again: a new page gets a new token. */
+export const reloadPage = () => location.reload()
 
 /**
  * The Reload banner once any request finds the page's token stale (reload-flag.ts), until the page reloads. Each

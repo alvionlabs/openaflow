@@ -4,7 +4,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { BoardRepo, SkillId } from '@openaflow/model'
 import { Listbox } from '../../components/Listbox.tsx'
-import { ModalAlert } from '../../components/ModalAlert.tsx'
+import { DialogAlert } from '../../components/DialogAlert.tsx'
 import { Icon } from '../../theme/icons.tsx'
 import { TEXT_MAX, createNewSessionFlow, isBusy, skillItems, textLabel, type NewSessionFlow, type NewSessionState, type WrapperError } from './new-session-flow.ts'
 import '../../components/modal.css'
@@ -139,7 +139,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props
         (idle.wrapper ? (
           <WrapperErrorBox id={errorId} title={idle.error} wrapper={idle.wrapper} onOpenSettings={flow.openSettings} />
         ) : (
-          <ModalAlert id={errorId} message={idle.error} />
+          <DialogAlert id={errorId} message={idle.error} />
         ))}
       <p className="note ns-note" role="status">
         {idle?.note ?? ''}

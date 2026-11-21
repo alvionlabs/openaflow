@@ -51,7 +51,7 @@ The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the ful
 - A menu inside the sidebar must be `position: fixed` (the runs list scrolls, so it clips anything absolute), and must follow its button on scroll, not close: focusing or clicking a card scrolls the list.
 - Keep the sidebar's fixed ⋯ menu outside the `run-card` container: a size container can become the containing block for fixed children in some browsers. A ghost fill must stay see-through (`color-mix`), since `--hover` is invisible on a hovered card.
 - The banner hides on `failed`, not only on `ready` and `restarted`: after a failure the app no longer keeps trying, so its note would be false (the Terminal tab words a failure). The overlay has no way back: a confirmed quit always ends the app, and a Cancel sends no `onQuitting`.
-- The Reload banner sits in the main column, so while a modal is open (Add repo, Remove repo, Forget) it shows behind the dimmed backdrop and takes no click: Cancel first, then Reload.
+- A modal's backdrop covers the Reload banner. So a dialog's error box (`DialogAlert`: Add repo, Remove repo, Forget, and the New session modal) shows its own small **Reload** beside "Reload, then try again", only while the flag is set; any other error has no button. The Settings load box is no dialog and keeps none.
 - A new request path that sends the page token must call `staleToken` (and `noToken` when the page has none), or a stale token there shows no banner.
 
 ## History
@@ -83,3 +83,4 @@ The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the ful
 - 2026-11-15 · terminal-host session-life W3: the heartbeat banner and the Ending N sessions… overlay (desktop only), Open terminal on hosted rows in the Waiting tab, a stopped hosted reply that says to resume, and `Resumed session` in the action log.
 - 2026-11-20 · task reload-banner · added: the app-wide Reload banner after an API restart, one page-wide flag set by every token request, and the shared `AlertBanner` look with the host banner.
 - 2026-11-21 · task reload-banner · fixed: the setup check's Recheck and tool-path save show "Reload, then try again" after an API restart (Recheck with no "Recheck failed:" before it), not the old "The board restarted. Reload the page." (`reload-words.test.ts`).
+- 2026-11-21 · task reload-banner · added: a dialog that says "Reload, then try again" has its own **Reload** beside the line (`DialogAlert`), since its backdrop covers the banner; the human's pick (`dialog-reload.test.ts`).

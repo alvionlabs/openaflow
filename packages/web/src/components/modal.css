@@ -138,6 +138,23 @@
 }
 
 /*
+ * A dialog's Reload for a stale token (DialogAlert.tsx): at the line's right, keeping its size while the words wrap.
+ * The icon and the line centre on the button, so the box doesn't read top-heavy.
+ */
+.modal-alert:has(> .btn) {
+  align-items: center;
+}
+
+.modal-alert:has(> .btn) svg {
+  margin-top: 0;
+}
+
+.modal-alert > .btn {
+  flex: none;
+  margin-left: auto;
+}
+
+/*
  * A field's own error, directly under the field: red text with the alert icon, no box. --blocked is never text
  * (tokens.test.ts), so the text is --danger, the same red as --blocked in dark; the icon is --blocked, like the
  * invalid field's border.
