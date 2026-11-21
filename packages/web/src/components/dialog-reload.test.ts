@@ -6,6 +6,8 @@ import { TRY_AGAIN } from '../add-repo.ts'
 import { createReloadFlag, type ReloadFlag } from '../reload-flag.ts'
 import { AddRepoForm } from '../screens/runs/AddRepoDialog.tsx'
 import type { AddRepoFlow } from '../screens/runs/add-repo-flow.ts'
+import type { NewSessionFlow } from '../screens/runs/new-session-flow.ts'
+import { NewSessionForm } from '../screens/runs/NewSessionForm.tsx'
 import { ConfirmModal } from './ConfirmModal.tsx'
 import { DialogAlert } from './DialogAlert.tsx'
 import { ModalAlert } from './ModalAlert.tsx'
@@ -67,5 +69,16 @@ describe("a dialog's Reload", () => {
       expect(reloadButtons(html)).toBe(1)
     }
     for (const html of [confirm(TRY_AGAIN), add(TRY_AGAIN)]) expect(reloadButtons(html)).toBe(0)
+  })
+
+  it('New session: Reload only in the modal; the Next step card has the banner in view', async () => {
+    await postAction('new-session', {}, { fetch: async () => new Response(JSON.stringify({ error: 'bad token' }), { status: 403 }), token: () => 'k' })
+    const flow = { start: () => {}, edit: () => {}, openSettings: () => {} } as unknown as NewSessionFlow
+    const form = (inDialog: boolean, error: string) => renderToStaticMarkup(createElement(NewSessionForm, { repoId: 'r', state: { kind: 'idle', error }, flow, inDialog }))
+    expect(form(true, RELOAD)).toMatch(RELOAD_BUTTON)
+    expect(reloadButtons(form(true, RELOAD))).toBe(1)
+    expect(form(false, RELOAD)).toContain('Reload, then try again')
+    expect(reloadButtons(form(false, RELOAD))).toBe(0)
+    expect(reloadButtons(form(true, TRY_AGAIN))).toBe(0)
   })
 })

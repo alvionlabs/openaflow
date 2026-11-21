@@ -51,7 +51,7 @@ The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the ful
 - A menu inside the sidebar must be `position: fixed` (the runs list scrolls, so it clips anything absolute), and must follow its button on scroll, not close: focusing or clicking a card scrolls the list.
 - Keep the sidebar's fixed ⋯ menu outside the `run-card` container: a size container can become the containing block for fixed children in some browsers. A ghost fill must stay see-through (`color-mix`), since `--hover` is invisible on a hovered card.
 - The banner hides on `failed`, not only on `ready` and `restarted`: after a failure the app no longer keeps trying, so its note would be false (the Terminal tab words a failure). The overlay has no way back: a confirmed quit always ends the app, and a Cancel sends no `onQuitting`.
-- A modal's backdrop covers the Reload banner. So a dialog's error box (`DialogAlert`: Add repo, Remove repo, Forget, and the New session modal) shows its own small **Reload** beside "Reload, then try again", only while the flag is set; any other error has no button. The Settings load box is no dialog and keeps none.
+- A modal's backdrop covers the Reload banner. So a dialog's error box (`DialogAlert`: Add repo, Remove repo, Forget, and the New session modal, `inDialog`) shows its own small **Reload** beside "Reload, then try again", only while the flag is set; any other error has no button. The Settings load box and the New session form on the Next step card are no dialog and keep none: the banner is in view there, and the page has one Reload.
 - A new request path that sends the page token must call `staleToken` (and `noToken` when the page has none), or a stale token there shows no banner.
 
 ## History

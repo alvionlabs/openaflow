@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import type { BoardRepo, SkillId } from '@openaflow/model'
 import { Listbox } from '../../components/Listbox.tsx'
 import { DialogAlert } from '../../components/DialogAlert.tsx'
+import { ModalAlert } from '../../components/ModalAlert.tsx'
 import { Icon } from '../../theme/icons.tsx'
 import { TEXT_MAX, createNewSessionFlow, isBusy, skillItems, textLabel, type NewSessionFlow, type NewSessionState, type WrapperError } from './new-session-flow.ts'
 import '../../components/modal.css'
@@ -56,6 +57,11 @@ type Props = {
   focusText?: boolean
   /** The modal's Cancel, before New session. */
   cancel?: ReactNode
+  /**
+   * In the modal, whose backdrop covers the Reload banner: a stale-token error gets its own Reload (DialogAlert). On
+   * the Next step card the banner stays in view, so the error box has none.
+   */
+  inDialog?: boolean
 }
 
 /**
@@ -63,7 +69,7 @@ type Props = {
  * quiet note, then the actions. Busy: the button reads "Starting…" and every control is off. After a start the
  * text clears.
  */
-export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props) {
+export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialog = false }: Props) {
   const skillLabel = useId()
   const skillId = useId()
   const textId = useId()
@@ -139,7 +145,11 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel }: Props
         (idle.wrapper ? (
           <WrapperErrorBox id={errorId} title={idle.error} wrapper={idle.wrapper} onOpenSettings={flow.openSettings} />
         ) : (
-          <DialogAlert id={errorId} message={idle.error} />
+          inDialog ? (
+            <DialogAlert id={errorId} message={idle.error} />
+          ) : (
+            <ModalAlert id={errorId} message={idle.error} />
+          )
         ))}
       <p className="note ns-note" role="status">
         {idle?.note ?? ''}
