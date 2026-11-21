@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { NEED_RELOAD, RESTARTED } from './actions-client.ts'
+import { NEED_RELOAD, postAction, RESTARTED } from './actions-client.ts'
 import { addError, postRepo } from './add-repo.ts'
 import { createReloadFlag, RELOAD_NOTE, RELOAD_TITLE } from './reload-flag.ts'
 import { toggleText } from './screens/runs/AutoContinueButton.tsx'
 import { FORGET_ERRORS } from './screens/runs/forget-flow.ts'
 import { refusalText, REMOVE_ERRORS } from './screens/runs/remove-flow.ts'
+import { formView } from './screens/runs/answer-flow.ts'
+import { confirmView as mergeView } from './screens/runs/merge-flow.ts'
+import { resumeView } from './screens/runs/resume-flow.ts'
 import { readSettings, saveSettings } from './screens/settings/settings-client.ts'
+import { readTools } from './screens/setup/setup-client.ts'
+import { afterRecheck, afterSave, type SetupState } from './screens/setup/setup-view.ts'
 
 const SHORT = 'Reload, then try again'
 const token = () => 'k'.repeat(43)
@@ -46,4 +51,27 @@ describe('the failed action says only to reload; the banner says why', () => {
     const read = await readSettings(deps)
     expect(read.ok === false && read.message).toBe(SHORT)
   })
+
+  it('the action client and the setup check say the short line for a stale or missing token', async () => {
+    for (const d of [deps, { ...deps, token: () => null }]) {
+      const reply = await postAction('merge', {}, d)
+      expect(reply.ok === false && reply.message).toBe(SHORT)
+      const read = await readTools(d)
+      expect(read.ok === false && read.message).toBe(SHORT)
+    }
+  })
+
+  // Each of these shows the action client's message as it came: the client's words are the screen's words.
+  for (const word of [RESTARTED, NEED_RELOAD]) {
+    it(`Merge, Answer, Continue/Go, and the setup check show the short line (${word === RESTARTED ? 'stale' : 'no'} token)`, () => {
+      expect(mergeView({ kind: 'error', seq: 1, target: { repoId: 'r', number: 7 }, message: word })?.error).toBe(SHORT)
+      expect(formView({ kind: 'error', seq: 1, target: { repoId: 'r', line: 'l' }, text: 'x', message: word })?.error).toBe(SHORT)
+      expect(resumeView({ kind: 'error', seq: 1, word: 'continue', message: word }, undefined).error).toBe(SHORT)
+      const setup: SetupState = { tools: [], busy: true, rowErrors: {} }
+      const saved = afterSave(setup, 'claude', { ok: false, status: 403, message: word })
+      expect(saved.view === 'setup' && saved.setup.rowErrors.claude).toBe(SHORT)
+      const rechecked = afterRecheck(setup, { ok: false, message: word })
+      expect(rechecked.view === 'setup' && rechecked.setup.recheckError).toBe(SHORT)
+    })
+  }
 })

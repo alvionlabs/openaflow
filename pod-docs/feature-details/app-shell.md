@@ -82,3 +82,4 @@ The frame around every screen: the web app at `http://127.0.0.1:<web>/`, the ful
 
 - 2026-11-15 · terminal-host session-life W3: the heartbeat banner and the Ending N sessions… overlay (desktop only), Open terminal on hosted rows in the Waiting tab, a stopped hosted reply that says to resume, and `Resumed session` in the action log.
 - 2026-11-20 · task reload-banner · added: the app-wide Reload banner after an API restart, one page-wide flag set by every token request, and the shared `AlertBanner` look with the host banner.
+- 2026-11-21 · task reload-banner · fixed: the setup check's Recheck and tool-path save show "Reload, then try again" after an API restart (Recheck with no "Recheck failed:" before it), not the old "The board restarted. Reload the page." (`reload-words.test.ts`).

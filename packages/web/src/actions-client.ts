@@ -16,8 +16,16 @@ export type ActionDeps = {
   flag?: ReloadFlag
 }
 
-export const NEED_RELOAD = 'Actions need a page reload.'
-export const RESTARTED = 'The board restarted. Reload the page.'
+/**
+ * A stale or missing token: every failed action's short line, the words for both causes. Screens show the client's
+ * message as it came, so these are the screen's words; the Reload banner (reload-flag.ts) says why and has the button.
+ * Short and warm, with no period at the end (DESIGN.md, "Forms and errors").
+ */
+export const RELOAD = 'Reload, then try again'
+/** No token on the page. */
+export const NEED_RELOAD = RELOAD
+/** A token from before an API restart (`403 bad token`). */
+export const RESTARTED = RELOAD
 export const UNREACHABLE = "Can't reach the board."
 
 /** The page's session token, from the `openaflow-token` meta tag. */

@@ -1,7 +1,7 @@
 // Adding a repo: the POST to /api/repos and the error word as a sentence. The
 // Add repo flow (screens/runs/add-repo-flow.ts) drives them.
 
-import { NEED_RELOAD, pageToken, RESTARTED, type ActionDeps } from './actions-client.ts'
+import { NEED_RELOAD, pageToken, RELOAD, RESTARTED, type ActionDeps } from './actions-client.ts'
 import { noToken, staleToken } from './reload-flag.ts'
 
 export type AddResult = { status: number; error?: string }
@@ -39,8 +39,8 @@ export async function postRepo(path: string, deps: PostRepoDeps = {}): Promise<A
 export const ADD_ALREADY = 'This repo is already here'
 export const ADD_BAD_PATH = "That path doesn't look right"
 export const TRY_AGAIN = 'Something went wrong. Please try again'
-/** A stale or missing token: the failed action's short line. The Reload banner (reload-flag.ts) says why and offers the button. */
-export const RELOAD = 'Reload, then try again'
+/** A stale or missing token: the failed action's short line (actions-client.ts). */
+export { RELOAD }
 
 /** What the modal says after a refused add. `pathError`: the same path would fail again, so Add waits for a change. */
 export type AddError = { message: string; pathError: boolean }

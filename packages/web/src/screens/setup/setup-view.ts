@@ -1,7 +1,7 @@
 // The setup check's rows and words, and how a save or a Recheck changes the screen.
 // No I/O: setup-client.ts asks the server and hands the answers here.
 
-import type { ActionReply } from '../../actions-client.ts'
+import { RELOAD, type ActionReply } from '../../actions-client.ts'
 
 /** The server's `ToolState` (packages/server/src/tool-finder.ts). The web app takes no server code into its bundle. */
 export type ToolName = 'git' | 'gh' | 'claude'
@@ -130,5 +130,7 @@ export function afterSave(state: SetupState, tool: ToolName, reply: ActionReply<
 
 export function afterRecheck(state: SetupState, read: ToolsRead): SetupStep {
   if (read.ok) return setupStep(read.tools)
-  return { view: 'setup', setup: { ...state, busy: false, recheckError: `Recheck failed: ${read.message}` } }
+  // The reload words stand alone: "Recheck failed:" before them would say the same thing twice.
+  const recheckError = read.message === RELOAD ? RELOAD : `Recheck failed: ${read.message}`
+  return { view: 'setup', setup: { ...state, busy: false, recheckError } }
 }
