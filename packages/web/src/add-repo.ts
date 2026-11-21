@@ -1,15 +1,12 @@
 // Adding a repo: the POST to /api/repos and the error word as a sentence. The
 // Add repo flow (screens/runs/add-repo-flow.ts) drives them.
 
-import { NEED_RELOAD, pageToken, RESTARTED } from './actions-client.ts'
+import { NEED_RELOAD, pageToken, RESTARTED, type ActionDeps } from './actions-client.ts'
+import { noToken, staleToken } from './reload-flag.ts'
 
 export type AddResult = { status: number; error?: string }
 
-export type PostRepoDeps = {
-  fetch?: typeof fetch
-  /** The session token; by default the page's token meta, read on each call. */
-  token?: () => string | null | undefined
-}
+export type PostRepoDeps = ActionDeps
 
 /**
  * POST /api/repos with the page's session token, as the action client sends it. The
@@ -19,7 +16,10 @@ export type PostRepoDeps = {
  */
 export async function postRepo(path: string, deps: PostRepoDeps = {}): Promise<AddResult> {
   const token = (deps.token ?? pageToken)()
-  if (!token) return { status: 0, error: NEED_RELOAD }
+  if (!token) {
+    noToken(deps.flag)
+    return { status: 0, error: NEED_RELOAD }
+  }
   const res = await (deps.fetch ?? fetch)('/api/repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
@@ -31,7 +31,7 @@ export async function postRepo(path: string, deps: PostRepoDeps = {}): Promise<A
   } catch {
     error = undefined
   }
-  if (res.status === 403 && error === 'bad token') return { status: 403, error: RESTARTED }
+  if (staleToken(res.status, error, deps.flag)) return { status: 403, error: RESTARTED }
   return typeof error === 'string' && error.length > 0 ? { status: res.status, error } : { status: res.status }
 }
 
