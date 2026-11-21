@@ -623,12 +623,15 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
 
 ## 2026-11-20 — Reload banner and the short line (human decision)
 
-- **Decision:** after an API restart, one app-wide banner says "OpenAFlow restarted in the background." / "Reload to continue." and holds the only **Reload** button. The failed action's own line says "Reload, then try again", with no final period, for Settings save and load, Add repo, Remove repo, Forget, and the Auto-continue save. The Settings load error has no button of its own.
+- **Decision:** after an API restart, one app-wide banner says "OpenAFlow restarted in the background." / "Reload to continue." and holds the **Reload** button. The banner stays at the top of the window as the page scrolls (2026-11-21). The failed action's own line says "Reload, then try again", with no final period, for Settings save and load, Add repo, Remove repo, Forget, and the Auto-continue save. The Settings load error has no button of its own.
+- **Dialog Reload (2026-11-21, human):** a modal dialog (Add repo, Remove repo, Forget, New session) covers the banner, so its "Reload, then try again" line gets its own Reload button, only for a stale token. The New session form on the Next step card has no backdrop, so it gets no button. The page never shows two Reload buttons that the user can press.
 - **Why, in short:** the desktop app has no menu, so Ctrl+R does nothing. One banner gives one way to reload on every screen, and the full sentence shows one time, next to its button.
 - **Rejected:**
   - A Reload button on each screen: many buttons for one fix.
   - Turning Ctrl+R back on: nobody would know to press it.
   - The full words under the field as well as in the banner (option a): the same sentence twice on one screen.
+  - Closing the dialog when the token goes stale: the user loses what they typed, and it feels like a bug.
+  - Scrolling the page back up when the banner shows: the page jumps under the user.
   - "Not saved", "Couldn't save", "Changes lost: reload above", and no line at all: the human disliked "Not saved", and the others do not say what to do.
 - **Draft:** [reload-banner-choices.html](design-drafts/reload-banner-choices.html) (option b, with the words changed).
 - **From:** task PR #159.
