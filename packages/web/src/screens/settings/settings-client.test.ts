@@ -57,7 +57,7 @@ describe('settings client', () => {
   })
 
   it('a 403 "bad token" is a restart: the reload words, flagged, whatever the page token is', async () => {
-    expect(RELOAD).toBe('OpenAFlow restarted in the background. Reload to continue')
+    expect(RELOAD).toBe('Reload, then try again')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fetchFn = vi.fn<typeof fetch>(async () => answer({ error: 'bad token' }, 403))
     await expect(readSettings({ fetch: fetchFn, token })).resolves.toEqual({ ok: false, message: RELOAD, reload: true })
