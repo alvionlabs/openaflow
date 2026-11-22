@@ -436,6 +436,8 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 
 ## 2026-11-17 — CI once per sprint, not per wave PR (human)
 
+_Partly replaced on 2026-11-22: CI no longer runs on a push to `pod-staging`. See [CI runs on PRs only](#2026-11-22--ci-runs-on-prs-only-not-on-a-push-to-pod-staging-human)._
+
 - **Decision:** wave PRs into the plan branch run no CI; they merge on the orchestrator's local wave check (`pnpm verify` and `pnpm test:electron` on Linux). CI (Linux and Windows) runs on PRs into `pod-staging` or `main` and on a push to `pod-staging`. At each sprint end, the orchestrator opens a draft PR from the plan branch into `pod-staging` (`ci: sprint <slug> check`) and closes it when green; a red run halts before the next sprint. In the last sprint, the final plan PR is that check. Engineers no longer open `wip: … CI check` draft PRs.
 - **Why:** a wave is a piece of a feature, not a feature: two to five parts built in parallel in one to two hours, often not wired together yet (session-life wave 1 changed nothing a user could see). Only a sprint holds a real part of the feature, so that is the level where a full Linux and Windows CI run tests something the engineers' own tests did not. The per-wave CI and the engineers' draft CI rounds also cost about 10 minutes of waiting per wave; CI minutes are free (public repo), so time is the only cost.
 - **Sizes (plan terminal-host):** plan = one feature, 4 sprints, days · sprint = 2–3 waves, about 4–8 h · wave = 2–5 parts, about 1–2 h · part = one engineer, 10–30 min.
@@ -635,3 +637,12 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
   - "Not saved", "Couldn't save", "Changes lost: reload above", and no line at all: the human disliked "Not saved", and the others do not say what to do.
 - **Draft:** [reload-banner-choices.html](design-drafts/reload-banner-choices.html) (option b, with the words changed).
 - **From:** task PR #159.
+
+## 2026-11-22 — CI runs on PRs only, not on a push to pod-staging (human)
+
+- **Decision:** `.github/workflows/pod-ci.yml` runs on `pull_request` into `pod-staging` or `main` only. The `push` trigger on `pod-staging` is gone. A workflow-level `concurrency` group per PR (`pod-ci-${{ github.event.pull_request.number }}`) with `cancel-in-progress: true` cancels a PR's older run when a new push arrives.
+- **Why:** merging a PR into `pod-staging` fired a `push` run. The staging PR `pod-staging` into `main` then fired a `pull_request` run on the same commit. The same 4 jobs (`unit` and `e2e` on Ubuntu and Windows) ran twice on the same code (seen on PR #160).
+- **Gives up:** no run right after a merge into `pod-staging`. The risk is low: PRs merge one at a time, and the staging PR into `main` tests the combined code.
+- **Rejected:** `concurrency` alone (it does not dedupe across a `push` and a `pull_request` event); `fkirc/skip-duplicate-actions` (no source shows it works across `push` and `pull_request`, and it adds a dependency); a merge queue (it adds a third run; the repo is a public organization repo, so the plan is not the blocker); dropping `main` from `pull_request` and relying on the push run (the human chose PR gates).
+- **Research:** [ci-duplicate-runs.md](research/ci-duplicate-runs.md).
+- **Full record:** [decisions/ci.md](decisions/ci.md).
