@@ -123,3 +123,8 @@
   font: 400 var(--size-small) / 1.55 var(--font);
   max-width: 72ch;
 }
+
+/* The grid gap already spaces the banner from the heading. */
+.setup > .alert-banner {
+  margin-bottom: 0;
+}

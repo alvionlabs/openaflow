@@ -48,7 +48,7 @@ import { SideHandle } from './SideHandle.tsx'
 import { UrgentBanner } from './UrgentBanner.tsx'
 import { readWidth, saveWidth } from './sidebar-width.ts'
 import { readTab, saveTab, shownTab, tabRequest, tabsFor, type Tab, type TabStorage } from './tab-memory.ts'
-import { HostBanner } from './HostBanner.tsx'
+import { TopBanners } from './HostBanner.tsx'
 import { watchBanner, watchOverlay } from './host-banner.ts'
 import { QuitOverlay } from './QuitOverlay.tsx'
 import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
@@ -56,6 +56,7 @@ import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
 import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
 import './runs.css'
+import type { ReloadFlag } from '../../reload-flag.ts'
 
 type Props = {
   board: Board | undefined
@@ -75,6 +76,8 @@ type Props = {
   navigate?: (hash: string) => void
   /** On `#settings`: the settings page takes the main column, and Back goes to `back`. */
   settings?: { back: string } | undefined
+  /** The flag that shows the Reload banner; the page's when not given. */
+  reloadFlag?: ReloadFlag | undefined
 }
 
 /** The page's local storage, or nothing where there is none or it throws. */
@@ -88,7 +91,7 @@ function pageStorage(): TabStorage | undefined {
 
 const TAB_LABELS: Record<Tab, string> = { waiting: 'Waiting', log: 'Log', terminal: 'Terminal' }
 
-export function RunsScreen({ board, stream, runs, selected, view, slice, agent, now, storage, planFallback, navigate, settings }: Props) {
+export function RunsScreen({ board, stream, runs, selected, view, slice, agent, now, storage, planFallback, navigate, settings, reloadFlag }: Props) {
   const store = useRef(storage ?? pageStorage())
   const [stored, setStored] = useState<Tab | undefined>(() => readTab(store.current))
   const [picking, setPicking] = useState(false)
@@ -330,12 +333,12 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
         <SideHandle width={sideWidth} onResize={setSideWidth} onCommit={commitWidth} />
         {settings ? (
           <main className="main settings-main">
-            {hostDown && <HostBanner />}
+            <TopBanners reloadFlag={reloadFlag} hostDown={hostDown} />
             <SettingsScreen onBack={leaveSettings} />
           </main>
         ) : (
           <main className={view === 'board' ? 'main wide' : 'main'}>
-            {hostDown && <HostBanner />}
+            <TopBanners reloadFlag={reloadFlag} hostDown={hostDown} />
             {urgentSlot && (
               <div className="urgent-slot" role="status">
                 {urgent && <UrgentBanner at={urgent} onOpen={(href) => (focusFor.current = href)} />}

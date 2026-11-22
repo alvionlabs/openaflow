@@ -4,6 +4,7 @@
 import type { SettingsChange, SettingsView } from '@openaflow/model'
 import { NEED_RELOAD, pageToken, postAction, RESTARTED, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
 import { RELOAD } from '../../add-repo.ts'
+import { noToken, staleToken, type ReloadFlag } from '../../reload-flag.ts'
 import { parseSettingsView } from './settings-view.ts'
 
 export const LOAD_FAILED = "Couldn't load settings. Please try again"
@@ -31,15 +32,16 @@ const restarted = (cause: string): SettingsRead => {
   return { ok: false, message: RELOAD, reload: true }
 }
 
-function badToken(text: string): boolean {
+/** The body's error word, or undefined for a body that isn't a JSON object with one. */
+function errorWord(text: string): unknown {
   try {
-    return (JSON.parse(text) as { error?: unknown } | null)?.error === 'bad token'
+    return (JSON.parse(text) as { error?: unknown } | null)?.error
   } catch {
-    return false
+    return undefined
   }
 }
 
-async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSignal): Promise<SettingsRead> {
+async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSignal, flag: ReloadFlag | undefined): Promise<SettingsRead> {
   let res: Response
   let text: string
   try {
@@ -48,7 +50,7 @@ async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSi
   } catch (e) {
     return signal.aborted ? { ok: false, message: LOAD_FAILED } : failed(String(e))
   }
-  if (res.status === 403 && badToken(text)) return restarted(`HTTP 403 ${text.slice(0, 200)}`)
+  if (staleToken(res.status, errorWord(text), flag)) return restarted(`HTTP 403 ${text.slice(0, 200)}`)
   if (!res.ok) return failed(`HTTP ${res.status} ${text.slice(0, 200)}`)
   let data: unknown
   try {
@@ -63,7 +65,10 @@ async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSi
 /** GET /api/settings with the page token, within `limitMs`. */
 export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_MS): Promise<SettingsRead> {
   const token = (deps.token ?? pageToken)()
-  if (!token) return restarted('no page token')
+  if (!token) {
+    noToken(deps.flag)
+    return restarted('no page token')
+  }
   const fetchFn = deps.fetch ?? fetch
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -74,7 +79,7 @@ export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_M
     }, limitMs)
   })
   try {
-    return await Promise.race([askSettings(fetchFn, token, controller.signal), late])
+    return await Promise.race([askSettings(fetchFn, token, controller.signal, deps.flag), late])
   } finally {
     clearTimeout(timer)
   }

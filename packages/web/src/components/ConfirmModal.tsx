@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useId, useRef } from 'react'
 import { Modal } from './Modal.tsx'
 import { FIRST_FOCUS, focusAfterRefusal } from './modal.ts'
-import { ModalAlert } from './ModalAlert.tsx'
+import { DialogAlert } from './DialogAlert.tsx'
 
 /** One fact in the Details list: a muted label and its mono value, such as `Port base` and `3400`. */
 export type ConfirmDetail = { label: string; value: string }
@@ -59,7 +59,7 @@ export function ConfirmModal({ heading, detail, details, notes, confirmLabel, bu
       <p className="muted modal-status" role="status">
         {status}
       </p>
-      {error && <ModalAlert message={error} />}
+      {error && <DialogAlert message={error} />}
       <div className="modal-actions" ref={actions}>
         {/* The safe button takes the first focus, and focus again after a refusal, so Enter deletes nothing and keeps the Details list open. */}
         <button className="btn quiet" type="button" disabled={busy} onClick={onCancel} {...{ [FIRST_FOCUS]: '' }}>
