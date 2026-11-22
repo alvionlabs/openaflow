@@ -1,6 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { createSetupGate } from './setup-client.ts'
 import { SETUP_NOTE, setupRows, type SetupRow, type SetupState, type ToolName } from './setup-view.ts'
+import { ReloadBanner } from '../../components/ReloadBanner.tsx'
+import type { ReloadFlag } from '../../reload-flag.ts'
 import './setup.css'
 
 type Gate = ReturnType<typeof createSetupGate>
@@ -15,9 +17,10 @@ export function SetupGate({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-function SetupScreen({ setup, gate }: { setup: SetupState; gate: Gate }) {
+export function SetupScreen({ setup, gate, reloadFlag }: { setup: SetupState; gate: Pick<Gate, 'save' | 'recheck'>; reloadFlag?: ReloadFlag }) {
   return (
     <main className="setup">
+      <ReloadBanner flag={reloadFlag} />
       <div className="setup-head">
         <h1>Setup check</h1>
         <p className="setup-intro">OpenAFlow needs these tools before it can show your runs.</p>

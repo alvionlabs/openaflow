@@ -120,7 +120,7 @@ describe('remove flow', () => {
     t.flow.open(A)
     t.flow.remove()
     await t.answer(2, refused(RESTARTED, 403))
-    expect(confirmView(t.flow.state())?.error).toBe('The app restarted. Please reload')
+    expect(confirmView(t.flow.state())?.error).toBe('Reload, then try again')
   })
 
   it('a reply for a confirm that was closed and opened again is dropped', async () => {
@@ -170,13 +170,13 @@ describe('error text', () => {
 
   it('a dead or missing token asks for a reload; it and a known word write nothing to the console', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    for (const word of [RESTARTED, NEED_RELOAD]) expect(confirmView((await failWith(word, 403)).flow.state())!.error).toBe('The app restarted. Please reload')
+    for (const word of [RESTARTED, NEED_RELOAD]) expect(confirmView((await failWith(word, 403)).flow.state())!.error).toBe('Reload, then try again')
     await failWith('not registered', 404)
     expect(warn).not.toHaveBeenCalled()
   })
 
   it('no message ends with a period', () => {
-    for (const text of [...REMOVE_ERRORS.values(), 'Something went wrong. Please try again', 'The app restarted. Please reload']) expect(text, text).not.toMatch(/\.$/)
+    for (const text of [...REMOVE_ERRORS.values(), 'Something went wrong. Please try again', 'Reload, then try again']) expect(text, text).not.toMatch(/\.$/)
     expect(REMOVE_ERRORS.size).toBe(5)
   })
 })

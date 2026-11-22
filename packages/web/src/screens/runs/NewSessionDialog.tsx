@@ -33,6 +33,7 @@ export function NewSessionDialog({ repo, onClose }: { repo: BoardRepo; onClose: 
         state={state}
         flow={flow}
         focusText
+        inDialog
         cancel={
           <button className="btn quiet" type="button" disabled={busy} onClick={onClose}>
             Cancel

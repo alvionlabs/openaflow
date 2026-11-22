@@ -5,7 +5,7 @@ import { ModalAlert } from '../../components/ModalAlert.tsx'
 import { loginBridge } from '../../desktop-bridge.ts'
 import { Icon } from '../../theme/icons.tsx'
 import { readSettings, resetWrapper, saveSettings } from './settings-client.ts'
-import { createSettingsFlow, pageSections, type FieldName, type FieldState, type SettingsFlow, type SettingsState } from './settings-view.ts'
+import { canRetry, createSettingsFlow, pageSections, type FieldName, type FieldState, type SettingsFlow, type SettingsState } from './settings-view.ts'
 import '../../components/modal.css'
 import './settings.css'
 
@@ -55,11 +55,13 @@ export function SettingsPage({ state, flow, onBack }: { state: SettingsState; fl
       {state.kind === 'failed' && (
         <div className="settings-failed">
           <ModalAlert message={state.message} />
-          <div>
-            <button className="btn" type="button" onClick={flow.retry}>
-              Try again
-            </button>
-          </div>
+          {canRetry(state) && (
+            <div>
+              <button className="btn" type="button" onClick={flow.retry}>
+                Try again
+              </button>
+            </div>
+          )}
         </div>
       )}
       {state.kind === 'ready' && <Sections state={state} flow={flow} />}

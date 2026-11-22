@@ -3,10 +3,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-// The shared modal's and the "what happened" list's own CSS: existing tokens only, text in --fg or --muted.
+// The shared modal's, the "what happened" list's, and the alert banner's own CSS: existing tokens only, text in --fg or --muted.
 
 const here = dirname(fileURLToPath(import.meta.url))
-const FILES = ['modal.css', 'stop-list.css'] as const
+const FILES = ['modal.css', 'stop-list.css', 'alert-banner.css'] as const
 
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '')
 const readCss = (name: string) => (existsSync(join(here, name)) ? stripComments(readFileSync(join(here, name), 'utf8')) : '')

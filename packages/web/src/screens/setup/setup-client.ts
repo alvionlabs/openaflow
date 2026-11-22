@@ -1,7 +1,8 @@
 // Asks the server about the tools and holds the setup gate: checking, then setup or board.
 // The check runs only on load, on Recheck, and after a path save.
 
-import { NEED_RELOAD, pageToken, postAction, RESTARTED, UNREACHABLE } from '../../actions-client.ts'
+import { NEED_RELOAD, pageToken, postAction, RESTARTED, UNREACHABLE, type ActionDeps } from '../../actions-client.ts'
+import { noToken, staleToken, type ReloadFlag } from '../../reload-flag.ts'
 import { afterRecheck, afterSave, parseTools, pathBody, setupStep, UNREADABLE, type SetupStep, type ToolName, type ToolsRead } from './setup-view.ts'
 
 /** On load, a hung check must not lock anyone out. */
@@ -9,7 +10,7 @@ export const GATE_LIMIT_MS = 5000
 /** Recheck and save: above a check's two 5 s registry reads, so a slow check isn't called a failure. */
 export const ACTION_LIMIT_MS = 15000
 
-export type SetupDeps = { fetch?: typeof fetch; token?: () => string | null | undefined }
+export type SetupDeps = ActionDeps
 export type GateState = { view: 'checking' } | SetupStep
 
 /** `work`, or `late` once the limit passes. The abort also ends the request. */
@@ -29,7 +30,7 @@ async function withLimit<T>(limitMs: number, late: T, work: (signal: AbortSignal
   }
 }
 
-async function askTools(fetchFn: typeof fetch, token: string, signal: AbortSignal): Promise<ToolsRead> {
+async function askTools(fetchFn: typeof fetch, token: string, signal: AbortSignal, flag: ReloadFlag | undefined): Promise<ToolsRead> {
   let res: Response
   let text: string
   try {
@@ -49,16 +50,19 @@ async function askTools(fetchFn: typeof fetch, token: string, signal: AbortSigna
     return tools ? { ok: true, tools } : { ok: false, message: UNREADABLE }
   }
   const error = typeof data === 'object' && data !== null ? (data as { error?: unknown }).error : undefined
-  if (res.status === 403 && error === 'bad token') return { ok: false, message: RESTARTED }
+  if (staleToken(res.status, error, flag)) return { ok: false, message: RESTARTED }
   return { ok: false, message: typeof error === 'string' && error.trim() !== '' ? error : `HTTP ${res.status}` }
 }
 
 /** GET /api/tools with the page token. Every failure comes back as words, never as a throw. */
 export async function readTools(deps: SetupDeps = {}, limitMs = GATE_LIMIT_MS): Promise<ToolsRead> {
   const token = (deps.token ?? pageToken)()
-  if (!token) return { ok: false, message: NEED_RELOAD }
+  if (!token) {
+    noToken(deps.flag)
+    return { ok: false, message: NEED_RELOAD }
+  }
   const fetchFn = deps.fetch ?? fetch
-  return withLimit<ToolsRead>(limitMs, { ok: false, message: UNREACHABLE }, (signal) => askTools(fetchFn, token, signal))
+  return withLimit<ToolsRead>(limitMs, { ok: false, message: UNREACHABLE }, (signal) => askTools(fetchFn, token, signal, deps.flag))
 }
 
 export function createSetupGate(deps: SetupDeps = {}) {

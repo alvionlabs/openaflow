@@ -49,13 +49,13 @@ describe('action client', () => {
     // No token meta (or an empty one): no request, and the reload message.
     for (const token of [undefined, null, '']) {
       const f = fakeFetch(() => json(200, {}))
-      expect(await postAction('merge', {}, deps(f.fn, token)), String(token)).toEqual({ ok: false, status: 0, message: 'Actions need a page reload.' })
+      expect(await postAction('merge', {}, deps(f.fn, token)), String(token)).toEqual({ ok: false, status: 0, message: 'Reload, then try again' })
       expect(f.calls).toEqual([])
     }
 
     // The server restarted with a new token.
     const restarted = fakeFetch(() => json(403, { error: 'bad token' }))
-    expect(await postAction('merge', {}, deps(restarted.fn))).toEqual({ ok: false, status: 403, message: 'The board restarted. Reload the page.' })
+    expect(await postAction('merge', {}, deps(restarted.fn))).toEqual({ ok: false, status: 403, message: 'Reload, then try again' })
 
     // The network failed.
     const down = fakeFetch(() => Promise.reject(new TypeError('Failed to fetch')))

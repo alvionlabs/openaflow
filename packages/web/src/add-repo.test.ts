@@ -11,7 +11,7 @@ describe('the message for a failed add', () => {
     expect(ADD_ALREADY).toBe('This repo is already here')
     expect(ADD_BAD_PATH).toBe("That path doesn't look right")
     expect(TRY_AGAIN).toBe('Something went wrong. Please try again')
-    expect(RELOAD).toBe('The app restarted. Please reload')
+    expect(RELOAD).toBe('Reload, then try again')
     for (const m of [ADD_ALREADY, ADD_BAD_PATH, TRY_AGAIN, RELOAD]) expect(m, m).not.toMatch(/\.$/)
   })
 })

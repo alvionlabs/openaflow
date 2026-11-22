@@ -602,6 +602,36 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 
 ## 2026-11-20 — CI keeps verify and electron on Linux and Windows (human)
 
-- **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, and rename them `unit (<os>)` and `e2e (<os>)`, the words most similar projects use (to do in the next task PR).
+- **Decision:** keep all four `pod-ci` jobs, `verify (<os>)` and `electron (<os>)` on Linux and Windows, and rename them `unit (<os>)` and `e2e (<os>)`, the words most similar projects use (done in PR #158).
 - **Why, in short:** almost every real bug CI caught after the local checks was on Windows; the Linux jobs cover Linux on the human's Windows days at no wall-clock cost; similar Electron apps (Signal, GitHub Desktop, Hyper, VS Code) do the same.
 - **Full record:** [decisions/ci.md](decisions/ci.md) — what each job does, our numbers, the comparison, naming, rejected options, and when to look again.
+
+## 2026-11-19 — reload words: "OpenAFlow restarted in the background. Reload to continue" (human decision)
+
+_Partly replaced on 2026-11-20: the full words now show only in the Reload banner. See [the 2026-11-20 entry](#2026-11-20--reload-banner-and-the-short-line-human-decision)._
+
+- **Context:** after an API restart the page's token is stale, and only a reload fixes it. "The app restarted. Please reload" read as odd, because the window does not restart.
+- **Decision:** "OpenAFlow restarted in the background. Reload to continue", with no final period, on every screen that shows the reload words (Settings load and save, Add repo, Remove repo, Forget, Auto-continue save). One constant: `RELOAD` in `packages/web/src/add-repo.ts`.
+- **Rejected:**
+  - "This page is out of date. Reload to continue": the human disliked "out of date".
+  - "Lost connection to OpenAFlow. Reload to reconnect": a real outage shows "try again", so two connection problems would ask for two actions.
+  - "Reload to continue": no reason, so a reload feels like a bug.
+  - "OpenAFlow needs a reload to continue": no cause.
+  - Any "session" wording: in OpenAFlow a session is a Claude terminal.
+  - "expired": OpenAFlow has no sign-in or timeout.
+- **From:** task PR #158 review.
+
+## 2026-11-20 — Reload banner and the short line (human decision)
+
+- **Decision:** after an API restart, one app-wide banner says "OpenAFlow restarted in the background." / "Reload to continue." and holds the **Reload** button. The banner stays at the top of the window as the page scrolls (2026-11-21). The failed action's own line says "Reload, then try again", with no final period, for Settings save and load, Add repo, Remove repo, Forget, and the Auto-continue save. The Settings load error has no button of its own.
+- **Dialog Reload (2026-11-21, human):** a modal dialog (Add repo, Remove repo, Forget, New session) covers the banner, so its "Reload, then try again" line gets its own Reload button, only for a stale token. The New session form on the Next step card has no backdrop, so it gets no button. The page never shows two Reload buttons that the user can press.
+- **Why, in short:** the desktop app has no menu, so Ctrl+R does nothing. One banner gives one way to reload on every screen, and the full sentence shows one time, next to its button.
+- **Rejected:**
+  - A Reload button on each screen: many buttons for one fix.
+  - Turning Ctrl+R back on: nobody would know to press it.
+  - The full words under the field as well as in the banner (option a): the same sentence twice on one screen.
+  - Closing the dialog when the token goes stale: the user loses what they typed, and it feels like a bug.
+  - Scrolling the page back up when the banner shows: the page jumps under the user.
+  - "Not saved", "Couldn't save", "Changes lost: reload above", and no line at all: the human disliked "Not saved", and the others do not say what to do.
+- **Draft:** [reload-banner-choices.html](design-drafts/reload-banner-choices.html) (option b, with the words changed).
+- **From:** task PR #159.

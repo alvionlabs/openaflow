@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ActionReply } from '../../actions-client.ts'
 import type { LoginBridge } from '../../desktop-bridge.ts'
+import { RELOAD } from '../../add-repo.ts'
 import type { SettingsRead } from './settings-client.ts'
 import { Field, SettingsPage } from './SettingsScreen.tsx'
 import {
@@ -166,6 +167,38 @@ describe('sections per build and platform', () => {
     expect(flow.state().kind).toBe('loading')
     await vi.waitFor(() => expect(flow.state().kind).toBe('ready'))
   })
+
+  it('while the API is down, Try again keeps loading again, and shows the page once it is back', async () => {
+    const down: SettingsRead = { ok: false, message: "Couldn't load settings. Please try again" }
+    const { flow, load } = setup({ load: async () => down })
+    flow.start()
+    await vi.waitFor(() => expect(flow.state().kind).toBe('failed'))
+    expect(html(flow.state())).toMatch(/<button[^>]*>Try again<\/button>/)
+    flow.retry()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(flow.state().kind).toBe('failed'))
+    expect(html(flow.state())).toMatch(/<button[^>]*>Try again<\/button>/)
+    load.mockImplementation(async () => ({ ok: true, view: LINUX }))
+    flow.retry()
+    await vi.waitFor(() => expect(flow.state().kind).toBe('ready'))
+  })
+
+  it('after an API restart the page shows the short line and no button of its own: the Reload banner has the only one', async () => {
+    const restarted: SettingsRead = { ok: false, message: RELOAD, reload: true }
+    const { flow, load } = setup({ load: async () => restarted })
+    flow.start()
+    await vi.waitFor(() => expect(flow.state().kind).toBe('failed'))
+    const page = html(flow.state())
+    expect(text(page)).toContain('Reload, then try again')
+    expect(page).toMatch(/class="modal-alert" role="alert"/)
+    // Back is the page's only button: no Reload, and no Try again, which would send the same stale token.
+    expect(page.match(/<button/g)).toHaveLength(1)
+    expect(page).toMatch(/<button[^>]*>Back<\/button>/)
+    // A retry, however it comes, loads nothing: the same token would fail the same way.
+    flow.retry()
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(flow.state().kind).toBe('failed')
+  })
 })
 
 describe('saves at once', () => {
@@ -306,7 +339,7 @@ describe('saves at once', () => {
   it('other failures show their words under the field, not marked invalid, with the text kept', async () => {
     for (const [status, message] of [
       [500, 'not saved'],
-      [403, 'The board restarted. Reload the page.'],
+      [403, RELOAD],
       [0, "Can't reach the board."],
     ] as const) {
       const { flow } = await started({ answer: () => ({ ok: false, status, message }) })

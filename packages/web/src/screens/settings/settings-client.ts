@@ -2,7 +2,9 @@
 // token. Every failure comes back as words, never as a throw; a failed load puts its exact cause in the console.
 
 import type { SettingsChange, SettingsView } from '@openaflow/model'
-import { pageToken, postAction, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
+import { NEED_RELOAD, pageToken, postAction, RESTARTED, UNREACHABLE, type ActionDeps, type ActionReply } from '../../actions-client.ts'
+import { RELOAD } from '../../add-repo.ts'
+import { noToken, staleToken, type ReloadFlag } from '../../reload-flag.ts'
 import { parseSettingsView } from './settings-view.ts'
 
 export const LOAD_FAILED = "Couldn't load settings. Please try again"
@@ -16,14 +18,30 @@ export const LOAD_LIMIT_MS = 15_000
 /** A save's limit, as setup-client.ts gives its POST: saves go one at a time, so one with no answer must not hold the rest. */
 export const SAVE_LIMIT_MS = 15_000
 
-export type SettingsRead = { ok: true; view: SettingsView } | { ok: false; message: string }
+/** `reload` marks a page whose token no longer fits the API (it restarted): only a page reload gets a new one. */
+export type SettingsRead = { ok: true; view: SettingsView } | { ok: false; message: string; reload?: true }
 
 const failed = (cause: string): SettingsRead => {
   console.warn(`openaflow: settings didn't load: ${cause}`)
   return { ok: false, message: LOAD_FAILED }
 }
 
-async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSignal): Promise<SettingsRead> {
+/** The page's token is stale or missing: a retry sends the same token, so the way out is a reload. */
+const restarted = (cause: string): SettingsRead => {
+  console.warn(`openaflow: settings didn't load: ${cause}`)
+  return { ok: false, message: RELOAD, reload: true }
+}
+
+/** The body's error word, or undefined for a body that isn't a JSON object with one. */
+function errorWord(text: string): unknown {
+  try {
+    return (JSON.parse(text) as { error?: unknown } | null)?.error
+  } catch {
+    return undefined
+  }
+}
+
+async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSignal, flag: ReloadFlag | undefined): Promise<SettingsRead> {
   let res: Response
   let text: string
   try {
@@ -32,6 +50,7 @@ async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSi
   } catch (e) {
     return signal.aborted ? { ok: false, message: LOAD_FAILED } : failed(String(e))
   }
+  if (staleToken(res.status, errorWord(text), flag)) return restarted(`HTTP 403 ${text.slice(0, 200)}`)
   if (!res.ok) return failed(`HTTP ${res.status} ${text.slice(0, 200)}`)
   let data: unknown
   try {
@@ -46,7 +65,10 @@ async function askSettings(fetchFn: typeof fetch, token: string, signal: AbortSi
 /** GET /api/settings with the page token, within `limitMs`. */
 export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_MS): Promise<SettingsRead> {
   const token = (deps.token ?? pageToken)()
-  if (!token) return failed('no page token')
+  if (!token) {
+    noToken(deps.flag)
+    return restarted('no page token')
+  }
   const fetchFn = deps.fetch ?? fetch
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -57,7 +79,7 @@ export async function readSettings(deps: ActionDeps = {}, limitMs = LOAD_LIMIT_M
     }, limitMs)
   })
   try {
-    return await Promise.race([askSettings(fetchFn, token, controller.signal), late])
+    return await Promise.race([askSettings(fetchFn, token, controller.signal, deps.flag), late])
   } finally {
     clearTimeout(timer)
   }
@@ -81,7 +103,10 @@ export async function saveSettings(change: SettingsChange, deps: ActionDeps = {}
   } finally {
     clearTimeout(timer)
   }
-  if (!reply.ok) return reply
+  if (!reply.ok) {
+    // A restart (or no token) leaves the page's token stale: say what the other screens say. Never `invalid`: the status stays as it came.
+    return reply.message === RESTARTED || reply.message === NEED_RELOAD ? { ...reply, message: RELOAD } : reply
+  }
   const view = parseSettingsView(reply.data)
   return view ? { ok: true, data: view } : { ok: false, status: 200, message: SAVE_UNREADABLE }
 }

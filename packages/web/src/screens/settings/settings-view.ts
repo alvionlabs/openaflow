@@ -41,7 +41,7 @@ export type FieldState = { text: string; saved: string; busy: boolean; error?: s
 export type LoginState = { on: boolean; busy: boolean; error?: string }
 export type SettingsState =
   | { kind: 'loading' }
-  | { kind: 'failed'; message: string }
+  | { kind: 'failed'; message: string; reload?: true }
   | { kind: 'ready'; view: SettingsView; fields: Record<FieldName, FieldState>; reset: { busy: boolean; error?: string }; login?: LoginState }
 
 export type SettingsDeps = {
@@ -50,6 +50,12 @@ export type SettingsDeps = {
   reset: () => Promise<ActionReply<SettingsView>>
   login?: LoginBridge | undefined
 }
+
+/**
+ * Whether the failed page has its own Try again. Not after an API restart: a new load would send the same stale
+ * token, so the app-wide Reload banner offers the only way out.
+ */
+export const canRetry = (s: Extract<SettingsState, { kind: 'failed' }>) => !s.reload
 
 export type PageSections = { general: boolean; wrapper?: { reset: boolean; fallback?: string; stopNote?: string } }
 
@@ -147,7 +153,7 @@ export function createSettingsFlow(deps: SettingsDeps, onChange: (s: SettingsSta
   const load = () => {
     void deps.load().then((read) => {
       if (stopped) return
-      if (!read.ok) return show({ kind: 'failed', message: read.message })
+      if (!read.ok) return show({ kind: 'failed', message: read.message, ...(read.reload ? { reload: true as const } : {}) })
       const fields = Object.fromEntries(FIELDS.map((f) => [f, { text: savedText(read.view, f), saved: savedText(read.view, f), busy: false }])) as Record<FieldName, FieldState>
       show({ kind: 'ready', view: read.view, fields, reset: { busy: false } })
     })
@@ -187,9 +193,9 @@ export function createSettingsFlow(deps: SettingsDeps, onChange: (s: SettingsSta
       if (deps.login) readLogin(deps.login)
       load()
     },
-    /** Try again, after a failed load. */
+    /** Try again, after a failed load. Not after an API restart: a new load would send the same stale token. */
     retry() {
-      if (state.kind !== 'failed') return
+      if (state.kind !== 'failed' || !canRetry(state)) return
       show({ kind: 'loading' })
       load()
     },
