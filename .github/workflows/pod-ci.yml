@@ -1,19 +1,18 @@
 name: pod-ci
 
 on:
-  # A wave PR into the plan branch runs no CI: it merges on the local wave check. CI runs once per sprint, on a PR
-  # into pod-staging (the sprint-end check or the final plan PR), and on the staging PR into main.
-  # See pod-docs/decisions.md (2026-11-17).
+  # CI runs on a PR into pod-staging or main: the sprint-end check, the final plan PR, and the staging PR. It does not
+  # run on a push: a push to pod-staging and the staging PR into main would run the same code twice. A wave PR into
+  # the plan branch runs none. See pod-docs/decisions.md (2026-11-17 and 2026-11-22).
   pull_request:
     branches: [pod-staging, main]
-  push:
-    branches: [pod-staging]
 
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's older run.
 concurrency:
-  group: pod-ci-${{ github.ref }}
+  group: pod-ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
