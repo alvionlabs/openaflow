@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Research: duplicate CI runs on staging promotion</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#1b1f24}
+h1{font-size:22px}h2{margin-top:28px;font-size:17px;border-bottom:1px solid #d0d7de;padding-bottom:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.card{border:1px solid #d0d7de;border-radius:6px;padding:10px 12px;background:#fff}
+.card h3{margin:0 0 4px;font-size:15px}
+.meter{display:flex;gap:3px;margin:4px 0}.meter i{width:22px;height:8px;border-radius:2px;background:#d0d7de}
+.meter i.on{background:#1a7f37}.meter.mid i.on{background:#bf8700}.meter.low i.on{background:#cf222e}
+.tag{display:inline-block;font-size:12px;padding:1px 6px;border-radius:10px;background:#eef;margin-right:4px}
+.alive{background:#dafbe1}.na{background:#eee}
+.rec{border:2px solid #1a7f37}
+pre{background:#f6f8fa;padding:8px;overflow:auto;font-size:13px}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;margin-top:6px}
+.opts div{background:#f6f8fa;border-radius:4px;padding:6px;font-size:13px}
+small{color:#57606a}
+</style></head><body>
+<h1>Avoiding duplicate CI runs when promoting pod-staging to main</h1>
+<p><small>Generated 2026-11-22 · standard depth · 2 searches · 23 pages read. Full report with all sources: ci-duplicate-runs.md. Items marked (inference) or (own idea) are not from a page.</small></p>
+<p><b>Assumptions:</b> repo plan is unknown (personal or Free/Team org); nobody pushes straight to main; "duplicate" = push run on pod-staging plus pull_request run on the staging PR into main.</p>
+
+<h2>Recommendation</h2>
+<div class="card rec">
+<h3>Drop <code>push</code>, keep both pull_request gates (own idea)</h3>
+<pre>on:
+  pull_request:
+    branches: [pod-staging, main]
+concurrency:
+  group: pod-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true</pre>
+<p><b>Gives up:</b> no run after a merge into pod-staging (merge skew unseen until the next PR); no run on main after promotion. Matches your kept decision: CI at sprint end into pod-staging and on the staging PR into main.</p>
+<p><b>Alternative:</b> keep <code>push: [pod-staging]</code>, remove <code>main</code> from pull_request. The staging PR shows the push run on the same head SHA (<a href="https://adamj.eu/tech/2025/05/14/github-actions-avoid-simple-on/">adamj.eu</a>). Gives up the merge-with-main run.</p>
+</div>
+
+<h2>What exists</h2>
+<div class="grid">
+<div class="card"><h3><a href="https://adamj.eu/tech/2025/05/14/github-actions-avoid-simple-on/">Push on one branch + pull_request</a></h3>
+<div class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+<span class="tag na">pattern, 2025-05</span><br>Closeness: high. One run per PR instead of two.</div>
+<div class="card"><h3><a href="https://github.com/fkirc/skip-duplicate-actions">fkirc/skip-duplicate-actions</a></h3>
+<div class="meter mid"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+<span class="tag alive">alive: commit 2026-11-07</span><span class="tag">v5.3.2</span><span class="tag">540 stars</span><br>Closeness: medium. Skips by tree hash; cross-event behavior not stated. Needs <code>actions: write</code> if token is read-only. License type not read.</div>
+<div class="card"><h3><a href="https://docs.github.com/en/actions/using-jobs/using-concurrency">concurrency groups</a></h3>
+<div class="meter low"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+<span class="tag na">built in</span><br>Closeness: low. Per-group string; refs differ per event (inference). Cancels, does not skip.</div>
+<div class="card"><h3><a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue">Merge queue</a></h3>
+<div class="meter low"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+<span class="tag na">plan limits unconfirmed</span><br>Closeness: low. Adds a third run (<code>merge_group</code>) (inference). 2023 GA post (possibly out of date; no current docs page found): private repos only on Enterprise Cloud (<a href="https://github.blog/changelog/2023-07-12-pull-request-merge-queue-is-now-generally-available/">changelog</a>).</div>
+<div class="card"><h3><a href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges">Fast-forward / rebase promotion</a></h3>
+<div class="meter mid"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+<span class="tag na">built in</span><br>Closeness: medium. UI merge makes a merge commit; rebase rewrites SHAs. Local <code>git push pod-staging:main</code> can ff (inference).</div>
+</div>
+
+<h2>What each choice loses</h2>
+<div class="grid">
+<div class="card"><h3>Drop push (staging)</h3>Lose the post-merge run. pull_request tests the merge ref at PR time and does not run with merge conflicts (<a href="https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows">docs</a>).</div>
+<div class="card"><h3>Drop pull_request (main)</h3>Lose the run on the merge with main. Push run tests the head SHA only. Same tree if main is an ancestor (inference).</div>
+<div class="card"><h3>Concurrency</h3>Different events use different default refs; docs do not address cross-event groups. A shared SHA key only helps if runs overlap (inference).</div>
+<div class="card"><h3>Required checks later</h3>Skipped workflow: checks stay Pending and block merging. Skipped job via <code>if</code>: Success (<a href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks">docs</a>). Use one always-run aggregate job.</div>
+<div class="card"><h3>CI after merge</h3>Only a push run finds two PRs that pass alone but break together; merge queue prevents it by testing combined state (<a href="https://github.blog/news-insights/product-news/github-merge-queue-is-generally-available/">blog</a>). Low risk if only the sprint PR enters staging (inference).</div>
+</div>
+
+<h2>Questions for the plan</h2>
+<div class="card"><h3>Which run is the release gate?</h3><small>They test the same tree in your flow, so one can go.</small>
+<div class="opts"><div><b>A</b> push-only on staging</div><div><b>B</b> pull_request-only (recommended)</div><div><b>C</b> keep both + skip-duplicate-actions</div></div></div>
+<br><div class="card"><h3>Will anyone push straight to main or pod-staging?</h3><small>Breaks "main is an ancestor"; merge-ref run then differs.</small>
+<div class="opts"><div><b>A</b> never: drop the main PR run</div><div><b>B</b> sometimes: keep a PR run on main</div></div></div>
+<br><div class="card"><h3>How to promote?</h3><small>Merge commit puts an untested SHA on main.</small>
+<div class="opts"><div><b>A</b> merge-commit PR</div><div><b>B</b> local ff push</div><div><b>C</b> rebase merge (new SHAs)</div></div></div>
+<br><div class="card"><h3>Required checks or a ruleset later?</h3>
+<div class="opts"><div><b>A</b> stay informational</div><div><b>B</b> required check via aggregate job</div></div></div>
+<br><div class="card"><h3>What plan owns the repo?</h3><small>No current docs page found that states the merge-queue plan rule.</small>
+<div class="opts"><div><b>A</b> personal / Free / Team: queue likely unavailable, per the 2023 post</div><div><b>B</b> Enterprise Cloud org: available</div></div></div>
+<br><div class="card"><h3>Do task PRs merge straight into pod-staging between sprints?</h3><small>That is where merge skew appears.</small>
+<div class="opts"><div><b>A</b> no: sprint PR only</div><div><b>B</b> yes: keep a push run on staging</div></div></div>
+
+<h2>Suspect pages</h2><p>none</p>
+<p><small>Sources are listed in ci-duplicate-runs.md.</small></p>
+</body></html>

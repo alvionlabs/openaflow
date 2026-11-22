@@ -9,7 +9,8 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 | What | Rule |
 |---|---|
 | Workflow | `.github/workflows/pod-ci.yml` |
-| Runs on | PRs into `pod-staging` or `main`, and a push to `pod-staging` |
+| Runs on | PRs into `pod-staging` or `main` only, not on a push (a push run and the staging PR run tested the same code twice; see Decision 4) |
+| Concurrency | One group per PR; a new push cancels that PR's older run |
 | Doesn't run on | Wave PRs into a plan branch, fix PRs into a plan branch, or task branches |
 | How often | About once per sprint: the sprint-end check, or the final plan PR in a plan's last sprint, then the staging PR into `main` |
 | Jobs | `unit (ubuntu-latest)`, `unit (windows-latest)`, `e2e (ubuntu-latest)`, `e2e (windows-latest)` |
@@ -27,6 +28,8 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 `e2e` doesn't run the unit tests, and `unit` never starts the app, so neither one replaces the other.
 
 ## Decision 1 — CI once per sprint, not per wave PR (2026-11-17, human)
+
+_Partly replaced on 2026-11-22 by Decision 4: CI no longer runs on a push to `pod-staging`. The text below is the 2026-11-17 record._
 
 **Decision:** wave PRs into the plan branch run no CI. They merge on the orchestrator's local wave check (`pnpm verify` and `pnpm test:electron` on Linux). CI on Linux and Windows runs on PRs into `pod-staging` or `main`, and on a push to `pod-staging`. At each sprint end, the orchestrator opens a draft PR from the plan branch into `pod-staging` (`ci: sprint <slug> check`) and closes it when green. A red run halts before the next sprint. In the last sprint, the final plan PR is that check. Engineers don't open `wip: … CI check` draft PRs.
 
@@ -99,6 +102,23 @@ This file holds every CI decision in full, with the evidence. `decisions.md` kee
 
 **Status:** done in task `settings-retry-ci-rename` (the `pod-ci.yml` job IDs and names, and `ci-workflow.test.ts`, use the new names).
 
+## Decision 4 — CI runs on PRs only, not on a push to `pod-staging` (2026-11-22, human)
+
+**Decision:** remove the `push` trigger on `pod-staging`. Keep `pull_request` into `pod-staging` and `main`. Add a workflow-level `concurrency` group per PR (`pod-ci-${{ github.event.pull_request.number }}`) with `cancel-in-progress: true`.
+
+**Why:** a merge into `pod-staging` fired a `push` run, and the staging PR into `main` then fired a `pull_request` run on the same commit. The same 4 jobs ran twice on the same code (seen on PR #160). Research: [ci-duplicate-runs.md](../research/ci-duplicate-runs.md).
+
+**Gives up:** no run right after a merge into `pod-staging`. The risk is low: PRs merge one at a time, and the staging PR into `main` tests the combined code.
+
+**Rejected:**
+
+| Option | Why not |
+|---|---|
+| `concurrency` alone | Does not dedupe across a `push` and a `pull_request` event |
+| `fkirc/skip-duplicate-actions` | No source shows it works across `push` and `pull_request`; it adds a dependency |
+| Merge queue | Adds a third run; the 2023 post says private repos need Enterprise Cloud |
+| Drop `main` from `pull_request` and rely on the push run | The human chose PR gates |
+
 ## Evidence: our runs
 
 These are the job results of the 120 most recent finished `pod-ci` runs, from 2026-11-14 to 2026-11-20 (`gh run list --workflow pod-ci.yml`, then each run's jobs). The failure causes come from each failed job's log.
@@ -163,3 +183,4 @@ Re-open these decisions only if one of these happens:
 - 2026-11-20 — Decision 2: keep all four jobs. This file is created, and the `decisions.md` entries link here.
 - 2026-11-20 — Decision 3: rename the jobs to `unit` and `e2e`.
 - Task `settings-retry-ci-rename` — Decision 3 done: `pod-ci.yml` jobs are `unit` and `e2e`.
+- 2026-11-22 — Decision 4: CI runs on PRs only, no push trigger; a concurrency group per PR (task `ci-no-duplicate-run`).
