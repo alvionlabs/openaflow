@@ -1,6 +1,6 @@
 # CI: what runs, when, and why
 
-_Owner: the human · Last changed: 2026-11-20 · Index entries: [decisions.md, 2026-11-17](../decisions.md#2026-11-17--ci-once-per-sprint-not-per-wave-pr-human) and [decisions.md, 2026-11-20](../decisions.md#2026-11-20--ci-keeps-verify-and-electron-on-linux-and-windows-human)_
+_Owner: the human · Last changed: 2026-11-22 · Index entries: [decisions.md, 2026-11-17](../decisions.md#2026-11-17--ci-once-per-sprint-not-per-wave-pr-human) and [decisions.md, 2026-11-20](../decisions.md#2026-11-20--ci-keeps-verify-and-electron-on-linux-and-windows-human), and [decisions.md, 2026-11-22](../decisions.md#2026-11-22--ci-runs-on-prs-only-not-on-a-push-to-pod-staging-human)_
 
 This file holds every CI decision in full, with the evidence. `decisions.md` keeps a short entry for each, linked here. Read this file before you propose a change to `.github/workflows/pod-ci.yml`.
 
@@ -116,7 +116,7 @@ _Partly replaced on 2026-11-22 by Decision 4: CI no longer runs on a push to `po
 |---|---|
 | `concurrency` alone | Does not dedupe across a `push` and a `pull_request` event |
 | `fkirc/skip-duplicate-actions` | No source shows it works across `push` and `pull_request`; it adds a dependency |
-| Merge queue | Adds a third run; the 2023 post says private repos need Enterprise Cloud |
+| Merge queue | Not used: it adds a third run. The repo is a public organization repo, so the plan allows it |
 | Drop `main` from `pull_request` and rely on the push run | The human chose PR gates |
 
 ## Evidence: our runs
