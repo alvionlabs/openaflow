@@ -646,3 +646,15 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
 - **Rejected:** `concurrency` alone (it does not dedupe across a `push` and a `pull_request` event); `fkirc/skip-duplicate-actions` (no source shows it works across `push` and `pull_request`, and it adds a dependency); a merge queue (it adds a third run; the repo is a public organization repo, so the plan is not the blocker); dropping `main` from `pull_request` and relying on the push run (the human chose PR gates).
 - **Research:** [ci-duplicate-runs.md](research/ci-duplicate-runs.md).
 - **Full record:** [decisions/ci.md](decisions/ci.md).
+
+## 2026-11-22 — OpenAFlow ships claude-pod as its default workflow (human)
+
+- **Decision:** OpenAFlow ships its own workflow. claude-pod is copied in exactly as it is, as the user's default workflow, and lives in the repo's `.openaflow/`.
+- **Separate projects:** claude-pod and OpenAFlow are separate from now on. A newer claude-pod is copied into OpenAFlow by hand, only when the human asks. No automatic sync and no shared source.
+- **Replaceable later, not now:** users will later be able to edit the workflow or replace it with their own. Not in v0.1.0, because it is too big. But the structure keeps a clear seam between the workflow and the app, so replacing it later is a change, not a rewrite.
+- **Rejected:**
+  - Fork claude-pod under a new name: two copies to keep in step.
+  - Make claude-pod configurable (folder name, prefixes) and ship a pinned copy: it ties OpenAFlow to claude-pod's releases.
+  - Replaceable workflows in v0.1.0: too big for now.
+- **Open for the plan:** what "lives in `.openaflow/`" covers. Either the skills, agents, and state files are all in each repo (editable per repo, but one copy per repo to update), or the workflow ships in the app with `--plugin-dir` and only the state files are in `.openaflow/`.
+- **From:** session of 2026-11-22, before plan `openaflow-plugin`.
