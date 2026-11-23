@@ -649,12 +649,17 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
 
 ## 2026-11-22 — OpenAFlow ships claude-pod as its default workflow (human)
 
-- **Decision:** OpenAFlow ships its own workflow. claude-pod is copied in exactly as it is, as the user's default workflow, and lives in the repo's `.openaflow/`.
-- **Separate projects:** claude-pod and OpenAFlow are separate from now on. A newer claude-pod is copied into OpenAFlow by hand, only when the human asks. No automatic sync and no shared source.
+- **Decision:** OpenAFlow ships claude-pod as the user's default workflow. claude-pod's own repo stays the one source: OpenAFlow pins a tagged claude-pod release and its build fetches it (for example a git submodule or a release download). An update in OpenAFlow is a version bump, done when the human asks.
+- **Why one source:** a copy inside OpenAFlow would mean every workflow fix is made twice, in claude-pod and again here. claude-pod has its own users, so its repo stays the home of the workflow.
 - **Replaceable later, not now:** users will later be able to edit the workflow or replace it with their own. Not in v0.1.0, because it is too big. But the structure keeps a clear seam between the workflow and the app, so replacing it later is a change, not a rewrite.
 - **Rejected:**
   - Fork claude-pod under a new name: two copies to keep in step.
-  - Make claude-pod configurable (folder name, prefixes) and ship a pinned copy: it ties OpenAFlow to claude-pod's releases.
+  - Copy claude-pod into OpenAFlow and sync by hand (chosen first on 2026-11-22, then dropped the same day): every fix made twice.
+  - Move claude-pod's source into this repo and publish claude-pod from here: claude-pod has its own users, so its repo stays the source.
   - Replaceable workflows in v0.1.0: too big for now.
-- **Open for the plan:** what "lives in `.openaflow/`" covers. Either the skills, agents, and state files are all in each repo (editable per repo, but one copy per repo to update), or the workflow ships in the app with `--plugin-dir` and only the state files are in `.openaflow/`.
-- **From:** session of 2026-11-22, before plan `openaflow-plugin`.
+- **Open for the plan:**
+  - The state folder. claude-pod writes `pod-docs/`. Either claude-pod gets a setting for its folder name (so OpenAFlow can use `.openaflow/`), or OpenAFlow keeps `pod-docs/`.
+  - Where the workflow lives: in each repo's `.openaflow/`, or in the app, loaded with `--plugin-dir`.
+  - How the pin works: submodule, release download, or another way.
+- **Plan:** `default-workflow` (the parked idea is still named `openaflow-plugin`).
+- **From:** session of 2026-11-22.
