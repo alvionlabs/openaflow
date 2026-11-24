@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseQueue, type Board, type NewActionEntry, type ResolveResult } from '@openaflow/model'
@@ -50,7 +50,7 @@ let root: string
 let repoPath: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'openaflow-resolve-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'openaflow-resolve-')))
   repoPath = join(root, 'repos', 'r')
   await mkdir(join(repoPath, 'pod-docs', 'plans', 'archive'), { recursive: true })
   await writeFile(join(repoPath, 'pod-docs', 'README.md'), '# pod docs\n\npod docs: 2\n')
@@ -250,5 +250,61 @@ describe('resolve route', () => {
     expect(await second.json()).toEqual({ error: 'answer in progress' })
     held[0]!()
     expect(await json<ResolveResult>(await first)).toMatchObject({ outcome: 'closed' })
+  })
+})
+
+describe('resolve route: state folders', () => {
+  const MAIN = '.openaflow/workflows/claude-pod/state'
+  const OTHER = '.openaflow/workflows/other/state'
+  const DUP = '- `[2026-10-21 · PENDING · engineer → human · plan: live]` decision: font? value in use: `serif`. Answer to change. **Resolution:** pending'
+  let wfPath: string
+
+  /** A repo with `.openaflow/` and two workflows: plan old (archived) in the first, plan live in the second. */
+  async function makeWorkflowRepo(main: string[], other: string[]) {
+    wfPath = join(root, 'repos', 'w')
+    await mkdir(join(wfPath, MAIN, 'plans', 'archive'), { recursive: true })
+    await writeFile(join(wfPath, MAIN, 'README.md'), '# pod docs\n\npod docs: 2\n')
+    await writeFile(join(wfPath, MAIN, 'plans', 'archive', 'old.md'), plan('old', 'archived'))
+    await writeFile(join(wfPath, MAIN, 'handoff-queue.md'), ['# Handoff Queue', '', ...main, ''].join('\n'))
+    await mkdir(join(wfPath, OTHER, 'plans'), { recursive: true })
+    await writeFile(join(wfPath, OTHER, 'README.md'), '# pod docs\n\npod docs: 2\n')
+    await writeFile(join(wfPath, OTHER, 'plans', 'live.md'), plan('live', 'active'))
+    await writeFile(join(wfPath, OTHER, 'handoff-queue.md'), ['# Handoff Queue', '', ...other, ''].join('\n'))
+    // A pod-docs queue with the same lines, which the board no longer reads.
+    await mkdir(join(wfPath, 'pod-docs'), { recursive: true })
+    await writeFile(join(wfPath, 'pod-docs', 'handoff-queue.md'), ['# Handoff Queue', '', GATE, VALUE, DUP, ''].join('\n'))
+    await writeFile(join(root, 'cfg', 'config.json'), JSON.stringify({ version: 1, repos: [{ path: wfPath }] }))
+  }
+  const wfQueue = (dir: string) => readFile(join(wfPath, dir, 'handoff-queue.md'), 'utf8')
+
+  test('resolve goes to its folder', async () => {
+    await makeWorkflowRepo([GATE], [VALUE])
+    const s = await setup()
+    const before = { main: await wfQueue(MAIN), other: await wfQueue(OTHER), legacy: await wfQueue('pod-docs') }
+
+    // Close: the gate of the archived plan, in the first workflow. A stateDir in the request counts for nothing.
+    const close = await s.post({ repoId: s.repoId, line: GATE, kind: 'close', stateDir: OTHER })
+    expect(await json<ResolveResult>(close)).toEqual({ outcome: 'closed', logged: true })
+    const main = before.main.replace(GATE, GATE.replace('**Resolution:** pending', `**Resolution:** ${TODAY} — closed from the board: plan old is archived`))
+    expect(await wfQueue(MAIN)).toBe(main)
+
+    // Keep: the value in use, in the second workflow.
+    const keep = await s.post({ repoId: s.repoId, line: VALUE, kind: 'keep', stateDir: 'pod-docs' })
+    expect(await json<ResolveResult>(keep)).toEqual({ outcome: 'kept', logged: true })
+    expect(await wfQueue(OTHER)).toBe(before.other.replace(VALUE, VALUE.replace('**Resolution:** pending', `**Resolution:** ${TODAY} — kept: white`)))
+    expect(await wfQueue(MAIN)).toBe(main)
+    expect(await wfQueue('pod-docs')).toBe(before.legacy)
+  })
+
+  test('the same line in two folders is changed, and nothing is written', async () => {
+    await makeWorkflowRepo([DUP], [DUP])
+    const s = await setup()
+    const before = { main: await wfQueue(MAIN), other: await wfQueue(OTHER), legacy: await wfQueue('pod-docs') }
+    const res = await s.post({ repoId: s.repoId, line: DUP, kind: 'keep' })
+    expect(await json<ResolveResult>(res)).toEqual({ outcome: 'changed', message: 'Two entries read the same. Answer it in the chat.', logged: true })
+    expect(s.logged[0]).toMatchObject({ action: 'resolve', result: 'changed', message: 'Two entries read the same. Answer it in the chat.' })
+    expect(await wfQueue(MAIN)).toBe(before.main)
+    expect(await wfQueue(OTHER)).toBe(before.other)
+    expect(await wfQueue('pod-docs')).toBe(before.legacy)
   })
 })

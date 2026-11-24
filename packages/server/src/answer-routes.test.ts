@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AnswerResult, Board, NewActionEntry } from '@openaflow/model'
@@ -51,7 +51,7 @@ async function makeRepo(path: string, plan: string, queue: string[]) {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'openaflow-a1-routes-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'openaflow-a1-routes-')))
   repoPath = join(root, 'repos', 'r')
   claimedPath = join(root, 'repos', 'c')
   await makeRepo(repoPath, 'alpha', [HALT, NOTE, DONE, ANSWERED, TO_POD, TO_POD_BLOCKED, ASK])
@@ -312,5 +312,89 @@ describe('answer route', () => {
     // The same request with the token goes through.
     const ok = await (await setup()).post({ repoId: s.repoId, line: ASK, text: 'x' })
     expect(await json<AnswerResult>(ok)).toEqual({ outcome: 'answered', logged: true })
+  })
+})
+
+describe('answer route: state folders', () => {
+  const MAIN = '.openaflow/workflows/claude-pod/state'
+  const OTHER = '.openaflow/workflows/other/state'
+  const OTHER_ASK = '- `[2026-10-21 · PENDING · engineer → human · plan: gamma]` Which colour? **Resolution:** pending'
+  const DUP = '- `[2026-10-21 · BLOCKED · orchestrator → human]` the same words in two folders **Resolution:** pending'
+  let wfPath: string
+
+  /** A repo with `.openaflow/` and two workflows, and a `pod-docs/` queue the board no longer reads. */
+  async function makeWorkflowRepo(main: string[], other: string[]) {
+    wfPath = join(root, 'repos', 'w')
+    for (const [dir, plan, queue] of [
+      [MAIN, 'alpha', main],
+      [OTHER, 'gamma', other],
+    ] as const) {
+      await mkdir(join(wfPath, dir, 'plans'), { recursive: true })
+      await writeFile(join(wfPath, dir, 'README.md'), '# pod docs\n\npod docs: 2\n')
+      await writeFile(join(wfPath, dir, 'plans', `${plan}.md`), PLAN.replace('# Plan: alpha', `# Plan: ${plan}`))
+      await writeFile(join(wfPath, dir, 'handoff-queue.md'), ['# Handoff Queue', '', ...queue, ''].join('\n'))
+    }
+    await mkdir(join(wfPath, 'pod-docs'), { recursive: true })
+    await writeFile(join(wfPath, 'pod-docs', 'handoff-queue.md'), ['# Handoff Queue', '', ASK, OTHER_ASK, DUP, ''].join('\n'))
+    await writeFile(join(root, 'cfg', 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repoPath }, { path: wfPath }] }))
+  }
+  const wfQueue = (dir: string) => readFile(join(wfPath, dir, 'handoff-queue.md'), 'utf8')
+
+  test('answer goes to its folder', async () => {
+    await makeWorkflowRepo([NOTE, ASK], [OTHER_ASK])
+    const s = await setup()
+    const wfId = s.repoOf(wfPath).id
+    const before = { main: await wfQueue(MAIN), other: await wfQueue(OTHER), legacy: await wfQueue('pod-docs') }
+    expect(s.repoOf(wfPath).model.queue.find((e) => e.line === ASK)?.stateDir).toBe(MAIN)
+
+    // A stateDir in the request counts for nothing: the entry's own folder is written.
+    const res = await s.post({ repoId: wfId, line: ASK, text: 'call it Ladder', stateDir: OTHER })
+    expect(await json<AnswerResult>(res)).toEqual({ outcome: 'answered', logged: true })
+    expect(await wfQueue(MAIN)).toBe(before.main.replace(ASK, `${ASK} **Answer (human):** call it Ladder`))
+    expect(await wfQueue(OTHER)).toBe(before.other)
+    expect(await wfQueue('pod-docs')).toBe(before.legacy)
+
+    // The other workflow's entry goes to its own folder, whatever folder the request names.
+    for (const stateDir of ['pod-docs', MAIN, '../../elsewhere']) {
+      const wrong = await s.post({ repoId: wfId, line: OTHER_ASK, text: `from ${stateDir}`, stateDir })
+      if (stateDir === 'pod-docs') expect(await json<AnswerResult>(wrong)).toEqual({ outcome: 'answered', logged: true })
+      else expect(wrong.status).toBe(404)
+    }
+    expect(await wfQueue(OTHER)).toBe(before.other.replace(OTHER_ASK, `${OTHER_ASK} **Answer (human):** from pod-docs`))
+    expect(await wfQueue(MAIN)).toBe(before.main.replace(ASK, `${ASK} **Answer (human):** call it Ladder`))
+    expect(await wfQueue('pod-docs')).toBe(before.legacy)
+    expect(await readdir(join(wfPath, OTHER))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+
+    // A legacy repo's entry has no stateDir and goes to pod-docs.
+    expect(s.repoOf(repoPath).model.queue.find((e) => e.line === HALT)?.stateDir).toBeUndefined()
+    const legacy = await s.post({ repoId: s.repoId, line: HALT, text: 'ok', stateDir: MAIN })
+    expect(await json<AnswerResult>(legacy)).toEqual({ outcome: 'answered', logged: true })
+    expect(await queueText()).toContain(`${HALT} **Answer (human):** ok`)
+  })
+
+  test('same line in two folders', async () => {
+    await makeWorkflowRepo([DUP, ASK], [DUP])
+    const s = await setup()
+    const wfId = s.repoOf(wfPath).id
+    const dups = s.repoOf(wfPath).model.queue.filter((e) => e.line === DUP)
+    expect(dups.map((e) => e.stateDir)).toEqual([MAIN, OTHER])
+    const before = { main: await wfQueue(MAIN), other: await wfQueue(OTHER), legacy: await wfQueue('pod-docs') }
+
+    for (const stateDir of [undefined, MAIN, OTHER]) {
+      const res = await s.post({ repoId: wfId, line: DUP, text: 'x', ...(stateDir ? { stateDir } : {}) })
+      expect(res.status).toBe(200)
+      expect(await json<AnswerResult>(res)).toEqual({ outcome: 'changed', message: 'Two entries read the same. Answer it in the chat.', logged: true })
+    }
+    expect(await wfQueue(MAIN)).toBe(before.main)
+    expect(await wfQueue(OTHER)).toBe(before.other)
+    expect(await wfQueue('pod-docs')).toBe(before.legacy)
+    expect(await readdir(join(wfPath, MAIN))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+    expect(await readdir(join(wfPath, OTHER))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+    expect(s.logged[0]).toEqual({ action: 'answer', repoId: wfId, repo: 'w', target: '2026-10-21 · BLOCKED · orchestrator → human', result: 'changed', message: 'Two entries read the same. Answer it in the chat.' })
+    expect(s.events.slice(-2)).toEqual(['log', 'rebuild'])
+
+    // The line that is in one folder only still answers.
+    expect(await json<AnswerResult>(await s.post({ repoId: wfId, line: ASK, text: 'fine' }))).toEqual({ outcome: 'answered', logged: true })
+    expect(await wfQueue(MAIN)).toBe(before.main.replace(ASK, `${ASK} **Answer (human):** fine`))
   })
 })
