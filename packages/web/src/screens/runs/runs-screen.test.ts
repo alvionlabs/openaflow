@@ -444,9 +444,9 @@ describe('sidebar', () => {
     expect(text(html)).toMatch(/Add repo/)
     expect(text(html)).not.toMatch(/in the bar/)
     expect(sideOf(html)).toMatch(ADD)
-    // A friend with no pod sees why the board is empty, and the fix.
-    expect(text(html)).toContain('/plugin marketplace add iamphduc/claude-pod')
-    expect(text(html)).toContain('/plugin install pod@pod')
+    // The app ships claude-pod, so no screen names pod's install steps.
+    expect(text(html)).not.toContain('/plugin marketplace add')
+    expect(text(html)).not.toContain('/plugin install pod@pod')
   })
 
   it("reads the started time against the Board's transcript window", () => {

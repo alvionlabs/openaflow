@@ -187,13 +187,22 @@ describe('empty messages', () => {
     expect(emptyMessage(unsupported, repoWith('# pod docs\n\npod docs: 3\n'))).toBe(
       "This repo's pod docs are version 3; OpenAFlow reads version 2. Update pod in this repo.",
     )
-    // The model can't tell an older pod's docs from no pod at all, so the message serves both.
+  })
+
+  it('no workflow message', () => {
+    const unsupported = run({ state: 'unsupported', where: 'update pod' })
+    // No docs (or docs with no version line) and no .openaflow/: the set-up line, with no pod install steps.
     for (const readme of ['# pod docs\n', undefined]) {
       const message = emptyMessage(unsupported, repoWith(readme))
-      expect(message).toMatch(/update pod in this repo/i)
-      expect(message).toContain('/plugin marketplace add iamphduc/claude-pod')
-      expect(message).toContain('/plugin install pod@pod')
+      expect(message).toBe("This repo has no workflow yet. Set it up to use the app's claude-pod.")
+      expect(message).not.toMatch(/\/plugin|pod@pod|marketplace/)
     }
+    // A set-up repo whose workflow has no docs yet: no set-up line (it has the folder), and no install steps either.
+    const setUp: BoardRepo = { ...repoWith(undefined), model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }) }
+    const message = emptyMessage(unsupported, setUp)
+    expect(message).not.toContain('Set it up')
+    expect(message).not.toMatch(/\/plugin|pod@pod|marketplace/)
+    expect(message).toMatch(/update pod in this repo/i)
   })
 
   it('without the repo, an unsupported run still says to update pod', () => {
