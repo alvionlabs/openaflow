@@ -43,12 +43,12 @@ export function repoWorkflows(files: RepoFiles): RepoWorkflow[] {
   })
 }
 
-/** The `workflow.json` object; missing, unparseable, or not an object → empty. */
+/** The `workflow.json` object; missing, unparseable, or not an object → empty. An array has no `source` or `version`, so it reads as empty too. */
 function readMeta(text: string | undefined): Record<string, unknown> {
   if (text === undefined) return {}
   try {
     const value: unknown = JSON.parse(text)
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
   } catch {
     return {}
   }
