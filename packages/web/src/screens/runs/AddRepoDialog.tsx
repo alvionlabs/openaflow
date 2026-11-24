@@ -2,7 +2,8 @@
 // desktop app. The rules are in add-repo-flow.ts; this file only wires them. The opener (screen 1's sidebar)
 // puts focus back on its button after `onClose`, so `onClose` runs only once the modal has left the page and the
 // page is no longer inert.
-import { useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import { postAction } from '../../actions-client.ts'
 import { postRepo } from '../../add-repo.ts'
 import { Modal } from '../../components/Modal.tsx'
 import { DialogAlert } from '../../components/DialogAlert.tsx'
@@ -16,7 +17,7 @@ type Props = { repoPaths: string[]; onClose: () => void }
 export function AddRepoDialog({ onClose }: Props) {
   const [state, setState] = useState<AddRepoState | undefined>(undefined)
   // Closing is read from the state, so the parent hears of it after the modal is gone.
-  const [flow] = useState(() => createAddRepoFlow({ pick: folderBridge(), post: (p) => postRepo(p), onClose: () => {} }, setState))
+  const [flow] = useState(() => createAddRepoFlow({ pick: folderBridge(), post: (p) => postRepo(p), setupRepo: (path) => postAction('setup-workflow', { path }), onClose: () => {} }, setState))
   const close = useRef(onClose)
   close.current = onClose
   const view = state ?? flow.state()
@@ -25,7 +26,8 @@ export function AddRepoDialog({ onClose }: Props) {
     if (view.kind === 'closed') close.current()
   }, [view.kind])
 
-  return view.kind === 'form' ? <AddRepoForm state={view} flow={flow} /> : null
+  if (view.kind === 'form') return <AddRepoForm state={view} flow={flow} />
+  return view.kind === 'confirm' ? <AddRepoConfirm state={view} flow={flow} /> : null
 }
 
 type FormProps = { state: Extract<AddRepoState, { kind: 'form' }>; flow: AddRepoFlow }
@@ -101,6 +103,50 @@ export function AddRepoForm({ state, flow }: FormProps) {
         </button>
         <button ref={add} className="btn primary" type="button" disabled={!canAdd(state)} onClick={() => void flow.add()}>
           Add
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+type ConfirmProps = { state: Extract<AddRepoState, { kind: 'confirm' }>; flow: AddRepoFlow }
+
+/**
+ * The setup question after a repo with no `.openaflow/` was added: the heading, the facts (a labelled list under an
+ * open Details, DESIGN.md "Forms and errors"), a system error in the shared alert box, then Not now (quiet) and
+ * Create (primary). Create takes focus, and takes it back after a refusal. Both buttons are off while busy.
+ */
+export function AddRepoConfirm({ state, flow }: ConfirmProps) {
+  const headingId = useId()
+  const create = useRef<HTMLButtonElement>(null)
+  useEffect(() => create.current?.focus(), [state.busy, state.error])
+  const facts = [
+    { label: 'Folder', value: state.path },
+    { label: 'Creates', value: '.openaflow/workflows/claude-pod/' },
+  ]
+  return (
+    <Modal labelledBy={headingId} busy={state.busy} onClose={flow.cancel} className="add-repo-modal">
+      <h2 id={headingId} className="modal-heading">
+        Create <span className="mono">.openaflow/</span> in this repo?
+      </h2>
+      <details className="modal-details" open>
+        <summary>Details</summary>
+        <dl>
+          {facts.map((f) => (
+            <Fragment key={f.label}>
+              <dt>{f.label}</dt>
+              <dd>{f.value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      </details>
+      {state.error && <DialogAlert message={state.error} />}
+      <div className="modal-actions">
+        <button className="btn quiet" type="button" disabled={state.busy} onClick={flow.notNow}>
+          Not now
+        </button>
+        <button ref={create} className="btn primary" type="button" disabled={state.busy} onClick={() => void flow.create()}>
+          Create
         </button>
       </div>
     </Modal>
