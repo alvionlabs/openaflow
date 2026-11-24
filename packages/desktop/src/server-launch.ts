@@ -1,15 +1,17 @@
 // Where the server bundle is, and the env it starts with.
 
 import { join } from 'node:path'
-import { hooksPluginDir, type Place } from './pty-host-launch.ts'
+import { hooksPluginDir, workflowsRoot, type Place } from './pty-host-launch.ts'
 
 const PARENT_PID = 'OPENAFLOW_PARENT_PID'
 /** `1` tells the server it has the terminal channel on its parent port (pod-docs/sprints/terminal-tab.md §2). */
 const TERMINALS = 'OPENAFLOW_TERMINALS'
 /** The hooks plugin's absolute folder, for each session's `--plugin-dir`. */
 const HOOKS_PLUGIN = 'OPENAFLOW_HOOKS_PLUGIN'
+/** The folder that holds the bundled `claude-pod/` workflow plugin. */
+const WORKFLOWS_DIR = 'OPENAFLOW_WORKFLOWS_DIR'
 /** Set here only: an inherited value, in any case, is dropped. */
-const SET_HERE = new Set([PARENT_PID, TERMINALS, HOOKS_PLUGIN])
+const SET_HERE = new Set([PARENT_PID, TERMINALS, HOOKS_PLUGIN, WORKFLOWS_DIR])
 /** With this set, Electron's exe runs as plain Node, which a utilityProcess must not. */
 const RUN_AS_NODE = 'ELECTRON_RUN_AS_NODE'
 
@@ -21,8 +23,8 @@ export function serverEntry(o: { packaged: boolean; appPath: string; resourcesPa
 
 /**
  * A copy of env with OPENAFLOW_PARENT_PID = mainPid. With `place` (the app's server, which gets the terminal
- * channel), also OPENAFLOW_TERMINALS = 1 and OPENAFLOW_HOOKS_PLUGIN = the plugin folder for that place. Old values of
- * those three, and ELECTRON_RUN_AS_NODE, are removed in any case.
+ * channel), also OPENAFLOW_TERMINALS = 1, OPENAFLOW_HOOKS_PLUGIN = the plugin folder for that place, and
+ * OPENAFLOW_WORKFLOWS_DIR = the workflows folder for that place. Old values of those four, and ELECTRON_RUN_AS_NODE, are removed in any case.
  */
 export function serverEnv(env: NodeJS.ProcessEnv, mainPid: number, place?: Place): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
@@ -34,5 +36,6 @@ export function serverEnv(env: NodeJS.ProcessEnv, mainPid: number, place?: Place
   if (place === undefined) return out
   out[TERMINALS] = '1'
   out[HOOKS_PLUGIN] = hooksPluginDir(place)
+  out[WORKFLOWS_DIR] = workflowsRoot(place)
   return out
 }

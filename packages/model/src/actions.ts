@@ -61,6 +61,16 @@ export type ResumeSessionOutcome = 'started' | 'failed'
 /** What the resume-session route sends back on success: the new session's marker. */
 export type ResumeSessionResult = { outcome: 'started'; marker: string; logged: boolean }
 
+export type SetupWorkflowOutcome = 'created' | 'failed'
+
+/** What the setup-workflow route sends back on success: the repo's `.openaflow/` was created. */
+export type SetupWorkflowResult = { outcome: 'created'; logged: boolean }
+
+export type UseWorkflowVersionOutcome = 'updated' | 'failed'
+
+/** What the use-workflow-version route sends back on success: the workflow's `version` now is the bundled one. */
+export type UseWorkflowVersionResult = { outcome: 'updated'; logged: boolean }
+
 /**
  * One logged action. A merge's `target` is `PR #N`; an answer's is the queue entry's
  * `<date> · <TYPE> · <from → to>`, never the answer text or the body; a resolve's (Close or Keep) the same. A resume's is

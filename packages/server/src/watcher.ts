@@ -61,7 +61,7 @@ export function boardSignature(board: Board): string {
 
 /**
  * What to watch for a Board: the config file and the session store beside it, the hosted sessions' hook files, the
- * claims, and each repo's pod docs and transcripts.
+ * claims, and each repo's pod docs, `.openaflow` folder, and transcripts.
  */
 export function watchTargets(board: Board, o: Pick<BoardWatcherOptions, 'configFile' | 'portsDir' | 'claudeDir'>): Target[] {
   const configFile = path.resolve(o.configFile)
@@ -78,6 +78,14 @@ export function watchTargets(board: Board, o: Pick<BoardWatcherOptions, 'configF
   for (const repo of board.repos) {
     // Pod docs live up to two folders down (`plans/archive/x.md`); only `.md` files count.
     targets.push({ dir: path.resolve(repo.path, 'pod-docs'), depth: 2, keep: (p, isDir) => isDir !== false || p.endsWith('.md') })
+    // A set-up repo's workflows: `.openaflow/workflows/<name>/state/plans/archive/x.md` is five folders down. Only `.md`
+    // files and each `workflow.json` count. Watched beside pod-docs, so a repo that sets up, or drops its
+    // `.openaflow`, rebuilds.
+    targets.push({
+      dir: path.resolve(repo.path, '.openaflow'),
+      depth: 5,
+      keep: (p, isDir) => isDir !== false || p.endsWith('.md') || path.basename(p) === 'workflow.json',
+    })
     const project = path.resolve(o.claudeDir, 'projects', projectDirName(repo.path))
     targets.push({ dir: project, depth: 2, keep: (p, isDir) => keepTranscriptPath(project, p, isDir) })
   }

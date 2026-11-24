@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { bundlePtyHost } from '../../pty-host/scripts/build.ts'
-import { LICENCE_OVERRIDES, bundleRoots, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from './licence-notices.ts'
+import { LICENCE_OVERRIDES, bundleRoots, workflowNotice, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from './licence-notices.ts'
 
 let dir: string
 
@@ -169,5 +169,36 @@ describe('licence notices', () => {
     expect(LICENCE_OVERRIDES['@xterm/xterm']).toBeUndefined()
     expect(LICENCE_OVERRIDES['@xterm/addon-fit']).toBeUndefined()
     expect(text).toContain('Copyright (c) 2019, The xterm.js authors')
+  })
+})
+
+describe('workflow notice', () => {
+  const planted = (version: string, licence?: string) => {
+    const claudePod = join(dir, 'claude-pod')
+    mkdirSync(join(claudePod, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(claudePod, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'claude-pod', version }))
+    if (licence !== undefined) writeFileSync(join(claudePod, 'LICENSE'), licence)
+    return claudePod
+  }
+
+  test('workflowNotice titles claude-pod with its version and holds its LICENSE text; a missing dist throws the pnpm build message', () => {
+    const notice = workflowNotice(planted('0.11.10', 'MIT License\n\nCopyright (c) claude-pod authors\n'))
+    expect(notice).toEqual({ title: 'claude-pod 0.11.10', text: 'MIT License\n\nCopyright (c) claude-pod authors' })
+    // It joins the notices file like the fonts do.
+    const text = renderNotices({ roots: [], overrides: {}, extras: [notice] })
+    expect(text).toContain('claude-pod 0.11.10')
+    expect(text).toContain('Copyright (c) claude-pod authors')
+
+    expect(() => workflowNotice(join(dir, 'gone'))).toThrow('run pnpm build first: packages/workflow/dist/claude-pod is missing')
+  })
+
+  test('a dist with no LICENSE, no plugin.json, or a bad version throws', () => {
+    rmSync(join(dir, 'claude-pod'), { recursive: true, force: true })
+    expect(() => workflowNotice(planted('0.11.10'))).toThrow(/LICENSE/)
+    expect(() => workflowNotice(planted('v1', 'MIT'))).toThrow(/version/)
+    rmSync(join(dir, 'claude-pod', '.claude-plugin', 'plugin.json'))
+    expect(() => workflowNotice(planted('0.1.0', 'MIT')).title).not.toThrow()
+    rmSync(join(dir, 'claude-pod', '.claude-plugin'), { recursive: true })
+    expect(() => workflowNotice(join(dir, 'claude-pod'))).toThrow(/plugin\.json/)
   })
 })

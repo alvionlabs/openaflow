@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { cpSync } from 'node:fs'
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createBoardService, type BoardService } from './board-service.ts'
 import type { GhReader } from './gh.ts'
 import { createHookReader, createSessionStore } from './session-store.ts'
-import { createBoardWatcher, DEBOUNCE_MS, MAX_WAIT_MS, type BoardWatcher } from './watcher.ts'
+import { createBoardWatcher, DEBOUNCE_MS, MAX_WAIT_MS, watchTargets, type BoardWatcher } from './watcher.ts'
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'model', 'fixtures', 'chess-web')
 
@@ -200,7 +200,12 @@ const t1Status = (b: Board) =>
     .find((s) => s.code === 'T1')?.status
 
 async function setT1(repo: string, status: string): Promise<void> {
-  const file = join(repo, 'pod-docs', 'sprints', 'ladder.md')
+  await setT1In(join(repo, 'pod-docs'), status)
+}
+
+/** Sets T1 in the ladder sprint of a state folder (`pod-docs` or a workflow's `state`). */
+async function setT1In(state: string, status: string): Promise<void> {
+  const file = join(state, 'sprints', 'ladder.md')
   const text = await readFile(file, 'utf8')
   await writeFile(file, text.replace(/(\| 3 \| T1 \|[^\n]*\| — \| )[a-z-]+( \|)/, `$1${status}$2`))
 }
@@ -626,4 +631,81 @@ describe('board watcher', () => {
     // One right after start, then one per tick.
     await until(() => refreshes >= 3)
   })
+
+  test('watches .openaflow', async () => {
+    // Resolved, so the expected paths match the ones the watcher builds (temp-paths-resolve-differently.md).
+    const repo = await realpath(copyFixture('chess-web'))
+    await register(repo)
+    const board = await service().build()
+    const targets = watchTargets(board, { configFile, portsDir, claudeDir })
+    const dir = join(repo, '.openaflow')
+    const target = targets.find((t) => t.dir === dir)
+    expect(target?.depth).toBe(5)
+    // pod-docs is still watched beside it.
+    expect(targets.some((t) => t.dir === join(repo, 'pod-docs'))).toBe(true)
+    const keep = (rel: string, isDir: boolean | undefined) => target!.keep(join(dir, ...rel.split('/')), isDir)
+    expect(keep('', true)).toBe(true)
+    expect(keep('workflows', true)).toBe(true)
+    expect(keep('workflows/claude-pod', undefined)).toBe(true)
+    expect(keep('workflows/claude-pod/state/plans/archive/x.md', false)).toBe(true)
+    expect(keep('workflows/claude-pod/workflow.json', false)).toBe(true)
+    expect(keep('workflows/claude-pod/workflow.json.bak', false)).toBe(false)
+    expect(keep('workflows/claude-pod/other.json', false)).toBe(false)
+    expect(keep('workflows/claude-pod/state/notes.txt', false)).toBe(false)
+  })
+
+  test('.openaflow appears', async () => {
+    // Today's model reads no state folder (M1 adds that), so T1 leaves 'pending' either way: gone today, 'pushed' once
+    // the model reads the state copy. The builds show that each state file and workflow.json is watched.
+    const repo = await realpath(copyFixture('chess-web'))
+    await register(repo)
+    const { service: svc, quiet } = tracked(service())
+    let builds = 0
+    const counting: BoardService = { build: () => (builds++, svc.build()), refreshGh: svc.refreshGh }
+    watcher = createBoardWatcher({ service: counting, configFile, portsDir, claudeDir, tickMs: 1e9 })
+    const first = await watcher.start()
+    expect(t1Status(first)).toBe('pending')
+    const { next } = collect(watcher)
+    await quiet(800)
+
+    // Made in a temp folder and moved in whole, as setup does, with its own state copy whose T1 differs.
+    const staged = join(root, 'staged')
+    const state = join(staged, 'workflows', 'claude-pod', 'state')
+    cpSync(join(repo, 'pod-docs'), state, { recursive: true })
+    const ladder = join(state, 'sprints', 'ladder.md')
+    const podLadder = await readFile(ladder, 'utf8')
+    await setT1In(state, 'pushed')
+    expect(await readFile(ladder, 'utf8')).not.toBe(podLadder)
+    // Made before the move, so its own add event can't give the build counted below.
+    await mkdir(join(state, 'plans', 'archive'), { recursive: true })
+    await writeFile(join(staged, 'workflows', 'claude-pod', 'workflow.json'), '{"source":"claude-pod"}\n')
+    await rename(staged, join(repo, '.openaflow'))
+    await next((b) => t1Status(b) !== 'pending')
+    // An event's build starts one quiet spell after it, so wait that long before waiting for quiet.
+    const settle = async () => {
+      await sleep(DEBOUNCE_MS + 200)
+      await quiet(800)
+    }
+    await settle()
+
+    // A state doc five folders down, and workflow.json, each give a build.
+    const flow = join(repo, '.openaflow', 'workflows', 'claude-pod')
+    let before = builds
+    await writeFile(join(flow, 'state', 'plans', 'archive', 'x.md'), '# x\n')
+    await until(() => builds > before)
+    await settle()
+    before = builds
+    await writeFile(join(flow, 'workflow.json'), '{"source":"claude-pod","version":"0.0.1"}\n')
+    await until(() => builds > before)
+    await settle()
+    // A file the watch drops gives none.
+    before = builds
+    await writeFile(join(flow, 'notes.txt'), 'x')
+    await sleep(1000)
+    expect(builds).toBe(before)
+
+    // Removed: pod-docs is read again.
+    await rm(join(repo, '.openaflow'), { recursive: true, force: true })
+    await next((b) => t1Status(b) === 'pending')
+  }, 60_000)
 })
