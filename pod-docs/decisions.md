@@ -298,6 +298,9 @@ Decision: keep the UI as it is. A row is still a run. The run view with nodes an
 Consequences: terminals attach to a run; they are not rows. A terminal that starts before its plan exists needs a home (proposal in the research doc).
 
 ## 2026-11-11 — Outside runs are watch-only (human decision, not in force until planned)
+
+_Partly replaced on 2026-11-23: runs in your own terminal use claude-pod and write `pod-docs/`; the bundled workflow is never installed outside the app. See the 2026-11-23 entry._
+
 Context: a run can start in the app's terminal or in the user's own terminal. Both use OpenAFlow's plugin, so both write `.openaflow/`.
 Decision: runs started in the app get everything: Workflow, the Terminal tab, Continue, and auto-continue. Runs started in the user's own terminal are watch-only: Workflow, merge, and answer, with no Terminal tab, no Continue, and no auto-continue. Reading state never depends on whether a run is hosted.
 Consequences: the old `claude -p --resume` runner is not needed. For outside runs to write `.openaflow/`, the plugin must also be installable outside the app, not only loaded with `--plugin-dir`.
@@ -649,6 +652,8 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
 
 ## 2026-11-22 — OpenAFlow ships claude-pod as its default workflow (human)
 
+_Open points settled on 2026-11-23: see the 2026-11-23 entry below._
+
 - **Decision:** OpenAFlow ships claude-pod as the user's default workflow. claude-pod's own repo stays the one source: OpenAFlow pins a tagged claude-pod release and its build fetches it (for example a git submodule or a release download). An update in OpenAFlow is a version bump, done when the human asks.
 - **Why one source:** a copy inside OpenAFlow would mean every workflow fix is made twice, in claude-pod and again here. claude-pod has its own users, so its repo stays the home of the workflow.
 - **Replaceable later, not now:** users will later be able to edit the workflow or replace it with their own. Not in v0.1.0, because it is too big. But the structure keeps a clear seam between the workflow and the app, so replacing it later is a change, not a rewrite.
@@ -663,3 +668,15 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
   - How the pin works: submodule, release download, or another way.
 - **Plan:** `default-workflow` (the parked idea is still named `openaflow-plugin`).
 - **From:** session of 2026-11-22.
+
+## 2026-11-23 — OpenAFlow and claude-pod are separate; workflows live in `.openaflow/workflows/` (human)
+
+- **Decision:** OpenAFlow reuses claude-pod's workflow and nothing else. Each repo keeps everything OpenAFlow-related in one `.openaflow/`. `.openaflow/workflows/<name>/` holds one workflow: `workflow.json` (`source`, `version`) and `state/`. Both are committed, so a team shares one workflow and version. claude-pod is the first workflow. Plain claude-pod still writes `pod-docs/` on its own.
+- **Pin, not copy:** the repo commits only `workflow.json`. The workflow's skills and agents ship in the app (`resources/workflows/claude-pod`) and load with `--plugin-dir`, beside the hooks plugin. When the repo pins another version than the app ships, New session shows a notice with **Use <version>**, which rewrites `workflow.json`; sessions are not blocked.
+- **Build:** OpenAFlow pins claude-pod in a lock file (repo, tag, commit), fetches the tag with `git`, checks the commit, and renames `pod-docs` to `.openaflow/workflows/claude-pod/state` in the plugin text. claude-pod is not changed. A leftover `pod-docs` fails the build. The bump is done only when OpenAFlow wants it.
+- **Skills:** the plugin keeps its prefix (human); the New session dropdown shows bare skill names. The manifest name stays `pod` (agent default, open for the human).
+- **State reading:** the board reads every `.openaflow/workflows/*/state/`, and `pod-docs/` only in repos with no `.openaflow/`. A later plan removes `pod-docs/` support. This replaces research decision 25 and the outside-run part of decision 7 (runs in your own terminal use claude-pod and write `pod-docs/`).
+- **Setup:** Add repo asks, then writes `workflow.json` and the template state (decision 2). No workflow picker until a second workflow exists.
+- **Rejected:** a folder-name setting in claude-pod (claude-pod would change for OpenAFlow); a fork; a full workflow copy in each repo (about 1.7 MB, stale on every bump); a submodule; an npm `github:` dependency; unprefixed skills via `--add-dir` (takes built-in `/plan` and `/init` away; docs disagree on loading); blocking sessions on a version mismatch.
+- **Settles:** the open points of the 2026-11-22 decision.
+- **Plan:** [default-workflow](plans/default-workflow.md). **Research:** [default-workflow.md](research/default-workflow.md).
