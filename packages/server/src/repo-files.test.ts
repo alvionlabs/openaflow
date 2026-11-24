@@ -326,7 +326,7 @@ describe('workflow state folders', () => {
 
   test('skips bad workflow names', async () => {
     const good = ['a', '0', 'claude-pod', 'x-', 'a'.repeat(64)]
-    const bad = ['Claude-pod', '-x', 'x.y', '.hidden', 'a'.repeat(65), 'with space', 'x_y']
+    const bad = ['Upper', '-x', 'x.y', '.hidden', 'a'.repeat(65), 'with space', 'x_y']
     for (const name of [...good, ...bad]) await write(`.openaflow/workflows/${name}/state/README.md`, name)
     // A file named like a workflow is not one.
     await write('.openaflow/workflows/file-name', 'x')

@@ -200,7 +200,12 @@ const t1Status = (b: Board) =>
     .find((s) => s.code === 'T1')?.status
 
 async function setT1(repo: string, status: string): Promise<void> {
-  const file = join(repo, 'pod-docs', 'sprints', 'ladder.md')
+  await setT1In(join(repo, 'pod-docs'), status)
+}
+
+/** Sets T1 in the ladder sprint of a state folder (`pod-docs` or a workflow's `state`). */
+async function setT1In(state: string, status: string): Promise<void> {
+  const file = join(state, 'sprints', 'ladder.md')
   const text = await readFile(file, 'utf8')
   await writeFile(file, text.replace(/(\| 3 \| T1 \|[^\n]*\| — \| )[a-z-]+( \|)/, `$1${status}$2`))
 }
@@ -628,7 +633,8 @@ describe('board watcher', () => {
   })
 
   test('watches .openaflow', async () => {
-    const repo = copyFixture('chess-web')
+    // Resolved, so the expected paths match the ones the watcher builds (temp-paths-resolve-differently.md).
+    const repo = await realpath(copyFixture('chess-web'))
     await register(repo)
     const board = await service().build()
     const targets = watchTargets(board, { configFile, portsDir, claudeDir })
@@ -649,8 +655,8 @@ describe('board watcher', () => {
   })
 
   test('.openaflow appears', async () => {
-    // Today's model reads no state folder (M1 adds that), so the Board shows the swap by leaving pod-docs, and the
-    // builds show that each state file and workflow.json is watched.
+    // Today's model reads no state folder (M1 adds that), so T1 leaves 'pending' either way: gone today, 'pushed' once
+    // the model reads the state copy. The builds show that each state file and workflow.json is watched.
     const repo = await realpath(copyFixture('chess-web'))
     await register(repo)
     const { service: svc, quiet } = tracked(service())
@@ -666,6 +672,10 @@ describe('board watcher', () => {
     const staged = join(root, 'staged')
     const state = join(staged, 'workflows', 'claude-pod', 'state')
     cpSync(join(repo, 'pod-docs'), state, { recursive: true })
+    const ladder = join(state, 'sprints', 'ladder.md')
+    const podLadder = await readFile(ladder, 'utf8')
+    await setT1In(state, 'pushed')
+    expect(await readFile(ladder, 'utf8')).not.toBe(podLadder)
     // Made before the move, so its own add event can't give the build counted below.
     await mkdir(join(state, 'plans', 'archive'), { recursive: true })
     await writeFile(join(staged, 'workflows', 'claude-pod', 'workflow.json'), '{"source":"claude-pod"}\n')
