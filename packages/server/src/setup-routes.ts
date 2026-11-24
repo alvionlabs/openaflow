@@ -41,6 +41,27 @@ export type SetupRouteDeps = {
 /** The folder setup creates, and the one that marks a repo as set up. */
 const OPENAFLOW = '.openaflow'
 
+/**
+ * The template's empty folders, relative to `state/`. The built workflow holds each with a `.gitkeep`, but the packaged
+ * app has none of them: electron-builder skips every `.gitkeep` in each copy it makes (builder-util `fs.js`), the
+ * AppImage stage too, and no setting changes that. So setup makes them, each with a `.gitkeep`, and a test checks the
+ * list against the built workflow.
+ */
+export const TEMPLATE_FOLDERS = ['plans', 'sprints/archive', 'ideas', 'known-issues', 'feature-details'] as const
+
+/** Makes each `TEMPLATE_FOLDERS` folder under `state` with a `.gitkeep`; one the copy brought is kept as it is. */
+async function makeTemplateFolders(state: string): Promise<void> {
+  for (const rel of TEMPLATE_FOLDERS) {
+    const dir = path.join(state, ...rel.split('/'))
+    await mkdir(dir, { recursive: true })
+    try {
+      await writeFile(path.join(dir, '.gitkeep'), '', { flag: 'wx' })
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+  }
+}
+
 /** The plain copy: links in the template become files, so the repo gets no link into the app's folder. */
 const copyTemplate = (from: string, to: string) => cp(from, to, { recursive: true, dereference: true, errorOnExist: true, force: false })
 
@@ -85,6 +106,7 @@ export function createSetupRoutes(deps: SetupRouteDeps): Hono {
         await mkdir(workflow, { recursive: true })
         await writeFile(path.join(workflow, 'workflow.json'), JSON.stringify({ source: bundle.source, version: bundle.version }, null, 2) + '\n', { flag: 'wx' })
         await copy(bundle.template, path.join(workflow, 'state'))
+        await makeTemplateFolders(path.join(workflow, 'state'))
         // Checked again: on POSIX a rename replaces an empty folder, so one made during the copy would be lost.
         if ((await exists(target)) !== false) outcome = 'taken'
         else {
