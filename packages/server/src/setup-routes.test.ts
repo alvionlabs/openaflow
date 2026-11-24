@@ -215,9 +215,12 @@ describe('setup-workflow route', () => {
     // `ideas` is a file in this template, so the folder can't be made.
     await writeFile(join(template, 'ideas'), 'not a folder')
     const s = await setup()
-    expect(await s.post('setup-workflow', { path: plain })).toEqual({ status: 500, body: { error: 'setup failed: EEXIST' } })
+    // The code differs by system (EEXIST here; Windows may say another), so only its shape is checked.
+    const res = await s.post('setup-workflow', { path: plain })
+    expect(res.status).toBe(500)
+    expect((res.body as { error: string }).error).toMatch(/^setup failed: [A-Z]+$/)
     expect(await readdir(plain)).toEqual([])
-    expect(s.logged).toEqual([expect.objectContaining({ action: 'setup-workflow', result: 'failed', message: 'setup failed: EEXIST' })])
+    expect(s.logged).toEqual([expect.objectContaining({ action: 'setup-workflow', result: 'failed', message: (res.body as { error: string }).error })])
   })
 
   test("the list covers every empty folder in the built workflow's template", async (ctx) => {
