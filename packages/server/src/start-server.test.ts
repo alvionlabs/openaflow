@@ -718,6 +718,64 @@ describe('hosted sessions', () => {
   })
 })
 
+describe('setup routes', () => {
+  test('setup routes wired', async () => {
+    // A bundle with its template, and a registered repo with no `.openaflow`.
+    const workflows = join(tmp, 'workflows')
+    const template = join(workflows, 'claude-pod', 'skills', 'init', 'scaffold', '.openaflow', 'workflows', 'claude-pod', 'state')
+    await mkdir(join(workflows, 'claude-pod', '.claude-plugin'), { recursive: true })
+    await writeFile(join(workflows, 'claude-pod', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'pod', version: '0.11.10' }))
+    await mkdir(template, { recursive: true })
+    await writeFile(join(template, 'handoff-queue.md'), '# Handoff Queue\n')
+    const repo = join(tmp, 'repo')
+    await mkdir(repo)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+
+    const { started } = await startProduction({ OPENAFLOW_WORKFLOWS_DIR: workflows })
+    const token = await pageToken(started.port)
+    const post = (route: string, body: unknown, withToken = true) =>
+      send(started.port, `/api/actions/${route}`, {
+        method: 'POST',
+        headers: { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', ...(withToken ? { 'X-OpenAFlow-Token': token } : {}) },
+        body: JSON.stringify(body),
+      })
+    // Behind the guard: no token, nothing written.
+    expect((await post('setup-workflow', { path: repo }, false)).status).toBe(403)
+    expect(existsSync(join(repo, '.openaflow'))).toBe(false)
+
+    const res = await post('setup-workflow', { path: repo })
+    expect({ status: res.status, body: JSON.parse(res.text) }).toEqual({ status: 200, body: { outcome: 'created', logged: true } })
+    expect(await readFile(join(repo, '.openaflow', 'workflows', 'claude-pod', 'workflow.json'), 'utf8')).toBe('{\n  "source": "claude-pod",\n  "version": "0.11.10"\n}\n')
+    expect(await readFile(join(repo, '.openaflow', 'workflows', 'claude-pod', 'state', 'handoff-queue.md'), 'utf8')).toBe('# Handoff Queue\n')
+    // The Board read it before the answer, and the entry is in the config folder's log.
+    type B = { repos: { id: string; model: { openaflow?: boolean } }[]; actions?: { action: string; result: string }[] }
+    const board = JSON.parse((await send(started.port, '/api/board')).text) as B
+    expect(board.repos[0]!.model.openaflow).toBe(true)
+    expect(board.actions?.[0]).toMatchObject({ action: 'setup-workflow', result: 'created' })
+    expect(await readFile(join(cfg, 'actions.jsonl'), 'utf8')).toContain('"setup-workflow"')
+    // Use reads the same bundle: the version is already the bundled one.
+    const use = await post('use-workflow-version', { repoId: board.repos[0]!.id, name: 'claude-pod' })
+    expect({ status: use.status, body: JSON.parse(use.text) }).toEqual({ status: 409, body: { error: 'already current' } })
+  })
+
+  test('with no workflows dir, setup answers workflow missing', async () => {
+    const repo = join(tmp, 'repo')
+    await mkdir(repo)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    const { started } = await startProduction({ OPENAFLOW_WORKFLOWS_DIR: '' })
+    const token = await pageToken(started.port)
+    const res = await send(started.port, '/api/actions/setup-workflow', {
+      method: 'POST',
+      headers: { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+      body: JSON.stringify({ path: repo }),
+    })
+    expect({ status: res.status, body: JSON.parse(res.text) }).toEqual({ status: 409, body: { error: 'workflow missing' } })
+    expect(existsSync(join(repo, '.openaflow'))).toBe(false)
+  })
+})
+
 describe('the owner file', () => {
   const ownerFile = () => join(cfg, 'auto-continue-owner.json')
 
