@@ -635,6 +635,14 @@ describe('hosted sessions', () => {
     expect(unreadRun.state).toBe('unsupported')
     expect(nextSteps(unreadRun, unread, NOW)?.card).toMatchObject({ action: { kind: 'new-session' }, detail: NO_STATE })
     expect(menuRepo(unread, BRIDGE)?.id).toBe('notes')
+    // A set-up repo whose docs are newer than the app reads: no start card and no menu item, since the app's pod is older.
+    const newer = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' }) })
+    expect(nextSteps(runs(newer)[0]!, newer, NOW)?.card).toMatchObject({ action: { kind: 'none' }, detail: emptyMessage(runs(newer)[0]!, newer) })
+    expect(menuRepo(newer, BRIDGE)).toBeUndefined()
+    // An older version: init updates them, so both.
+    const older = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 1\n' }) })
+    expect(nextSteps(runs(older)[0]!, older, NOW)?.card.action.kind).toBe('new-session')
+    expect(menuRepo(older, BRIDGE)?.id).toBe('notes')
     // An error repo: neither, with or without .openaflow/.
     const broken = bare({ model: buildRepoModel({}), error: 'folder not found' })
     expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card.action.kind).toBe('none')

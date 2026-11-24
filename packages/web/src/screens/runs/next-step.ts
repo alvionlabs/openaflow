@@ -11,6 +11,7 @@
 // Pure; the card and the tab only render these.
 
 import {
+  SUPPORTED_DOCS_VERSION,
   haltGate,
   holdsRun,
   isAnswerable,
@@ -184,11 +185,13 @@ const waitingItem = (s: HostedSession, run: RunSummary): NextItem => ({
 })
 
 /**
- * A repo New session can open in (the start card and the ⋯ menu): any repo the app reads. A repo without `.openaflow/`
- * gets it with docs or not (sprint default-workflow §9). A set-up repo does too: with no readable docs, init is what
- * writes or updates them, and the session loads the app's own workflow.
+ * A repo New session can open in (the start card and the ⋯ menu): one the app reads. A repo without `.openaflow/` gets
+ * it with docs or not (sprint default-workflow §9). A set-up repo does too, with no readable docs or older ones: init
+ * writes or updates them, and the session loads the app's own workflow. Not one whose docs are newer than the app
+ * reads: the app's pod is older than them.
  */
-export const canOpenNewSession = (repo: BoardRepo): boolean => repo.error === undefined
+export const canOpenNewSession = (repo: BoardRepo): boolean =>
+  repo.error === undefined && !(repo.model.openaflow === true && (repo.model.docs.version ?? 0) > SUPPORTED_DOCS_VERSION)
 
 /**
  * A repo row New session can open in (`canOpenNewSession`) whose shown session isn't starting or live: the place to

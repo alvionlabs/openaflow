@@ -5,6 +5,7 @@
 
 import {
   formatTokens,
+  SUPPORTED_DOCS_VERSION,
   type AgentState,
   type Board,
   type BoardRepo,
@@ -132,7 +133,10 @@ export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
     const { version } = repo.model.docs
     // A set-up repo loads the app's own workflow, so updating pod can't help: init writes or updates its docs.
     if (repo.model.openaflow) {
-      return version === undefined ? NO_STATE : `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a new session with init to update them.`
+      if (version === undefined) return NO_STATE
+      // Newer docs than the app reads: the app's init is older, so only a newer app helps.
+      if (version > SUPPORTED_DOCS_VERSION) return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Update OpenAFlow to read them.`
+      return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a new session with init to update them.`
     }
     if (version !== undefined) return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
     return NO_WORKFLOW

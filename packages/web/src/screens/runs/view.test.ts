@@ -218,6 +218,9 @@ describe('empty messages', () => {
     expect(emptyMessage(unsupported, { ...repoWith(undefined), model: old })).toBe(
       "This repo's workflow docs are version 1; OpenAFlow reads version 2. Start a new session with init to update them.",
     )
+    // A newer version than the app reads: the app's init is older than the docs, so update the app, never run init.
+    const newer = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' })
+    expect(emptyMessage(unsupported, { ...repoWith(undefined), model: newer })).toBe("This repo's workflow docs are version 3; OpenAFlow reads version 2. Update OpenAFlow to read them.")
     for (const files of setUps) expect(emptyMessage(unsupported, { ...repoWith(undefined), model: buildRepoModel(files) })).not.toMatch(/update pod/i)
   })
 
