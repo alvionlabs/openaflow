@@ -495,7 +495,7 @@ describe('use-workflow-version route: failures', () => {
     const s = await setup()
     await rm(workflowJson(setUp))
     // Opening a FIFO with no writer would hang the request.
-    execFileSync('mkfifo', [workflowJson(setUp)])
+    execFileSync('mkfifo', [workflowJson(setUp)], { windowsHide: true })
     expect(await s.post('use-workflow-version', { repoId: s.repoOf(setUp).id, name: 'claude-pod' })).toEqual({ status: 409, body: { error: 'workflow.json unreadable' } })
   }, 3000)
 })
