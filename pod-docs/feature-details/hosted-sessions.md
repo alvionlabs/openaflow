@@ -55,6 +55,7 @@ stateDiagram-v2
 
 ## History
 
+- 2026-11-24 · default-workflow plan fix · fixed: the Terminal tab's Resume shows "The app doesn't have this repo's workflow. Please reinstall it" for `409 workflow missing`, as New session does; it showed the try-again text, and a retry never worked.
 - 2026-11-24 · default-workflow S3 · added: a second `--plugin-dir` with the bundled workflow for repos with `.openaflow/`, `409 workflow missing`, `Board.workflow`, `blocked: 'sideload'` from the managed settings file, and the workflow folder in the settings preview. Repos without `.openaflow/` start as before.
 - 2026-11-19 · plan terminal-host complete · rewrote this page to the current state · [report](../reports/terminal-host.html), [PR #155](https://github.com/alvionlabs/openaflow/pull/155)
 - 2026-11-15 · settings S4 · changed: the start takes its run wrapper and stop command from `settings.json`, with a wrapper check for a changed wrapper and `409 run wrapper: …` / `409 stop command: …` refusals; the record keeps `scrollback` and `stop`, and the sweep sends each record's own `stop`.

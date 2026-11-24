@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Board, NewActionEntry } from '@openaflow/model'
 import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -9,7 +11,7 @@ import { createApp } from './app.ts'
 import { createBoardService } from './board-service.ts'
 import { createGhReader, type GhExec } from './gh.ts'
 import { createSessionToken } from './session-token.ts'
-import { createSetupRoutes, type SetupRouteDeps } from './setup-routes.ts'
+import { createSetupRoutes, TEMPLATE_FOLDERS, type SetupRouteDeps } from './setup-routes.ts'
 import { createWorkflowResolver } from './workflow-resolver.ts'
 
 const API = 3060
@@ -151,6 +153,32 @@ async function setup(opts: Opts = {}) {
   return { request, post, logged, events, board: () => board, repoOf, rebuild: source.rebuild }
 }
 
+/** The empty folders setup makes in state/, each held by a `.gitkeep`, as `snapshot` lists them. */
+const KEEPS: Record<string, string> = {
+  '/plans': '<dir>',
+  '/plans/.gitkeep': '',
+  '/sprints': '<dir>',
+  '/sprints/archive': '<dir>',
+  '/sprints/archive/.gitkeep': '',
+  '/ideas': '<dir>',
+  '/ideas/.gitkeep': '',
+  '/known-issues': '<dir>',
+  '/known-issues/.gitkeep': '',
+  '/feature-details': '<dir>',
+  '/feature-details/.gitkeep': '',
+}
+
+/** Every `.gitkeep` under `dir` removed, and each folder left empty by that removed too: what electron-builder packages. */
+async function stripKeeps(dir: string): Promise<void> {
+  for (const d of await readdir(dir, { withFileTypes: true })) {
+    const full = join(dir, d.name)
+    if (d.isDirectory()) {
+      await stripKeeps(full)
+      if ((await readdir(full)).length === 0) await rm(full, { recursive: true })
+    } else if (d.name === '.gitkeep') await rm(full)
+  }
+}
+
 const workflowJson = (repo: string, name = 'claude-pod') => join(repo, '.openaflow', 'workflows', name, 'workflow.json')
 /** The names in a repo folder that a setup's temp folder would have. */
 const temps = async (repo: string) => (await readdir(repo)).filter((n) => n.startsWith('.openaflow.tmp-'))
@@ -160,13 +188,49 @@ describe('setup-workflow route', () => {
     const s = await setup()
     expect(await s.post('setup-workflow', { path: plain })).toEqual({ status: 200, body: { outcome: 'created', logged: true } })
     expect(await readFile(workflowJson(plain), 'utf8')).toBe(`{\n  "source": "claude-pod",\n  "version": "${BUNDLED}"\n}\n`)
-    // The template is copied whole as state/, with nothing else in the repo but `.openaflow`.
-    expect(await snapshot(join(plain, '.openaflow', 'workflows', 'claude-pod', 'state'))).toEqual(await snapshot(template))
+    // The template is copied whole as state/, plus the template's empty folders, with nothing else in the repo but `.openaflow`.
+    expect(await snapshot(join(plain, '.openaflow', 'workflows', 'claude-pod', 'state'))).toEqual({ ...(await snapshot(template)), ...KEEPS })
     expect(await readdir(plain)).toEqual(['.openaflow'])
     expect(await readdir(join(plain, '.openaflow'))).toEqual(['workflows'])
     expect((await readdir(join(plain, '.openaflow', 'workflows', 'claude-pod'))).sort()).toEqual(['state', 'workflow.json'])
     // The template itself is untouched.
     expect(await readdir(template)).toContain('README.md')
+  })
+
+  test('a packaged template with no .gitkeep files gives the same state as the built one', async () => {
+    const s = await setup()
+    expect((await s.post('setup-workflow', { path: plain })).status).toBe(200)
+    const built = await snapshot(join(plain, '.openaflow', 'workflows', 'claude-pod', 'state'))
+    await stripKeeps(template)
+    expect(await readdir(template)).not.toContain('plans')
+    const other = join(root, 'repos', 'other')
+    await mkdir(other)
+    await writeFile(cfgFile, JSON.stringify({ version: 1, repos: [{ path: plain }, { path: setUp }, { path: other }] }))
+    expect((await s.post('setup-workflow', { path: other })).status).toBe(200)
+    expect(await snapshot(join(other, '.openaflow', 'workflows', 'claude-pod', 'state'))).toEqual(built)
+    for (const [key, value] of Object.entries(KEEPS)) expect(built[key], key).toBe(value)
+  })
+
+  test('a template folder setup cannot make fails as a failed copy does, and leaves nothing', async () => {
+    // `ideas` is a file in this template, so the folder can't be made.
+    await writeFile(join(template, 'ideas'), 'not a folder')
+    const s = await setup()
+    // The code differs by system (EEXIST here; Windows may say another), so only its shape is checked.
+    const res = await s.post('setup-workflow', { path: plain })
+    expect(res.status).toBe(500)
+    expect((res.body as { error: string }).error).toMatch(/^setup failed: [A-Z]+$/)
+    expect(await readdir(plain)).toEqual([])
+    expect(s.logged).toEqual([expect.objectContaining({ action: 'setup-workflow', result: 'failed', message: (res.body as { error: string }).error })])
+  })
+
+  test("the list covers every empty folder in the built workflow's template", async (ctx) => {
+    const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'workflow', 'dist', 'claude-pod', 'skills', 'init', 'scaffold', '.openaflow', 'workflows', 'claude-pod', 'state')
+    if (!existsSync(dist)) return ctx.skip()
+    const keeps = (await readdir(dist, { recursive: true, withFileTypes: true }))
+      .filter((d) => d.name === '.gitkeep')
+      .map((d) => d.parentPath.slice(dist.length + 1).replaceAll('\\', '/'))
+      .sort()
+    expect(keeps).toEqual([...TEMPLATE_FOLDERS].sort())
   })
 
   test('the path is matched by repo identity, and the registered path is the one written', async () => {

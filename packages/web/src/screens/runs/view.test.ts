@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildRepoModel, type Board, type BoardRepo, type RunSummary } from '@openaflow/model'
-import { agentChip, agentLogRows, banners, confidenceTag, connectionStatus, emptyMessage, groupChip, logBlocks, logRunChip, nextStatus, otherRows, rowFigures, runCard, runChip, tabPress, titleParts } from './view.ts'
+import { agentChip, agentLogRows, banners, confidenceTag, connectionStatus, emptyMessage, groupChip, logBlocks, logRunChip, nextStatus, NO_STATE, otherRows, rowFigures, runCard, runChip, tabPress, titleParts } from './view.ts'
 
 const run = (over: Partial<RunSummary>): RunSummary => ({ repoId: 'r', repo: 'chess-web', where: 'x', state: 'idle', ...over })
 
@@ -197,12 +197,31 @@ describe('empty messages', () => {
       expect(message).toBe("This repo has no workflow yet. Set it up to use the app's claude-pod.")
       expect(message).not.toMatch(/\/plugin|pod@pod|marketplace/)
     }
-    // A set-up repo whose workflow has no docs yet: no set-up line (it has the folder), and no install steps either.
-    const setUp: BoardRepo = { ...repoWith(undefined), model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }) }
-    const message = emptyMessage(unsupported, setUp)
-    expect(message).not.toContain('Set it up')
-    expect(message).not.toMatch(/\/plugin|pod@pod|marketplace/)
-    expect(message).toMatch(/update pod in this repo/i)
+  })
+
+  it('a set-up repo with no readable docs names init, never Update pod', () => {
+    const unsupported = run({ state: 'unsupported', where: 'update pod' })
+    // A bare .openaflow/, only workflow.json (state not committed), or an empty state folder: the app ships the
+    // workflow, so New session with init writes the docs.
+    const setUps: Record<string, string>[] = [
+      { '.openaflow/': '' },
+      { '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/workflow.json': '{"source":"claude-pod","version":"0.11.10"}' },
+      { '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n' },
+    ]
+    for (const files of setUps) {
+      const message = emptyMessage(unsupported, { ...repoWith(undefined), model: buildRepoModel(files) })
+      expect(message, JSON.stringify(files)).toBe(NO_STATE)
+    }
+    expect(NO_STATE).toBe("This repo's workflow has no docs yet. Start a New session with `init` to create them.")
+    // A set-up repo with an old docs version: init updates them.
+    const old = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 1\n' })
+    expect(emptyMessage(unsupported, { ...repoWith(undefined), model: old })).toBe(
+      "This repo's workflow docs are version 1; OpenAFlow reads version 2. Start a New session with `init` to update them.",
+    )
+    // A newer version than the app reads: the app's init is older than the docs, so update the app, never run init.
+    const newer = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' })
+    expect(emptyMessage(unsupported, { ...repoWith(undefined), model: newer })).toBe("This repo's workflow docs are version 3; OpenAFlow reads version 2. Update OpenAFlow to read them.")
+    for (const files of setUps) expect(emptyMessage(unsupported, { ...repoWith(undefined), model: buildRepoModel(files) })).not.toMatch(/update pod/i)
   })
 
   it('without the repo, an unsupported run still says to update pod', () => {

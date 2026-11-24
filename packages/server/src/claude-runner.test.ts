@@ -163,6 +163,40 @@ describe('createClaudeRunner', () => {
     expect(argv).not.toContain('--bare')
   })
 
+  test('passes the plugin folders after -p, before --resume', async () => {
+    // A space in each folder, as an install path under `Program Files` has.
+    const plugins = [join(tmp, 'hooks plugin'), join(tmp, 'work flows', 'claude-pod')]
+    const runner = createClaudeRunner({ bin: 'claude', logDir, env: envWith(), windowMs: 3000 })
+    expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', plugins[0], '--plugin-dir', plugins[1], '--resume', SESSION, 'continue'])
+
+    // An empty list is today's start.
+    rmSync(recordFile)
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [] })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--resume', SESSION, 'go'])
+  })
+
+  test('refuses a relative or empty plugin folder', async () => {
+    const runner = createClaudeRunner({ bin: 'claude', logDir, env: envWith(), windowMs: 3000 })
+    for (const bad of ['', 'plugins', join('..', 'plugins'), '--bare']) {
+      expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins: [join(tmp, 'ok'), bad] }), bad).toEqual({ outcome: 'failed', message: 'bad plugin folder' })
+    }
+    expect(existsSync(recordFile)).toBe(false)
+  })
+
+  test.runIf(WIN)('a shim run through cmd.exe quotes the plugin folders, and refuses one cmd.exe would read', async () => {
+    const plain = join(tmp, 'plain')
+    installFake(plain, 'plain')
+    const plugins = [join(tmp, 'hooks plugin'), join(tmp, 'work flows', 'claude-pod')]
+    const runner = createClaudeRunner({ bin: join(plain, 'claude.cmd'), logDir, env: envWith(), windowMs: 3000 })
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', plugins[0], '--plugin-dir', plugins[1], '--resume', SESSION, 'go'])
+
+    rmSync(recordFile)
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [join(tmp, 'a&calc')] })).toEqual({ outcome: 'failed', message: 'unsafe claude path' })
+    expect(existsSync(recordFile)).toBe(false)
+  })
+
   test('a resumed run gets the two machine settings and none of the dropped names', async () => {
     const kept = { CLAUDE_CODE_GIT_BASH_PATH: 'C:\\fake\\bash.exe', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1234' }
     const dropped = ['CLAUDECODE', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_PID', 'CLAUDE_EFFORT', 'CLAUDE_CODE_ENTRYPOINT', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_FOO']

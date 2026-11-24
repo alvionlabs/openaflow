@@ -128,6 +128,8 @@ describe('resume flow', () => {
       [fail(400, 'bad request'), START_ERRORS.get('bad request')!],
       [fail(409, 'no terminal host'), START_ERRORS.get('no terminal host')!],
       [fail(409, 'claude not found'), START_ERRORS.get('claude not found')!],
+      // A set-up repo with no bundle: reinstall, as New session says. A retry can't fix it.
+      [fail(409, 'workflow missing'), "The app doesn't have this repo's workflow. Please reinstall it"],
       [fail(404, 'no session'), 'This session is already gone'],
       [fail(409, 'session is live'), 'This session is already running'],
       // A dead or missing token: reload.
