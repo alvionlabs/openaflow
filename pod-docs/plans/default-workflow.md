@@ -4,7 +4,7 @@ _Generated: 2026-11-23 · Status: active · Grilled-with: pod (fast)_
 
 Port base: 3200
 
-<!-- autopilot-run: started=2026-11-24T04:08:43Z sprints=0 waves=0 -->
+<!-- autopilot-run: started=2026-11-24T04:08:43Z sprints=1 waves=4 -->
 
 ## Goal
 OpenAFlow ships its own default workflow, reused from a pinned claude-pod release. Each repo keeps everything OpenAFlow-related in one `.openaflow/` folder. A `workflows/` subfolder holds one folder per workflow, and claude-pod is the first one: the repo commits which version it uses and the workflow's state. The workflow's skills and agents ship in the app. This is plan B of three: `terminal-host`, then `default-workflow`, then `automatic-input`.
@@ -122,7 +122,7 @@ sequenceDiagram
 
 | Sprint | Goal | Status | Depends on |
 |--------|------|--------|------------|
-| default-workflow | Pin, transform, bundle, and load claude-pod as a workflow in `.openaflow/workflows/`; read every workflow's state with the `pod-docs/` fallback; repo setup; version notice; bare skill names | planned | — |
+| default-workflow | Pin, transform, bundle, and load claude-pod as a workflow in `.openaflow/workflows/`; read every workflow's state with the `pod-docs/` fallback; repo setup; version notice; bare skill names | done | — |
 
 Status: `planned` / `active` / `done`. `Depends on` is the only dependency between sprints.
 

@@ -680,3 +680,13 @@ _Open points settled on 2026-11-23: see the 2026-11-23 entry below._
 - **Rejected:** a folder-name setting in claude-pod (claude-pod would change for OpenAFlow); a fork; a full workflow copy in each repo (about 1.7 MB, stale on every bump); a submodule; an npm `github:` dependency; unprefixed skills via `--add-dir` (takes built-in `/plan` and `/init` away; docs disagree on loading); blocking sessions on a version mismatch.
 - **Settles:** the open points of the 2026-11-22 decision.
 - **Plan:** [default-workflow](plans/default-workflow.md). **Research:** [default-workflow.md](research/default-workflow.md).
+
+## 2026-11-24 — A repo without .openaflow/ starts hosted sessions as today (human)
+Context: plan `default-workflow`, sprint doc §6. The sprint planner's default blocked New session and Resume in a repo with no `.openaflow/` until setup. Setup then hides that repo's `pod-docs/` runs from the board, so every `pod-docs/` repo, this one included, would lose hosted sessions after an update.
+Decision: in a repo without `.openaflow/`, New session and Resume start as today, with the hooks plugin only and no bundled workflow. An installed claude-pod writes `pod-docs/`. New session still shows the setup offer. Only a set-up repo loads the bundled workflow and shows the version line.
+Consequences: until you set up a repo, its sessions use whatever claude-pod is installed, not the app's version. Rejected: block both until setup (the planner's default), and block new sessions but allow resume.
+
+## 2026-11-24 — Add repo sets up .openaflow/ with no question unless the repo has pod-docs/ (human)
+Context: plan `default-workflow`, wave 4 hands-on test. Add repo asked "Create .openaflow/ in this repo?" every time. For a repo without `pod-docs/`, setup loses nothing, and adding the repo to OpenAFlow already says you want OpenAFlow there, so the question was one click with no new information.
+Decision: Add repo on a repo without `.openaflow/` and without `pod-docs/` creates `.openaflow/workflows/claude-pod/` at once, and a short line confirms it. A repo with `pod-docs/` still gets the confirm, with a warning that its `pod-docs/` runs will no longer show on the board. New session's **Set up** offer stays, and it shows the same warning for a repo with `pod-docs/`. This narrows decision 2 / plan Q13 b ("the app writes only after you agree") to repos where setup hides something.
+Consequences: adding a new repo writes `.openaflow/` into it right away, and it shows in `git status`. Rejected: always create with no question (it would silently hide a `pod-docs/` repo's history), and always ask (the old behavior).
