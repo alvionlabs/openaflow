@@ -63,6 +63,14 @@ describe('postRepo reads openaflow', () => {
     }
   })
 
+  it('podDocs field: a boolean is passed on beside openaflow; anything else is left out', async () => {
+    expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: false, podDocs: false }), token })).toEqual({ status: 201, openaflow: false, podDocs: false })
+    expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: false, podDocs: true }), token })).toEqual({ status: 201, openaflow: false, podDocs: true })
+    for (const v of ['false', 0, null]) {
+      expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: false, podDocs: v }), token })).toEqual({ status: 201, openaflow: false })
+    }
+  })
+
   it('a refusal keeps its error word and carries no openaflow', async () => {
     expect(await postRepo('/r', { fetch: answer({ error: 'already registered', openaflow: false }, 409), token })).toEqual({ status: 409, error: 'already registered' })
   })
