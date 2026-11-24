@@ -145,5 +145,32 @@ describe('action log view', () => {
     // Other actions keep their target as it is.
     expect(actionLogRows([entry({ target: 'PR #41' })], NOW)[0]!.target).toBe('PR #41')
   })
-})
 
+  it('init label', () => {
+    const row = (action: 'new-session' | 'resume-session', target: string) =>
+      actionLogRows([{ at: NOW, action, repoId: 'r1', repo: 'notes', target, result: 'started' } as ActionEntry], NOW)[0]!.target
+    // /pod:init reads in words, as every other skill does.
+    expect(row('new-session', '/pod:init · 0f3c9a12')).toBe('New session · Map the project · 0f3c9a12')
+    expect(row('resume-session', '/pod:init · 0f3c9a12')).toBe('Resumed session · Map the project · 0f3c9a12')
+    expect(row('new-session', '/pod:plan · 0f3c9a12')).toBe('New session · Plan · 0f3c9a12')
+  })
+
+  it('workflow rows', () => {
+    // Setup and Use: created and updated are ok, failed is bad; the target shows as the server wrote it.
+    const rows = actionLogRows(
+      [
+        { at: NOW, action: 'setup-workflow', repoId: 'r1', repo: 'notes', target: '.openaflow/workflows/claude-pod · 0.11.10', result: 'created' },
+        { at: NOW - 1, action: 'use-workflow-version', repoId: 'r1', repo: 'notes', target: '.openaflow/workflows/claude-pod · 0.0.1 → 0.11.10', result: 'updated' },
+        { at: NOW - 2, action: 'use-workflow-version', repoId: 'r1', repo: 'notes', target: '.openaflow/workflows/claude-pod · no version → 0.11.10', result: 'failed', message: 'update failed: EACCES' },
+        { at: NOW - 3, action: 'setup-workflow', repoId: 'r1', repo: 'notes', target: '.openaflow/workflows/claude-pod · 0.11.10', result: 'failed', message: 'setup failed: ENOSPC' },
+      ],
+      NOW,
+    )
+    expect(rows.map((r) => [r.target, r.chip])).toEqual([
+      ['.openaflow/workflows/claude-pod · 0.11.10', { cls: 's-ok', label: 'created' }],
+      ['.openaflow/workflows/claude-pod · 0.0.1 → 0.11.10', { cls: 's-ok', label: 'updated' }],
+      ['.openaflow/workflows/claude-pod · no version → 0.11.10', { cls: 's-bad', label: 'failed' }],
+      ['.openaflow/workflows/claude-pod · 0.11.10', { cls: 's-bad', label: 'failed' }],
+    ])
+  })
+})

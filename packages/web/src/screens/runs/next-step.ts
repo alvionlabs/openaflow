@@ -183,9 +183,18 @@ const waitingItem = (s: HostedSession, run: RunSummary): NextItem => ({
   action: { kind: 'open-terminal' },
 })
 
-/** A readable repo row whose shown session isn't starting or live: the place to start a new session. */
-function canStart(run: RunSummary, shown: HostedSession | undefined): boolean {
-  if (run.plan !== undefined || run.state === 'error' || run.state === 'unsupported') return false
+/**
+ * A repo New session can open in (the start card and the ⋯ menu): one the app reads, and either without `.openaflow/`
+ * (with docs or not, sprint default-workflow §9) or with docs it supports.
+ */
+export const canOpenNewSession = (repo: BoardRepo): boolean => repo.error === undefined && (repo.model.openaflow !== true || repo.model.docs.supported)
+
+/**
+ * A repo row New session can open in (`canOpenNewSession`) whose shown session isn't starting or live: the place to
+ * start a new session. A repo without `.openaflow/` gets it with or without docs (§9); a set-up repo needs readable docs.
+ */
+function canStart(run: RunSummary, repo: BoardRepo, shown: HostedSession | undefined): boolean {
+  if (run.plan !== undefined || run.state === 'error' || !canOpenNewSession(repo)) return false
   return shown === undefined || (shown.state !== 'starting' && shown.state !== 'live')
 }
 
@@ -204,12 +213,13 @@ const runningCard = (s: HostedSession, run: RunSummary): NextItem => {
   }
 }
 
+/** An unsupported repo's start card keeps its empty message (the set-up line, or the docs version) as the detail. */
 const startCard = (run: RunSummary, repo: BoardRepo): NextItem => ({
   key: 'new-session',
   tier: 'nothing',
   status: runStatus(run),
   title: START_TITLE,
-  detail: START_DETAIL,
+  detail: run.state === 'unsupported' ? emptyMessage(run, repo) : START_DETAIL,
   action: { kind: 'new-session', repoId: repo.id },
 })
 
@@ -249,9 +259,10 @@ export function nextSteps(run: RunSummary | undefined, repo: BoardRepo | undefin
   const first = sorted.find((i) => !unjoined.has(i.key))
   if (first && ACTION_TIERS.has(first.tier)) return { card: first, rest: sorted.filter((i) => i !== first) }
   const view = shown && sessionView(shown, now)
-  const readable = run.state !== 'error' && run.state !== 'unsupported'
+  // A repo New session can open in: its live session gets the running card, as a start would.
+  const readable = run.state !== 'error' && canOpenNewSession(repo)
   if (shown && readable && run.plan === undefined && (view === 'starting' || view === 'live')) return { card: runningCard(shown, run), rest: sorted }
-  return { card: canStart(run, shown) ? startCard(run, repo) : nothingCard(run, repo), rest: sorted }
+  return { card: canStart(run, repo, shown) ? startCard(run, repo) : nothingCard(run, repo), rest: sorted }
 }
 
 /**
@@ -262,7 +273,12 @@ export type CardTerminal = { detail?: string; form: boolean; openTerminal: boole
 
 export function cardTerminal(card: NextItem, terminals: boolean): CardTerminal {
   const a = card.action
-  if (a.kind === 'new-session') return terminals ? { detail: START_DETAIL, form: true, openTerminal: false } : { detail: DESKTOP_START, form: false, openTerminal: false }
+  if (a.kind === 'new-session') {
+    // A start card with its own message (an unsupported repo's) keeps it; the browser then adds the desktop note.
+    const own = card.detail !== undefined && card.detail !== START_DETAIL ? card.detail : undefined
+    if (terminals) return { detail: own ?? START_DETAIL, form: true, openTerminal: false }
+    return own === undefined ? { detail: DESKTOP_START, form: false, openTerminal: false } : { detail: own, form: false, openTerminal: false, note: DESKTOP_START }
+  }
   if (a.kind !== 'open-terminal' && !(a.kind === 'reply' && a.panel.hosted)) return { form: false, openTerminal: false }
   const detail = card.detail === undefined ? {} : { detail: card.detail }
   return terminals ? { ...detail, form: false, openTerminal: true } : { ...detail, form: false, openTerminal: false, note: DESKTOP_TERMINAL }

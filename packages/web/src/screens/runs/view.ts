@@ -118,18 +118,17 @@ export function rowFigures(row: LogRow): string {
   return parts.join(' · ')
 }
 
-/** pod's own install steps, from its README. OpenAFlow has no runs to show without it. */
-export const POD_INSTALL = 'To install pod, open Claude Code and run /plugin marketplace add iamphduc/claude-pod, then /plugin install pod@pod.'
+/** A repo with no docs and no `.openaflow/`: New session offers the setup beside it (sprint default-workflow §9). */
+export const NO_WORKFLOW = "This repo has no workflow yet. Set it up to use the app's claude-pod."
 
-/** Why a run has no pipeline, and what to do about it. `repo` gives an unsupported repo's docs version. */
+/** Why a run has no pipeline, and what to do about it. `repo` gives an unsupported repo's docs version and its `.openaflow/`. */
 export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
   if (r.state === 'error') return `Can't read this repo: ${r.where}. Check that the folder still exists.`
   if (r.state === 'unsupported') {
     if (!repo) return "This repo's pod docs are from an older pod. Update pod in this repo to see its runs."
     const { version } = repo.model.docs
-    return version === undefined
-      ? `This repo has no pod docs, or they are from an older pod. Update pod in this repo. ${POD_INSTALL}`
-      : `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
+    if (version !== undefined) return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
+    return repo.model.openaflow ? 'This repo has no pod docs, or they are from an older pod. Update pod in this repo.' : NO_WORKFLOW
   }
   if (r.plan === undefined) return 'No active plan in this repo. A plan shows here once pod starts one.'
   return `Can't find plan ${r.plan} in this repo's pod docs.`

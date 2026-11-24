@@ -10,13 +10,25 @@
 // Add is off while the modal shows a path error (already here, or a path that doesn't look right); a change to the path clears
 // it. After any other error, Add stays on, so the same path can be tried again.
 //
+// After a 201 with `openaflow: false` and `podDocs: false` (decisions.md, 2026-11-24), setup loses nothing, so the
+// modal posts `setup-workflow` for the added path at once, with no question, and stays busy until it answers. Success
+// shows the `added` step with CREATED_LINE, which closes by itself after ADDED_CLOSE_MS (Close or Escape sooner). A
+// failure shows its words in the same step, which waits for Close; the repo stays added and works without setup.
+// After a 201 with `openaflow: false` and any other `podDocs` (true, or none: the safe side), setup would hide the
+// repo's `pod-docs/` runs, so the modal moves to a confirm step with that warning: Create posts `setup-workflow` and
+// closes on success; Not now (or Escape) closes and writes nothing. A failed setup there shows its words in the alert
+// box and keeps the step, so Create works again; the repo stays added. A 201 with `openaflow: true` or with no field
+// closes as before.
+//
 // The modal is busy while a post or a folder dialog is out: Add, Browse…, and Cancel then do nothing, so one
 // post runs at a time. After close, nothing more happens, and a late answer is dropped.
 
-import { UNREACHABLE } from '../../actions-client.ts'
-import { addError, type AddResult } from '../../add-repo.ts'
+import { UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { addError, setupError, type AddResult } from '../../add-repo.ts'
 import type { PickFolder } from '../../desktop-bridge.ts'
 
+/** How long the created line shows before the modal closes by itself. A failure never closes by itself. */
+export const ADDED_CLOSE_MS = 3000
 export const BRIDGE_FAILED = "The folder dialog didn't open. You can type the path"
 
 /** The path field's example, in the form of the user's own system. The app and the browser run on one machine. */
@@ -29,6 +41,10 @@ export function pathHint(userAgent: string): string {
 export type AddRepoState =
   /** The modal. `path` is the field as typed; `canChoose` shows Browse…; `focus` is set by a pick's answer or a refused Add. */
   | { kind: 'form'; path: string; busy: boolean; canChoose: boolean; error?: string; pathError?: boolean; focus?: PickFocus }
+  /** The setup question for the added repo at `path`; `error` is the failed setup's line; `warn`: it has `pod-docs/`. */
+  | { kind: 'confirm'; path: string; busy: boolean; error?: string; warn?: true }
+  /** The repo at `path` was added and set up with no question; `error` is the failed setup's line. */
+  | { kind: 'added'; path: string; error?: string }
   | { kind: 'closed' }
 
 /** Where focus goes after a pick: Add (a folder), Browse… (a cancel), or the path field (a failure, or a refused Add). */
@@ -38,6 +54,8 @@ export type AddRepoDeps = {
   /** The desktop folder dialog (`folderBridge()`); none in the browser build. */
   pick?: PickFolder | undefined
   post: (path: string) => Promise<AddResult>
+  /** `setup-workflow { path }` through the action client. */
+  setupRepo: (path: string) => Promise<ActionReply<unknown>>
   onClose: () => void
 }
 
@@ -52,6 +70,8 @@ export function createAddRepoFlow(deps: AddRepoDeps, onChange: (s: AddRepoState)
   const { pick } = deps
   let state: AddRepoState = { kind: 'form', path: '', busy: false, canChoose: pick !== undefined }
 
+  let timer: ReturnType<typeof setTimeout> | undefined
+
   const set = (next: AddRepoState) => {
     if (state.kind === 'closed') return
     state = next
@@ -59,8 +79,26 @@ export function createAddRepoFlow(deps: AddRepoDeps, onChange: (s: AddRepoState)
   }
   const close = () => {
     if (state.kind === 'closed') return
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
     set({ kind: 'closed' })
     deps.onClose()
+  }
+  /** `setup-workflow` for `path`; a throw reads as an unreachable board. */
+  const setUp = async (path: string): Promise<ActionReply<unknown>> => {
+    try {
+      return await deps.setupRepo(path)
+    } catch {
+      return { ok: false, status: 0, message: UNREACHABLE }
+    }
+  }
+  /** No question: the form stays busy while setup runs, then the `added` step shows how it went. */
+  const setUpAtOnce = async (path: string) => {
+    const reply = await setUp(path)
+    if (state.kind === 'closed') return
+    if (!reply.ok) return set({ kind: 'added', path, error: setupError(reply.message) })
+    set({ kind: 'added', path })
+    timer = setTimeout(close, ADDED_CLOSE_MS)
   }
   /** The modal, keeping what isn't given. */
   const showForm = (patch: { path?: string; busy: boolean; error?: string | undefined; pathError?: boolean | undefined; focus?: PickFocus }) => {
@@ -81,7 +119,9 @@ export function createAddRepoFlow(deps: AddRepoDeps, onChange: (s: AddRepoState)
       result = { status: 0, error: UNREACHABLE }
     }
     if (state.kind === 'closed') return
-    if (result.status === 201) close()
+    if (result.status === 201 && result.openaflow === false && result.podDocs === false) await setUpAtOnce(path)
+    else if (result.status === 201 && result.openaflow === false) set({ kind: 'confirm', path, busy: false, warn: true })
+    else if (result.status === 201) close()
     else {
       const e = addError(result)
       // Add was off while busy and lost focus: the field takes it, to fix the path or press Enter again.
@@ -121,8 +161,24 @@ export function createAddRepoFlow(deps: AddRepoDeps, onChange: (s: AddRepoState)
       if (typeof chosen !== 'string' || chosen === '') set({ ...before, focus: 'browse' })
       else set({ kind: 'form', path: chosen, busy: false, canChoose: true, focus: 'add' })
     },
+    /** Create: sets the added repo up. Success closes; a failure keeps the step with its words. */
+    async create() {
+      if (state.kind !== 'confirm' || state.busy) return
+      const { path, warn } = state
+      const step = { kind: 'confirm' as const, path, ...(warn ? { warn } : {}) }
+      set({ ...step, busy: true })
+      const reply = await setUp(path)
+      if (reply.ok) close()
+      else set({ ...step, busy: false, error: setupError(reply.message) })
+    },
+    /** Not now: closes and writes nothing. */
+    notNow() {
+      if (state.kind !== 'confirm' || state.busy) return
+      close()
+    },
+    /** Cancel or Escape: Cancel in the form, Not now in the confirm step, Close in the added step. */
     cancel() {
-      if (busy()) return
+      if (busy() || (state.kind === 'confirm' && state.busy)) return
       close()
     },
   }
