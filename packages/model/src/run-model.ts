@@ -6,6 +6,7 @@
 import { docsVersion, needsYou, planExtras, planFacts, prRef, sliceDeps, stagingBranch, type DocsVersion, type PlanFacts, type PrRef } from './formats.ts'
 import { QUEUE_LINE, queueLines, splitAnswer } from './queue-answer.ts'
 import { isDone, parsePlan, parseQueue, parseSprint, readTable, type PlanDoc, type QueueEntry, type Row, type SprintDoc } from './pod-flow/model.ts'
+import { repoWorkflows, type RepoWorkflow } from './repo-workflows.ts'
 
 /** Repo-relative path → file text. Keys may use `/` or `\`. A file not in the map doesn't exist. */
 export type RepoFiles = Record<string, string>
@@ -15,8 +16,9 @@ export { cleanAnswer, isAnswerable, queueLines, splitAnswer, withAnswer, type Cl
 /**
  * A handoff queue entry. `line` is its whole line, trimmed, and is its identity for writes; `date` the
  * header's first part; `answer` the text after the first `**Answer (human):**`. `body` never holds the answer.
+ * `stateDir`: the folder whose `handoff-queue.md` holds it; absent means `pod-docs`.
  */
-export type QueueItem = QueueEntry & { needsYou: boolean; line: string; date?: string; answer?: string }
+export type QueueItem = QueueEntry & { needsYou: boolean; line: string; date?: string; answer?: string; stateDir?: string }
 
 export type SliceModel = {
   code: string
@@ -57,37 +59,91 @@ export type PlanModel = {
   currentSprint?: string
   /** Set (true) on a `/pod:autopilot` run: its active sprint doc, or the plan doc while no sprint doc is active, has the `<!-- autopilot-run … -->` line. */
   autopilot?: true
+  /** The state folder its plan doc is in; absent means `pod-docs`. */
+  stateDir?: string
 } & PlanFacts
 
 /**
- * `research`: the report slugs in `pod-docs/research` (directly, `.md` only). `staging`: the staging branch
- * a `merge target: staging` decision names in `pod-docs/decisions.md`. Both optional, so older Boards still read.
+ * `research`: the report slugs in `<state>/research` (directly, `.md` only). `staging`: the staging branch
+ * a `merge target: staging` decision names in `<state>/decisions.md`. Both optional, so older Boards still read.
+ * `openaflow` and `workflows`: set only when the repo has a `.openaflow/` folder; absent, the docs are `pod-docs/`.
  */
-export type RepoModel = { docs: DocsVersion; plans: PlanModel[]; queue: QueueItem[]; research?: string[]; staging?: string }
+export type RepoModel = {
+  docs: DocsVersion
+  plans: PlanModel[]
+  queue: QueueItem[]
+  research?: string[]
+  staging?: string
+  openaflow?: true
+  workflows?: RepoWorkflow[]
+}
 
-const README = 'pod-docs/README.md'
-const QUEUE = 'pod-docs/handoff-queue.md'
-const DECISIONS = 'pod-docs/decisions.md'
+const LEGACY = 'pod-docs'
 
-/** The run model of one repo. Never throws: a missing or odd file gives unknown, empty, or absent fields. */
+/**
+ * The run model of one repo. Never throws: a missing or odd file gives unknown, empty, or absent fields.
+ * No `.openaflow/` key → today's model of `pod-docs/`. With it → one model per workflow state folder, merged.
+ */
 export function buildRepoModel(files: RepoFiles): RepoModel {
   const repo = normalizeKeys(files)
-  const docs = docsVersion(repo.get(README))
+  const workflows = repoWorkflows(files)
+  if (workflows[0]?.legacy) return buildPart(repo, LEGACY)
+  return mergeParts(
+    workflows,
+    workflows.map((w) => buildPart(repo, w.stateDir)),
+  )
+}
+
+/** One state folder's model. Only a non-legacy folder stamps `stateDir` on its plans and entries. */
+function buildPart(repo: Map<string, string>, stateDir: string): RepoModel {
+  const docs = docsVersion(repo.get(`${stateDir}/README.md`))
   if (!docs.supported) return { docs, plans: [], queue: [] }
 
-  const queue = readQueue(repo.get(QUEUE) ?? '')
-  const planDocs = readPlans(repo)
-  const sprintDocs = readSprints(repo)
+  const stamp = stateDir === LEGACY ? undefined : stateDir
+  const queue = readQueue(repo.get(`${stateDir}/handoff-queue.md`) ?? '', stamp)
+  const planDocs = readPlans(repo, stateDir)
+  const sprintDocs = readSprints(repo, stateDir)
   const joined = joinSprints(planDocs, sprintDocs)
-  const plans = planDocs.map(({ doc, md }) => buildPlan(doc, md, joined.get(doc.slug) ?? [], queue))
-  const out: RepoModel = { docs, plans, queue, research: mdIn(repo, 'pod-docs/research/').map((f) => f.slug) }
-  const staging = stagingBranch(repo.get(DECISIONS))
+  const plans = planDocs.map(({ doc, md }) => {
+    const plan = buildPlan(doc, md, joined.get(doc.slug) ?? [], queue)
+    if (stamp !== undefined) plan.stateDir = stamp
+    return plan
+  })
+  const out: RepoModel = { docs, plans, queue, research: mdIn(repo, `${stateDir}/research/`).map((f) => f.slug) }
+  const staging = stagingBranch(repo.get(`${stateDir}/decisions.md`))
+  if (staging !== undefined) out.staging = staging
+  return out
+}
+
+/**
+ * The workflows' parts, in workflow order. `docs`: the first supported part's, else the first part's, else
+ * unsupported. A plan slug already taken by an earlier workflow is left out; every queue entry stays.
+ * `research` joins, each slug once; `staging` is the first one found.
+ */
+function mergeParts(workflows: RepoWorkflow[], parts: RepoModel[]): RepoModel {
+  const docs = parts.find((p) => p.docs.supported)?.docs ?? parts[0]?.docs ?? docsVersion(undefined)
+  const slugs = new Set<string>()
+  const plans: PlanModel[] = []
+  for (const plan of parts.flatMap((p) => p.plans)) {
+    if (slugs.has(plan.slug)) continue
+    slugs.add(plan.slug)
+    plans.push(plan)
+  }
+  const out: RepoModel = {
+    docs,
+    plans,
+    queue: parts.flatMap((p) => p.queue),
+    research: [...new Set(parts.flatMap((p) => p.research ?? []))],
+    openaflow: true,
+    workflows,
+  }
+  const staging = parts.find((p) => p.staging !== undefined)?.staging
   if (staging !== undefined) out.staging = staging
   return out
 }
 
 /** The queue's entries, each with its line, date, and answer. `parseQueue` and `queueLines` match one for one. */
-function readQueue(md: string): QueueItem[] {
+function readQueue(md: string, stateDir: string | undefined): QueueItem[] {
   const lines = queueLines(md)
   return parseQueue(md).map((entry, i) => {
     const line = lines[i] ?? ''
@@ -97,6 +153,7 @@ function readQueue(md: string): QueueItem[] {
     const item: QueueItem = { ...entry, body, needsYou: needsYou(entry), line }
     if (date) item.date = date
     if (answer !== undefined) item.answer = answer
+    if (stateDir !== undefined) item.stateDir = stateDir
     return item
   })
 }
@@ -121,10 +178,10 @@ function mdIn(repo: Map<string, string>, folder: string): { slug: string; md: st
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** Every plan doc, live and archived, sorted by slug. The same slug in both → the archived copy. */
-function readPlans(repo: Map<string, string>): { doc: PlanDoc; md: string }[] {
+function readPlans(repo: Map<string, string>, stateDir: string): { doc: PlanDoc; md: string }[] {
   const bySlug = new Map<string, string>()
-  for (const { slug, md } of mdIn(repo, 'pod-docs/plans/')) bySlug.set(slug, md)
-  for (const { slug, md } of mdIn(repo, 'pod-docs/plans/archive/')) bySlug.set(slug, md)
+  for (const { slug, md } of mdIn(repo, `${stateDir}/plans/`)) bySlug.set(slug, md)
+  for (const { slug, md } of mdIn(repo, `${stateDir}/plans/archive/`)) bySlug.set(slug, md)
   return [...bySlug]
     .sort(([a], [b]) => compare(a, b))
     .map(([slug, md]) => {
@@ -137,17 +194,28 @@ function readPlans(repo: Map<string, string>): { doc: PlanDoc; md: string }[] {
 type SprintFile = { doc: SprintDoc; md: string }
 
 /** Every sprint doc by its slug. The same slug live and archived → the archived copy. */
-function readSprints(repo: Map<string, string>): Map<string, SprintFile> {
+function readSprints(repo: Map<string, string>, stateDir: string): Map<string, SprintFile> {
   const bySlug = new Map<string, SprintFile>()
   const add = (folder: string, isArchived: boolean) => {
     for (const { slug, md } of mdIn(repo, folder)) {
-      const doc = parseSprint(md, isArchived, slug)
-      if (doc) bySlug.set(doc.slug, { doc, md })
+      const parsed = parseSprint(md, isArchived, slug)
+      if (!parsed) continue
+      const doc = parsed.plan === '' ? { ...parsed, plan: statePlan(md, stateDir) } : parsed
+      bySlug.set(doc.slug, { doc, md })
     }
   }
-  add('pod-docs/sprints/', false)
-  add('pod-docs/sprints/archive/', true)
+  add(`${stateDir}/sprints/`, false)
+  add(`${stateDir}/sprints/archive/`, true)
   return bySlug
+}
+
+/**
+ * The plan a sprint doc's `From plan:` names under its own state folder (the pod-flow parser reads only
+ * `pod-docs/plans/`); else `''`. A path under another workflow's folder names no plan here.
+ */
+function statePlan(md: string, stateDir: string): string {
+  const folder = stateDir.replaceAll('.', '\\.')
+  return new RegExp(`From plan:\\s*${folder}/plans/([\\w-]+)\\.md`).exec(md)?.[1] ?? ''
 }
 
 /**

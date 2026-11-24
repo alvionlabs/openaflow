@@ -4,6 +4,7 @@
 export const MODEL_PACKAGE = '@openaflow/model'
 
 export * from './run-model.ts'
+export * from './repo-workflows.ts'
 export type * from './board.ts'
 export type * from './actions.ts'
 export * from './dispatch.ts'
