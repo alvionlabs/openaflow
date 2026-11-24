@@ -13,6 +13,7 @@ import {
   createNewSessionFlow,
   isBusy,
   setupOffer,
+  setupWarning,
   skillItems,
   textLabel,
   versionLine,
@@ -102,6 +103,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
   const repo = repos.find((r) => r.id === repoId)
   const notice = workflowNotice(repo, workflow)
   const offer = setupOffer(repo)
+  const warning = setupWarning(repo)
   const version = versionLine(repo, workflow)
 
   useEffect(() => {
@@ -198,6 +200,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
           <button className="btn" type="button" disabled={busy} onClick={() => flow.setUp(repo)}>
             {posting === 'setup' ? 'Setting up…' : 'Set up'}
           </button>
+          {warning && <p className="ns-workflow-warning">{warning}</p>}
         </div>
       )}
       {/* On the card the buttons stack on a phone, as every card action does; the modal keeps its row. */}

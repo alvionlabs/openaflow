@@ -44,14 +44,22 @@ export type AppDeps = {
 
 /**
  * Whether `<repo>/.openaflow` exists as anything: a folder, a file, or a link, a broken one too (`lstat`, not `stat`).
- * The page asks to create it only when this is false, and setup refuses the same cases (setup-routes.ts).
+ * The page sets it up only when this is false, and setup refuses the same cases (setup-routes.ts).
  */
-export async function hasOpenaflow(repo: string): Promise<boolean> {
+export const hasOpenaflow = (repo: string): Promise<boolean> => exists(repo, '.openaflow')
+
+/**
+ * Whether `<repo>/pod-docs` exists as anything, by the same rule. Setup hides a `pod-docs/` repo's runs from the board,
+ * so the page sets up with no question only when this is false (decisions.md, 2026-11-24).
+ */
+export const hasPodDocs = (repo: string): Promise<boolean> => exists(repo, 'pod-docs')
+
+async function exists(repo: string, name: string): Promise<boolean> {
   try {
-    await lstat(path.join(repo, '.openaflow'))
+    await lstat(path.join(repo, name))
     return true
   } catch (err) {
-    // Only a missing name is false: an unreadable repo folder must not lead to an offer to write in it.
+    // Only a missing name is false: an unreadable repo folder must not lead to a write in it, or to one with no question.
     return (err as NodeJS.ErrnoException).code !== 'ENOENT'
   }
 }
@@ -143,7 +151,8 @@ export function createApp(deps: AppDeps): Hono {
     if ('error' in result) return c.json({ error: result.error }, ADD_REPO_STATUS[result.error])
     // The new repo is on the board, and sent to every client, before the 201.
     await deps.source.rebuild()
-    return c.json({ path: result.path, openaflow: await hasOpenaflow(result.path) }, 201)
+    const [openaflow, podDocs] = await Promise.all([hasOpenaflow(result.path), hasPodDocs(result.path)])
+    return c.json({ path: result.path, openaflow, podDocs }, 201)
   })
 
   if (deps.web) app.route('/', deps.web)

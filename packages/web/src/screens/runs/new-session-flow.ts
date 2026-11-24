@@ -15,6 +15,7 @@ import {
   type UseWorkflowVersionResult,
 } from '@openaflow/model'
 import { postAction, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { PODDOCS_WARNING } from '../../add-repo.ts'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import type { ListboxItem } from '../../components/listbox.ts'
 import { requestTab } from '../../open-tab.ts'
@@ -330,3 +331,13 @@ export const SETUP_OFFER = 'Create .openaflow/ in this repo?'
 
 /** The setup offer shows for a repo without `.openaflow/`, with docs or not. New session stays on beside it. */
 export const setupOffer = (repo: BoardRepo | undefined): boolean => repo !== undefined && repo.model.openaflow !== true
+
+/**
+ * The muted line under the setup offer (decisions.md, 2026-11-24): only for a repo whose `pod-docs/` docs the board
+ * reads (no `.openaflow/`, a supported docs version), because setup hides those runs. A repo with no docs, or docs the
+ * app can't read, has no runs on the board to lose, so it gets no line.
+ */
+export function setupWarning(repo: BoardRepo | undefined): string | undefined {
+  if (!setupOffer(repo) || !repo!.model.docs.supported) return undefined
+  return PODDOCS_WARNING
+}
