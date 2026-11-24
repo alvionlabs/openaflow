@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createWorkflowResolver } from './workflow-resolver.ts'
 
@@ -40,8 +40,19 @@ describe('workflow resolver', () => {
     // An unset or empty root, or a relative one: no bundle.
     expect(createWorkflowResolver({ root: undefined }).bundled()).toBeUndefined()
     expect(createWorkflowResolver({ root: '' }).bundled()).toBeUndefined()
-    // The relative root names the same real folder from the working folder.
-    expect(createWorkflowResolver({ root: relative(process.cwd(), root) }).bundled()).toBeUndefined()
+    // The relative root names a real bundle from the working folder. It sits on the working folder's drive: on Windows the
+    // temp folder may be on another drive, and `relative()` across drives gives an absolute path.
+    await mkdir(join(process.cwd(), 'node_modules', '.cache'), { recursive: true })
+    const near = await mkdtemp(join(process.cwd(), 'node_modules', '.cache', 'openaflow-s1-workflows-'))
+    try {
+      await plugin(join(near, 'claude-pod'), { name: 'pod', version: '0.11.10' })
+      expect(createWorkflowResolver({ root: near }).bundled()?.version).toBe('0.11.10')
+      const rel = relative(process.cwd(), near)
+      expect(isAbsolute(rel)).toBe(false)
+      expect(createWorkflowResolver({ root: rel }).bundled()).toBeUndefined()
+    } finally {
+      await rm(near, { recursive: true, force: true })
+    }
     // A root with no claude-pod, or no plugin.json in it.
     expect(createWorkflowResolver({ root: join(base, 'none') }).bundled()).toBeUndefined()
     await mkdir(join(base, 'empty', 'claude-pod'), { recursive: true })

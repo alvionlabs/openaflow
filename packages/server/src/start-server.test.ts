@@ -517,6 +517,22 @@ describe('hosted sessions', () => {
     const link: ParentChannel = { onMessage: (fn) => void (deliver = fn), send: (m) => void sent.push(m as Record<string, unknown>) }
     return { link, sent, answer: (m: Record<string, unknown>) => deliver({ type: 'openaflow:terminal', ...m }) }
   }
+  /**
+   * A `claude` the tool finder takes, in `dir`, which the tests never run: an executable `claude` on POSIX, and on
+   * Windows an npm-style `claude.cmd` shim (a `#!/bin/sh` file can't run there), which the session command reads, so
+   * its args stay on the command line.
+   */
+  const fakeClaude = async (dir: string) => {
+    await mkdir(dir)
+    if (process.platform === 'win32') {
+      await writeFile(join(dir, 'cli.js'), 'process.exitCode = 0\n')
+      await writeFile(join(dir, 'claude.cmd'), '@ECHO off\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n')
+    } else {
+      await writeFile(join(dir, 'claude'), '#!/bin/sh\nexit 0\n')
+      await chmod(join(dir, 'claude'), 0o755)
+    }
+    return dir
+  }
   const until = async (check: () => boolean | Promise<boolean>) => {
     for (const end = Date.now() + 10_000; !(await check()); ) {
       if (Date.now() > end) throw new Error('timed out waiting')
@@ -652,10 +668,7 @@ describe('hosted sessions', () => {
     const workflows = join(tmp, 'workflows')
     await mkdir(join(workflows, 'claude-pod', '.claude-plugin'), { recursive: true })
     await writeFile(join(workflows, 'claude-pod', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'pod', version: '0.11.10' }))
-    const bin = join(tmp, 'bin')
-    await mkdir(bin)
-    await writeFile(join(bin, 'claude'), '#!/bin/sh\nexit 0\n')
-    await chmod(join(bin, 'claude'), 0o755)
+    const bin = await fakeClaude(join(tmp, 'bin'))
     const hooksPlugin = join(tmp, 'plugin')
 
     const main = fakeMain()
@@ -686,10 +699,7 @@ describe('hosted sessions', () => {
     await mkdir(join(repo, '.openaflow', 'workflows', 'claude-pod'), { recursive: true })
     await mkdir(cfg, { recursive: true })
     await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
-    const bin = join(tmp, 'bin')
-    await mkdir(bin)
-    await writeFile(join(bin, 'claude'), '#!/bin/sh\nexit 0\n')
-    await chmod(join(bin, 'claude'), 0o755)
+    const bin = await fakeClaude(join(tmp, 'bin'))
     const main = fakeMain()
     const { started } = await start(envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: join(tmp, 'plugin'), OPENAFLOW_WORKFLOWS_DIR: '', OPENAFLOW_CLAUDE_BIN: join(bin, 'claude') }), { webDir }, main.link)
     const token = await pageToken(started.port)

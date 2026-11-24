@@ -363,7 +363,7 @@ describe('answer route: state folders', () => {
     expect(await wfQueue(OTHER)).toBe(before.other.replace(OTHER_ASK, `${OTHER_ASK} **Answer (human):** from pod-docs`))
     expect(await wfQueue(MAIN)).toBe(before.main.replace(ASK, `${ASK} **Answer (human):** call it Ladder`))
     expect(await wfQueue('pod-docs')).toBe(before.legacy)
-    expect(await readdir(join(wfPath, OTHER))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+    expect((await readdir(join(wfPath, OTHER))).sort()).toEqual(['README.md', 'handoff-queue.md', 'plans'])
 
     // A legacy repo's entry has no stateDir and goes to pod-docs.
     expect(s.repoOf(repoPath).model.queue.find((e) => e.line === HALT)?.stateDir).toBeUndefined()
@@ -388,8 +388,8 @@ describe('answer route: state folders', () => {
     expect(await wfQueue(MAIN)).toBe(before.main)
     expect(await wfQueue(OTHER)).toBe(before.other)
     expect(await wfQueue('pod-docs')).toBe(before.legacy)
-    expect(await readdir(join(wfPath, MAIN))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
-    expect(await readdir(join(wfPath, OTHER))).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+    expect((await readdir(join(wfPath, MAIN))).sort()).toEqual(['README.md', 'handoff-queue.md', 'plans'])
+    expect((await readdir(join(wfPath, OTHER))).sort()).toEqual(['README.md', 'handoff-queue.md', 'plans'])
     expect(s.logged[0]).toEqual({ action: 'answer', repoId: wfId, repo: 'w', target: '2026-10-21 · BLOCKED · orchestrator → human', result: 'changed', message: 'Two entries read the same. Answer it in the chat.' })
     expect(s.events.slice(-2)).toEqual(['log', 'rebuild'])
 

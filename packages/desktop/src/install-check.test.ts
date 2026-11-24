@@ -342,7 +342,7 @@ describe('leftover pod-docs', () => {
     expect(() => checkNoPodDocs(dir)).not.toThrow()
     // A name with pod-docs in a path.
     plantFile('workflows/claude-pod/skills/init/scaffold/pod-docs/README.md', 'clean')
-    expect(() => checkNoPodDocs(dir)).toThrow(/pod-docs\/README\.md/)
+    expect(() => checkNoPodDocs(dir)).toThrow(/pod-docs[\\/]README\.md/)
     rmSync(join(dir, 'workflows/claude-pod/skills/init/scaffold/pod-docs'), { recursive: true })
     // Text in a file, in a dot folder.
     plantFile('workflows/claude-pod/.claude-plugin/x.json', 'see pod-docs/plans')
