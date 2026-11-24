@@ -1,4 +1,6 @@
 import type { AgentTimeline, Board } from '@openaflow/model'
+import { lstat } from 'node:fs/promises'
+import path from 'node:path'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { streamSSE } from 'hono/streaming'
@@ -38,6 +40,20 @@ export type AppDeps = {
   screens?: Hono | undefined
   /** `GET /api/settings` (`createSettingsRead`), mounted at /api/settings behind the read guard. With none: 404. */
   settings?: Hono | undefined
+}
+
+/**
+ * Whether `<repo>/.openaflow` exists as anything: a folder, a file, or a link, a broken one too (`lstat`, not `stat`).
+ * The page asks to create it only when this is false, and setup refuses the same cases (setup-routes.ts).
+ */
+export async function hasOpenaflow(repo: string): Promise<boolean> {
+  try {
+    await lstat(path.join(repo, '.openaflow'))
+    return true
+  } catch (err) {
+    // Only a missing name is false: an unreadable repo folder must not lead to an offer to write in it.
+    return (err as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
 }
 
 const ADD_REPO_STATUS = { 'not absolute': 400, 'not a local path': 400, 'not a directory': 400, 'already registered': 409, 'config unreadable': 500 } as const
@@ -127,7 +143,7 @@ export function createApp(deps: AppDeps): Hono {
     if ('error' in result) return c.json({ error: result.error }, ADD_REPO_STATUS[result.error])
     // The new repo is on the board, and sent to every client, before the 201.
     await deps.source.rebuild()
-    return c.json({ path: result.path }, 201)
+    return c.json({ path: result.path, openaflow: await hasOpenaflow(result.path) }, 201)
   })
 
   if (deps.web) app.route('/', deps.web)

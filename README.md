@@ -9,7 +9,11 @@ OpenAFlow is a Windows desktop app for [pod](https://github.com/iamphduc/claude-
 - **Lets you act from the app:** merge a PR, answer a question, or send `continue` to the run's Claude session.
 - **Can continue for you:** turn on Auto-continue for a run, and the app sends `continue` when pod waits for it.
 
-OpenAFlow runs on your computer only. It reads your repos and Claude's session files, and it never writes inside a repo.
+OpenAFlow runs on your computer only. It reads your repos and Claude's session files. It writes inside a repo only in these cases:
+
+- **Set up a repo:** when you add a repo, or start a session in one that isn't set up, OpenAFlow asks to create `.openaflow/`. Setup is optional. When you agree, it creates `.openaflow/workflows/claude-pod/` with a `workflow.json` and the workflow's state folder. Sessions in a set-up repo use the claude-pod version that comes with the app. A repo without `.openaflow/` starts sessions as before, with the claude-pod you installed.
+- **Use a version:** when a set-up repo pins another claude-pod version than the app has, **Use** changes the `version` in its `workflow.json`.
+- **Answer a question:** your answer goes on the question's line in the run's handoff queue.
 
 ## Install
 
