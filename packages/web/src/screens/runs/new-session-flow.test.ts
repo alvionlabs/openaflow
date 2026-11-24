@@ -6,6 +6,7 @@ import {
   SETUP_OFFER,
   USE_ERRORS,
   setupOffer,
+  setupWarning,
   versionLine,
   workflowNotice,
   BAD_TEXT,
@@ -22,6 +23,7 @@ import {
 } from './new-session-flow.ts'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { PODDOCS_WARNING } from '../../add-repo.ts'
 import { NewSessionForm, WorkflowContext } from './NewSessionForm.tsx'
 
 const MARKER = '7f3c9a12-0000-4000-8000-000000000001'
@@ -376,6 +378,27 @@ describe('new session flow', () => {
     expect(flow.state()).toEqual({ kind: 'idle' })
     warn.mockRestore()
     vi.useRealTimers()
+  })
+
+  it('setup warning: only under the offer of a repo whose pod-docs/ runs the board reads', () => {
+    expect(PODDOCS_WARNING).toBe('Its pod-docs/ runs will no longer show on the board.')
+    // Legacy docs the app reads: setup would hide them.
+    expect(setupWarning(LEGACY())).toBe(PODDOCS_WARNING)
+    // No docs, docs of a version the app doesn't read, or a pod-docs/ with no version: nothing on the board to hide.
+    expect(setupWarning(NO_DOCS())).toBeUndefined()
+    expect(setupWarning(withFiles({ 'pod-docs/README.md': '# pod docs\n\npod docs: 1\n' }))).toBeUndefined()
+    expect(setupWarning(withFiles({ 'pod-docs/decisions.md': '# d\n' }))).toBeUndefined()
+    // A set-up repo has no offer, so no warning, even with a pod-docs/ left over.
+    expect(setupWarning(withFiles({ '.openaflow/': '', 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n' }))).toBeUndefined()
+    expect(setupWarning(SET_UP())).toBeUndefined()
+    expect(setupWarning(undefined)).toBeUndefined()
+    // The form: the muted line inside the offer, after Set up; none for a repo with no docs.
+    const legacy = formHtml(LEGACY())
+    expect(legacy).toContain(`<p class="ns-workflow-warning">${PODDOCS_WARNING}</p>`)
+    expect(legacy.indexOf(PODDOCS_WARNING)).toBeGreaterThan(legacy.indexOf('Set up</button>'))
+    expect(legacy.indexOf(PODDOCS_WARNING)).toBeLessThan(legacy.indexOf('ns-actions'))
+    expect(formHtml(NO_DOCS())).not.toContain(PODDOCS_WARNING)
+    expect(formHtml(NO_DOCS())).not.toContain('ns-workflow-warning')
   })
 
   it('setup offer', async () => {

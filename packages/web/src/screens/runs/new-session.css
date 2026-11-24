@@ -115,6 +115,15 @@
   overflow-wrap: anywhere;
 }
 
+/* Under the setup offer of a repo with pod-docs/ docs: a muted line on its own row, under the line and Set up. */
+.ns-workflow-warning {
+  flex-basis: 100%;
+  font-size: var(--size-dense);
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .ns-workflow-text code {
   font-size: var(--size-small);
 }
