@@ -21,6 +21,12 @@ export function hooksPluginDir(o: Place): string {
   return join(o.appPath, '..', 'hooks-plugin', 'plugin')
 }
 
+/** The folder that holds `claude-pod/`. Unpackaged: <appPath>/../workflow/dist. Packaged: <resourcesPath>/workflows. */
+export function workflowsRoot(o: Place): string {
+  if (o.packaged) return join(o.resourcesPath, 'workflows')
+  return join(o.appPath, '..', 'workflow', 'dist')
+}
+
 /** A copy of env with ELECTRON_RUN_AS_NODE removed in any case. Everything else stays: Windows needs SystemRoot to start a pty. */
 export function ptyHostEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
