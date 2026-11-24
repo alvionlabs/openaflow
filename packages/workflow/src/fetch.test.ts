@@ -73,12 +73,13 @@ describe('fetch', () => {
     // the build: an old output and stamp go too, and no temp clone stays
     await put(dist, 'claude-pod/.claude-plugin/plugin.json', '{}')
     await put(dist, STAMP_NAME, 'old lock')
-    const before = await ls(tmpdir())
-    await expect(prepareWorkflow({ lockText: formatLock(lockAt(fx.tagged)), distDir: dist, repo: fx.dir })).rejects.toThrow(
-      fx.later,
-    )
+    const tempRoot = join(root, 'temp')
+    await mkdir(tempRoot)
+    await expect(
+      prepareWorkflow({ lockText: formatLock(lockAt(fx.tagged)), distDir: dist, repo: fx.dir, tempRoot }),
+    ).rejects.toThrow(fx.later)
     expect(await ls(dist)).toEqual([])
-    expect((await ls(tmpdir())).filter((n) => n.startsWith('openaflow-workflow-') && !before.includes(n))).toEqual([])
+    expect(await ls(tempRoot)).toEqual([])
   })
 
   test('an unknown tag fails with git’s words', async () => {

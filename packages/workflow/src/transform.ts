@@ -72,11 +72,9 @@ async function copyPart(srcDir: string, outDir: string, part: string, tag: strin
       await mkdir(target, { recursive: true })
       continue
     }
-    const source = join(srcDir, srcRel)
-    const mode = (await stat(source)).mode & 0o777
     await mkdir(dirname(target), { recursive: true })
     try {
-      await writeFile(target, renameText(await readFile(source)), { flag: 'wx', mode })
+      await writeFile(target, renameText(await readFile(join(srcDir, srcRel))), { flag: 'wx' })
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
         throw new Error(`two files become one after the rename: ${renamePath(srcRel)}`)

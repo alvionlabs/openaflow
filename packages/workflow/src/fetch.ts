@@ -75,12 +75,14 @@ export async function prepareWorkflow(o: {
   distDir: string
   repo?: string
   git?: Git
+  /** Where the temp clone goes; the OS temp folder by default. */
+  tempRoot?: string
 }): Promise<'current' | 'built'> {
   const lock = parseLock(o.lockText)
   if (await isCurrent(o)) return 'current'
   await rm(join(o.distDir, STAMP_NAME), { force: true })
   await rm(join(o.distDir, OUT_NAME), { recursive: true, force: true })
-  const work = await mkdtemp(join(tmpdir(), 'openaflow-workflow-'))
+  const work = await mkdtemp(join(o.tempRoot ?? tmpdir(), 'openaflow-workflow-'))
   try {
     const srcDir = join(work, OUT_NAME)
     await fetchSource({ lock, into: srcDir, git: o.git ?? createGit(), ...(o.repo === undefined ? {} : { repo: o.repo }) })
