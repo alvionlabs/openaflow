@@ -122,6 +122,8 @@ export type HostedSession = {
   resume?: SessionResume
   /** The scrollback its start used (100 to 100,000). Absent on a session started before the setting. */
   scrollback?: number
+  /** Claude Code refused the plugins the start loaded: the org's `disableSideloadFlags` managed setting. Only with state `ended`. */
+  blocked?: 'sideload'
 }
 
 /**
@@ -161,4 +163,6 @@ export type Board = {
   autoContinue?: ({ repoId: string } & Pick<AutoToggle, 'run' | 'lastKey' | 'lastFailed'>)[]
   /** OPENAFLOW_TRANSCRIPT_DAYS: agents come only from transcripts written in this many days. Missing on older Boards (read as 30). */
   transcriptDays?: number
+  /** The workflow bundled with the app. Missing when the app has no bundle. */
+  workflow?: { source: 'claude-pod'; version: string }
 }
