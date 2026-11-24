@@ -763,6 +763,16 @@ describe('buildRepoModel with workflow state folders', () => {
       }),
     })
     expect(other.plans[0]?.sprints).toEqual([])
+    // A doc moved by hand that still names `pod-docs/plans/` keeps the plan the parser reads.
+    const moved = buildRepoModel({
+      [KEY]: '',
+      ...workflow(name, {
+        'README.md': README,
+        'plans/alpha.md': plan('Alpha', []),
+        'sprints/moved.md': sprint('moved', [[1, 'M1', '—', 'pending']], { from: 'alpha' }),
+      }),
+    })
+    expect(moved.plans[0]?.sprints.map((s) => s.slug)).toEqual(['moved'])
   })
 
   it('two workflows merge', () => {
