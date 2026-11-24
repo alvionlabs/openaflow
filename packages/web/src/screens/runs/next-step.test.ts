@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildRepoModel, listRuns, WAITING_AFTER_MS, type AgentRun, type BoardRepo, type Claim, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
 import { cardTerminal, codeParts, DESKTOP_START, DESKTOP_TERMINAL, gateTitle, nextSteps, START_DETAIL, START_TITLE, WAITING_DETAIL, WAITING_TITLE, type NextItem, type NextSteps } from './next-step.ts'
-import { emptyMessage } from './view.ts'
+import { emptyMessage, NO_STATE } from './view.ts'
 import { menuRepo } from './new-session-flow.ts'
 
 const BRIDGE = { connect: async () => {}, onHostState: () => () => {} }
@@ -237,6 +237,15 @@ describe('next step', () => {
     expect(oldRun.state).toBe('unsupported')
     // Without .openaflow/ it is the start card (setup start card), and the empty message is its detail.
     expect(nextSteps(oldRun, old, NOW)?.card.detail).toBe(emptyMessage(oldRun, old))
+    // A set-up repo with no readable docs (a bare .openaflow/): the start card too, so init can run; its detail names init.
+    const bare: BoardRepo = { ...chess(), model: buildRepoModel({ '.openaflow/': '' }) }
+    const bareRun = runs(bare)[0]!
+    expect(bareRun.state).toBe('unsupported')
+    expect(nextSteps(bareRun, bare, NOW)?.card).toMatchObject({ key: 'new-session', title: 'No active plan', detail: emptyMessage(bareRun, bare), action: { kind: 'new-session', repoId: 'chess' } })
+    expect(emptyMessage(bareRun, bare)).toMatch(/init/)
+    // An error stays the nothing card, set up or not.
+    const gone: BoardRepo = { ...bare, error: 'folder not found' }
+    expect(nextSteps(runs(gone)[0]!, gone, NOW)?.card).toMatchObject({ key: 'nothing', action: { kind: 'none' } })
     const row: RunSummary = { repoId: 'chess', repo: 'chess-web', where: 'no active plan', state: 'idle' }
     // A plan-less row is the place to start a session: the start card (N1), still calm.
     expect(nextSteps(row, chess(), NOW)?.card).toMatchObject({ tier: 'nothing', title: 'No active plan', detail: 'Pick what to start, then describe it.' })
@@ -620,12 +629,12 @@ describe('hosted sessions', () => {
     const setUp = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 2\n' }) })
     expect(rowSteps(setUp).card).toMatchObject({ action: { kind: 'new-session' }, detail: START_DETAIL })
     expect(menuRepo(setUp, BRIDGE)?.id).toBe('notes')
-    // A set-up repo the app can't read (no docs in its state): no start card and no menu item, as before.
+    // A set-up repo with no docs in its state: the start card and the menu item, so init can write them; the detail names init.
     const unread = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }) })
     const unreadRun = runs(unread)[0]!
     expect(unreadRun.state).toBe('unsupported')
-    expect(nextSteps(unreadRun, unread, NOW)?.card.action.kind).toBe('none')
-    expect(menuRepo(unread, BRIDGE)).toBeUndefined()
+    expect(nextSteps(unreadRun, unread, NOW)?.card).toMatchObject({ action: { kind: 'new-session' }, detail: NO_STATE })
+    expect(menuRepo(unread, BRIDGE)?.id).toBe('notes')
     // An error repo: neither, with or without .openaflow/.
     const broken = bare({ model: buildRepoModel({}), error: 'folder not found' })
     expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card.action.kind).toBe('none')

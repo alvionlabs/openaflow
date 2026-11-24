@@ -184,14 +184,15 @@ const waitingItem = (s: HostedSession, run: RunSummary): NextItem => ({
 })
 
 /**
- * A repo New session can open in (the start card and the ⋯ menu): one the app reads, and either without `.openaflow/`
- * (with docs or not, sprint default-workflow §9) or with docs it supports.
+ * A repo New session can open in (the start card and the ⋯ menu): any repo the app reads. A repo without `.openaflow/`
+ * gets it with docs or not (sprint default-workflow §9). A set-up repo does too: with no readable docs, init is what
+ * writes or updates them, and the session loads the app's own workflow.
  */
-export const canOpenNewSession = (repo: BoardRepo): boolean => repo.error === undefined && (repo.model.openaflow !== true || repo.model.docs.supported)
+export const canOpenNewSession = (repo: BoardRepo): boolean => repo.error === undefined
 
 /**
  * A repo row New session can open in (`canOpenNewSession`) whose shown session isn't starting or live: the place to
- * start a new session. A repo without `.openaflow/` gets it with or without docs (§9); a set-up repo needs readable docs.
+ * start a new session, with readable docs or not.
  */
 function canStart(run: RunSummary, repo: BoardRepo, shown: HostedSession | undefined): boolean {
   if (run.plan !== undefined || run.state === 'error' || !canOpenNewSession(repo)) return false
