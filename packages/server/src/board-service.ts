@@ -31,6 +31,7 @@ import { readRepoFiles } from './repo-files.ts'
 import { hostedSession, resumeFacts, resumeOf, type HookReader, type StoredSession } from './session-store.ts'
 import type { SessionLabel } from './terminal-channel.ts'
 import { loadRepos } from './repos-config.ts'
+import type { WorkflowBundle } from './workflow-resolver.ts'
 import { agentOfRepo, createAgentFileCache, createSessionCwdCache, listAgentFiles, sessionFileOf, type AgentFile } from './transcript-files.ts'
 
 export type BoardServiceDeps = {
@@ -51,6 +52,13 @@ export type BoardServiceDeps = {
    * `labels` gets every open session's label at the first build, then whenever the list differs from the last one.
    */
   hosted?: { list(): StoredSession[]; hooks: Pick<HookReader, 'read'>; labels?: (labels: SessionLabel[]) => void }
+  /** The bundled workflow plugin, read on every build. No dep, or no bundle: no `workflow` on the Board. */
+  workflow?: () => WorkflowBundle | undefined
+  /**
+   * Whether Claude Code's managed settings turn on `disableSideloadFlags` (`blocksSideload`). Called at most once per
+   * build, and only when a session ended before its first hook line. No dep: no session is `blocked`.
+   */
+  sideload?: () => Promise<boolean>
 }
 
 export type BoardService = {
@@ -149,11 +157,19 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
     ]
   }
 
-  /** Every record as a `HostedSession` with its hook state, in store order. */
+  /**
+   * Every record as a `HostedSession` with its hook state, in store order. A session that ended with no hook line and
+   * no prompt is `blocked: 'sideload'` when the managed settings turn sideloading off (sprint default-workflow §7):
+   * claude refused the `--plugin-dir` flags before its first hook could run.
+   */
   async function hostedAll(records: readonly StoredSession[]): Promise<HostedSession[]> {
     const hooks = deps.hosted?.hooks
     if (!hooks) return []
-    return Promise.all(records.map(async (r) => hostedSession(r, await hooks.read(r.marker))))
+    const all = await Promise.all(records.map(async (r) => hostedSession(r, await hooks.read(r.marker))))
+    const qualifies = (h: HostedSession) => h.state === 'ended' && !h.hooked && !h.prompted
+    if (!deps.sideload || !all.some(qualifies)) return all
+    const blocked = await deps.sideload().catch(() => false)
+    return blocked ? all.map((h) => (qualifies(h) ? { ...h, blocked: 'sideload' as const } : h)) : all
   }
 
   /**
@@ -250,6 +266,8 @@ export function createBoardService(deps: BoardServiceDeps): BoardService {
       if (checkedAt !== undefined) board.ghCheckedAt = checkedAt
       if (configUnreadable) board.configError = 'config unreadable'
       if (deps.actions) board.actions = deps.actions()
+      const bundle = deps.workflow?.()
+      if (bundle) board.workflow = { source: bundle.source, version: bundle.version }
       // The toggles that are on, under each repo's id now, with the stop each last sent, so a sent stop raises no toast.
       if (deps.autoContinue) {
         board.autoContinue = deps.autoContinue().flatMap(({ path, run, lastKey, lastFailed }) => {
