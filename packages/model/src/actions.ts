@@ -78,6 +78,8 @@ export type UseWorkflowVersionResult = { outcome: 'updated'; logged: boolean }
  * A forget-run's is `<run> · port base <N>`.
  * A new-session's and a dismiss-session's is `<skill command or plain> · <marker first 8>`, never the text.
  * A resume-session's is the same, with the new session's marker.
+ * A setup-workflow's is `.openaflow/workflows/claude-pod · <bundled version>`. A use-workflow-version's is
+ * `.openaflow/workflows/<name> · <old version> → <bundled version>`.
  */
 export type ActionEntry = { at: number; repoId: string; repo: string; target: string; message?: string } & (
   | { action: 'merge'; result: MergeOutcome }
@@ -89,6 +91,8 @@ export type ActionEntry = { at: number; repoId: string; repo: string; target: st
   | { action: 'new-session'; result: NewSessionOutcome }
   | { action: 'dismiss-session'; result: DismissSessionOutcome }
   | { action: 'resume-session'; result: ResumeSessionOutcome }
+  | { action: 'setup-workflow'; result: SetupWorkflowOutcome }
+  | { action: 'use-workflow-version'; result: UseWorkflowVersionOutcome }
 )
 
 /** An entry before the log stamps its time. Omit spreads over the union, so `action` and `result` stay paired. */
