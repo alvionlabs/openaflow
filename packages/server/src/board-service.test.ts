@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createBoardService, finalPrBranches, livePrNumbers, type BoardServiceDeps } from './board-service.ts'
 import { createGhReader, PR_CACHE_MS, type GhExec, type GhReader, type GhStatus, type PrStatus } from './gh.ts'
 import { normalizeRepoPath, repoId } from './guard.ts'
+import { blocksSideload } from './managed-settings.ts'
 import { createHookReader, createSessionStore, type StoredSession } from './session-store.ts'
 import { projectDirName } from './transcript-files.ts'
 import { boardSignature, createBoardWatcher } from './watcher.ts'
@@ -267,8 +268,17 @@ describe('board service', () => {
     })
     const hookLine = (marker: string, event: string) =>
       appendFile(join(hooks, `${marker}.jsonl`), JSON.stringify({ v: 1, at: 1, payload: { hook_event_name: event, session_id: S, source: 'startup' } }) + '\n')
-    /** A service over `records`, with a managed settings file that says `blocks`, and a count of its reads. */
-    const serviceOf = async (records: StoredSession[], blocks: () => Promise<boolean> = async () => true) => {
+    /** The managed settings file the real reader reads: `text`, or none. */
+    const managed = async (text: string | undefined) => {
+      const file = join(root, 'managed-settings.json')
+      await rm(file, { recursive: true, force: true })
+      if (text !== undefined) await writeFile(file, text)
+      return () => blocksSideload(file)
+    }
+    const ON = JSON.stringify({ disableSideloadFlags: true })
+    /** A service over `records`, with a managed settings reader (the real one over a file that turns sideloading off by default), and a count of its reads. */
+    const serviceOf = async (records: StoredSession[], read?: () => Promise<boolean>) => {
+      const blocks = read ?? (await managed(ON))
       await writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: records }))
       const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
       const reads = { n: 0 }
@@ -301,16 +311,19 @@ describe('board service', () => {
         [M2, 'sideload'],
       ])
       expect(s.reads.n).toBe(1)
-      // Read again at the next build: a fixed file clears it.
-      const fixed = await serviceOf([rec(M1, { ...ENDED })], async () => false)
-      expect((await fixed.hosted())[0]).not.toHaveProperty('blocked')
+      // Read again at each build: a fixed file clears it.
+      await managed(JSON.stringify({ disableSideloadFlags: false }))
+      expect((await s.hosted()).map((h) => h.blocked)).toEqual([undefined, undefined])
+      expect(s.reads.n).toBe(2)
     })
 
     test('sideload edges', async () => {
-      // The file says no (missing, invalid, false: the reader's answer): no blocked.
-      const no = await serviceOf([rec(M1, { ...ENDED })], async () => false)
-      expect((await no.hosted())[0]).not.toHaveProperty('blocked')
-      expect(no.reads.n).toBe(1)
+      // A missing, invalid, or false setting: no blocked.
+      for (const text of [undefined, '{', 'null', JSON.stringify({ disableSideloadFlags: false }), JSON.stringify({ disableSideloadFlags: 'true' })]) {
+        const no = await serviceOf([rec(M1, { ...ENDED })], await managed(text))
+        expect((await no.hosted())[0], String(text)).not.toHaveProperty('blocked')
+        expect(no.reads.n, String(text)).toBe(1)
+      }
       // A reader that throws counts as no.
       const throws = await serviceOf([rec(M1, { ...ENDED })], async () => Promise.reject(new Error('EACCES')))
       expect((await throws.hosted())[0]).not.toHaveProperty('blocked')
