@@ -25,8 +25,12 @@ export const RESUME_BLOCKED: Readonly<Record<Exclude<SessionResume, 'ok'>, strin
   'in use': 'Another terminal holds this session.',
 }
 
-/** `resume`: the bar offers Resume. */
-export type StopBar = { dot: ChipClass; word: string; line: string; resume: boolean }
+/** The sideload stop line (§7), and the word the page draws in mono. */
+export const SIDELOAD_FLAG = 'disableSideloadFlags'
+export const SIDELOAD_LINE = `Claude couldn't start. Your organization's ${SIDELOAD_FLAG} setting blocks the plugins OpenAFlow loads.`
+
+/** `resume`: the bar offers Resume. `sideload`: the line is the sideload stop line, with `SIDELOAD_FLAG` in mono. */
+export type StopBar = { dot: ChipClass; word: string; line: string; resume: boolean; sideload?: true }
 export type TerminalBody = { kind: 'terminal' } | { kind: 'stopped'; bar: StopBar }
 export type BrowserView = Omit<StopBar, 'resume'> & { note: string }
 
@@ -63,6 +67,8 @@ const status = (s: HostedSession, now: number) => ({ dot: DOT_CLASS[sessionDot(s
  * resume field: the dot, the word, and when it ended. `terminals` false (the browser build): never Resume.
  */
 export function stopBar(s: HostedSession, now: number, terminals: boolean): StopBar {
+  // The server says why (§7); the page never reads Claude's text. No Resume, whatever `resume` says.
+  if (s.blocked === 'sideload') return { ...status(s, now), line: SIDELOAD_LINE, resume: false, sideload: true }
   const today: StopBar = { ...status(s, now), line: endLine(s), resume: false }
   if (!terminals || s.resume === undefined) return today
   if (s.resume === 'ok') return { ...today, line: `${today.line} ${RESUME_LINE}`, resume: true }

@@ -155,3 +155,13 @@
     height: clamp(220px, 50vh, 480px);
   }
 }
+
+/* The setting's name in the sideload stop line: mono, and it may break so a narrow bar never scrolls sideways. */
+.stop-code {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--fg);
+  font: var(--size-small) / 1 var(--mono);
+  overflow-wrap: anywhere;
+}
