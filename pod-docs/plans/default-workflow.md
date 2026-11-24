@@ -2,6 +2,10 @@
 
 _Generated: 2026-11-23 · Status: active · Grilled-with: pod (fast)_
 
+Port base: 3200
+
+<!-- autopilot-run: started=2026-11-24T04:08:43Z sprints=0 waves=0 -->
+
 ## Goal
 OpenAFlow ships its own default workflow, reused from a pinned claude-pod release. Each repo keeps everything OpenAFlow-related in one `.openaflow/` folder. A `workflows/` subfolder holds one folder per workflow, and claude-pod is the first one: the repo commits which version it uses and the workflow's state. The workflow's skills and agents ship in the app. This is plan B of three: `terminal-host`, then `default-workflow`, then `automatic-input`.
 
