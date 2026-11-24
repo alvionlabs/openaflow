@@ -35,6 +35,7 @@ import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createSettingsActions, createSettingsRead, type SettingsRouteDeps } from './settings-routes.ts'
 import { createSettingsStore } from './settings-store.ts'
+import { createSetupRoutes } from './setup-routes.ts'
 import { createHookReader, createSessionStore, followChannel, reconcileSessions, type StoredSession } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
 import { createShutdown, createWorkTracker } from './shutdown.ts'
@@ -133,7 +134,7 @@ export async function startServer(
   // The settings file, read at each use by every mode; the session routes read it at each start.
   const settingsStore = createSettingsStore({ file: join(configDir, 'settings.json'), log: (line) => console.log(line) })
   const pluginDir = envValue(env, 'OPENAFLOW_HOOKS_PLUGIN')
-  // The bundled workflow plugin: one resolver for the Board, the session routes, and the settings preview.
+  // The bundled workflow plugin: one resolver for the Board, the session routes, the settings preview, and setup.
   const workflows = createWorkflowResolver({ root: envValue(env, 'OPENAFLOW_WORKFLOWS_DIR') })
   const managedSettings = o.managedSettings ?? managedSettingsPath(platform)
   const settingsDeps = (): SettingsRouteDeps => ({
@@ -231,6 +232,10 @@ export async function startServer(
             platform,
             now: Date.now,
           }),
+        )
+        .route(
+          '/',
+          createSetupRoutes({ board: () => watcher.board(), configFile, rebuild: () => watcher.rebuild(), log, workflows, platform }),
         )
         .route(
           '/',
