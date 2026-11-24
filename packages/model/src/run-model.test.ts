@@ -646,7 +646,7 @@ describe('buildRepoModel', () => {
   })
 
   it('public exports', () => {
-    for (const name of ['buildRepoModel', 'docsVersion', 'prRef', 'sliceDeps', 'needsYou', 'planExtras', 'planFacts', 'stagingBranch', 'buildFlow', 'parsePlan', 'parseSprint', 'parseQueue', 'readTable', 'isDone', 'queueLines', 'splitAnswer', 'isAnswerable', 'cleanAnswer', 'withAnswer']) {
+    for (const name of ['buildRepoModel', 'repoWorkflows', 'docsVersion', 'prRef', 'sliceDeps', 'needsYou', 'planExtras', 'planFacts', 'stagingBranch', 'buildFlow', 'parsePlan', 'parseSprint', 'parseQueue', 'readTable', 'isDone', 'queueLines', 'splitAnswer', 'isAnswerable', 'cleanAnswer', 'withAnswer']) {
       expect(typeof (model as Record<string, unknown>)[name], name).toBe('function')
     }
     for (const name of ['parseAgentTranscript', 'agentState']) {
@@ -654,5 +654,213 @@ describe('buildRepoModel', () => {
     }
     expect(model.STALE_MS).toBe(30 * 60_000)
     expect(model.SUPPORTED_DOCS_VERSION).toBe(2)
+    expect(model.WORKFLOW_NAME.test('claude-pod')).toBe(true)
+    expect(model.WORKFLOW_VERSION.test('0.11.10')).toBe(true)
+  })
+})
+
+describe('buildRepoModel with workflow state folders', () => {
+  const KEY = '.openaflow/'
+  const state = (name: string) => `.openaflow/workflows/${name}/state`
+  /** The folder key and each state file of a workflow, as the server reads them. */
+  const workflow = (name: string, files: Record<string, string>, meta?: string): RepoFiles => {
+    const out: RepoFiles = { [`.openaflow/workflows/${name}/`]: '' }
+    if (meta !== undefined) out[`.openaflow/workflows/${name}/workflow.json`] = meta
+    for (const [rel, text] of Object.entries(files)) out[`${state(name)}/${rel}`] = text
+    return out
+  }
+  /** A sprint doc as the bundled claude-pod writes it: `From plan:` names the plan under the state folder. */
+  const stateSprint = (name: string, slug: string, board: Board, from: string) =>
+    sprint(slug, board, { from }).replace(`From plan: pod-docs/plans/${from}.md`, `From plan: ${state(name)}/plans/${from}.md`)
+  const entry = (tags: string, body: string) => `- \`[2026-11-23 · PENDING · engineer → human${tags}]\` ${body} **Resolution:** pending`
+  /** Each key named `name` anywhere in the value, so a test can say no new field was added. */
+  const keysNamed = (value: unknown, names: string[]): string[] => {
+    if (Array.isArray(value)) return value.flatMap((v) => keysNamed(v, names))
+    if (typeof value !== 'object' || value === null) return []
+    return Object.entries(value).flatMap(([k, v]) => [...(names.includes(k) ? [k] : []), ...keysNamed(v, names)])
+  }
+  const NEW_FIELDS = ['openaflow', 'workflows', 'stateDir']
+
+  it('legacy model unchanged', () => {
+    const files: RepoFiles = {
+      'pod-docs/README.md': README,
+      'pod-docs/plans/alpha.md': plan('Alpha', [['one', 'g', 'active', '—']]),
+      'pod-docs/sprints/one.md': sprint('one', [[1, 'A1', '—', 'pending']], { from: 'alpha' }),
+      'pod-docs/handoff-queue.md': `${entry(' · plan: alpha', 'hi')}\n`,
+      'pod-docs/research/notes.md': '',
+    }
+    const repo = buildRepoModel(files)
+    expect(repo.plans.map((p) => p.slug)).toEqual(['alpha'])
+    expect(repo.queue).toHaveLength(1)
+    expect(Object.keys(repo).sort()).toEqual(['docs', 'plans', 'queue', 'research'])
+    expect(keysNamed(repo, NEW_FIELDS)).toEqual([])
+    expect(buildRepoModel({ 'pod-docs/README.md': README })).toStrictEqual({ docs: { supported: true, version: 2 }, plans: [], queue: [], research: [] })
+    expect(buildRepoModel({})).toStrictEqual({ docs: { supported: false, version: undefined }, plans: [], queue: [] })
+    // The same files with the `.openaflow/` key are no longer read from pod-docs/.
+    const keyed = buildRepoModel({ ...files, [KEY]: '' })
+    expect(keyed.plans).toEqual([])
+    expect(keyed.queue).toEqual([])
+  })
+
+  it('reads a workflow state folder', () => {
+    const name = 'claude-pod'
+    const files: RepoFiles = {
+      [KEY]: '',
+      ...workflow(
+        name,
+        {
+          'README.md': README,
+          'plans/alpha.md': plan('Alpha', [['one', 'g', 'active', '—']]),
+          'plans/archive/old.md': plan('Old', [], { status: 'archived' }),
+          'sprints/one.md': stateSprint(name, 'one', [[1, 'A1', '—', 'pending'], [2, 'A2', '—', 'pending', 'A1']], 'alpha'),
+          // Not in alpha's table: joins through its `From plan:` line under the state folder.
+          'sprints/extra.md': stateSprint(name, 'extra', [[1, 'E1', '—', 'pending']], 'alpha'),
+          'handoff-queue.md': `# Handoff Queue\n\n${entry(' · sprint: one', 'from state')}\n${entry('', 'loose')}\n`,
+          'research/topic.md': '',
+          'decisions.md': '# Decisions\n\n## 2026-11-23 — merge target: staging\n\nLand on `pod-staging`.\n',
+        },
+        '{"source":"claude-pod","version":"0.11.10"}',
+      ),
+      // pod-docs/ files are ignored once the key is there.
+      'pod-docs/README.md': README,
+      'pod-docs/plans/legacy.md': plan('Legacy', []),
+      'pod-docs/handoff-queue.md': `${entry(' · plan: legacy', 'old')}\n`,
+      'pod-docs/research/old-report.md': '',
+    }
+    const repo = buildRepoModel(files)
+    const stateDir = state(name)
+    expect(repo.openaflow).toBe(true)
+    expect(repo.workflows).toStrictEqual([{ name, stateDir, source: 'claude-pod', version: '0.11.10' }])
+    expect(repo.docs).toEqual({ supported: true, version: 2 })
+    expect(repo.plans.map((p) => [p.slug, p.stateDir])).toEqual([
+      ['alpha', stateDir],
+      ['old', stateDir],
+    ])
+    const alpha = repo.plans[0]
+    expect(alpha?.sprints.map((s) => [s.slug, s.hasDoc])).toEqual([
+      ['one', true],
+      ['extra', true],
+    ])
+    expect(alpha?.currentSprint).toBe('one')
+    expect(alpha?.sprints[0]?.waves.map((w) => [w.wave, w.slices.map((s) => [s.code, s.dependsOn])])).toEqual([
+      [1, [['A1', []]]],
+      [2, [['A2', ['A1']]]],
+    ])
+    expect(repo.queue.map((e) => [e.body, e.stateDir])).toEqual([
+      ['from state', stateDir],
+      ['loose', stateDir],
+    ])
+    expect(alpha?.queue.map((e) => [e.body, e.stateDir])).toEqual([['from state', stateDir]])
+    expect(repo.research).toEqual(['topic'])
+    expect(repo.staging).toBe('pod-staging')
+    // `From plan:` under another workflow's state folder names no plan here: the doc is dropped.
+    const other = buildRepoModel({
+      [KEY]: '',
+      ...workflow(name, {
+        'README.md': README,
+        'plans/alpha.md': plan('Alpha', []),
+        'sprints/stray.md': stateSprint('other', 'stray', [[1, 'S1', '—', 'pending']], 'alpha'),
+      }),
+    })
+    expect(other.plans[0]?.sprints).toEqual([])
+  })
+
+  it('two workflows merge', () => {
+    const shared = entry(' · plan: shared', 'same line')
+    const files: RepoFiles = {
+      [KEY]: '',
+      // Listed out of order: the merge follows the workflows sorted by name.
+      ...workflow('beta', {
+        'README.md': README,
+        'plans/shared.md': plan('Shared from beta', [['b-sprint', 'g', 'active', '—']]),
+        'plans/b-only.md': plan('B only', []),
+        'sprints/b-sprint.md': stateSprint('beta', 'b-sprint', [[1, 'B1', '—', 'pending']], 'shared'),
+        'handoff-queue.md': `${shared}\n${entry(' · plan: b-only', 'beta entry')}\n`,
+        'research/b-report.md': '',
+        'research/both.md': '',
+        'decisions.md': '## 2026-11-23 — merge target: staging\n\nLand on `beta-staging`.\n',
+      }),
+      ...workflow('alpha', {
+        'README.md': README,
+        'plans/shared.md': plan('Shared from alpha', [['a-sprint', 'g', 'active', '—']]),
+        'plans/a-only.md': plan('A only', []),
+        'sprints/a-sprint.md': stateSprint('alpha', 'a-sprint', [[1, 'A1', '—', 'pending']], 'shared'),
+        'handoff-queue.md': `${shared}\n`,
+        'research/both.md': '',
+      }),
+      // Sorts after beta: its staging branch comes second.
+      ...workflow('gamma', { 'README.md': README, 'decisions.md': '## 2026-11-23 — merge target: staging\n\nLand on `gamma-staging`.\n' }),
+    }
+    const repo = buildRepoModel(files)
+    const [a, b] = [state('alpha'), state('beta')]
+    expect(repo.workflows?.map((w) => w.name)).toEqual(['alpha', 'beta', 'gamma'])
+    expect(repo.plans.map((p) => [p.slug, p.title, p.stateDir])).toEqual([
+      ['a-only', 'A only', a],
+      ['shared', 'Shared from alpha', a],
+      ['b-only', 'B only', b],
+    ])
+    // The kept plan has only its own workflow's sprints and entries.
+    const kept = repo.plans[1]
+    expect(kept?.sprints.map((s) => s.slug)).toEqual(['a-sprint'])
+    expect(kept?.queue.map((e) => [e.line, e.stateDir])).toEqual([[shared, a]])
+    // Every entry stays, in workflow order, each with its folder, even two with the same line.
+    expect(repo.queue.map((e) => [e.body, e.stateDir])).toEqual([
+      ['same line', a],
+      ['same line', b],
+      ['beta entry', b],
+    ])
+    expect(repo.plans[2]?.queue.map((e) => e.stateDir)).toEqual([b])
+    // Research joins in workflow order, each slug once; staging is the first one found.
+    expect(repo.research).toEqual(['both', 'b-report'])
+    expect(repo.staging).toBe('beta-staging')
+  })
+
+  it('docs and empty folders', () => {
+    const v = (n: number) => `# pod docs\n\npod docs: ${n}\n`
+    const repo = buildRepoModel({
+      [KEY]: '',
+      // No state files at all: an empty part, not an error.
+      ...workflow('a-empty', {}),
+      // Docs it can't read: its plans are left out.
+      ...workflow('b-old', { 'README.md': v(1), 'plans/old.md': plan('Old', []), 'handoff-queue.md': `${entry('', 'old entry')}\n` }),
+      ...workflow('c-good', { 'README.md': v(2), 'plans/good.md': plan('Good', []) }),
+      ...workflow('d-later', { 'README.md': v(2), 'plans/later.md': plan('Later', []) }),
+    })
+    expect(repo.docs).toEqual({ supported: true, version: 2 })
+    expect(repo.plans.map((p) => [p.slug, p.stateDir])).toEqual([
+      ['good', state('c-good')],
+      ['later', state('d-later')],
+    ])
+    expect(repo.queue).toEqual([])
+    expect(repo.research).toEqual([])
+    expect(repo).not.toHaveProperty('staging')
+
+    // None supported: the first workflow's docs.
+    const none = buildRepoModel({ [KEY]: '', ...workflow('a', { 'README.md': v(3) }), ...workflow('b', { 'README.md': v(4) }) })
+    expect(none).toStrictEqual({
+      docs: { supported: false, version: 3 },
+      plans: [],
+      queue: [],
+      research: [],
+      openaflow: true,
+      workflows: [
+        { name: 'a', stateDir: state('a') },
+        { name: 'b', stateDir: state('b') },
+      ],
+    })
+    // Only empty folders, and no folders at all.
+    expect(buildRepoModel({ [KEY]: '', ...workflow('a', {}) }).docs).toEqual({ supported: false, version: undefined })
+    expect(buildRepoModel({ [KEY]: '', 'pod-docs/README.md': README, 'pod-docs/plans/x.md': plan('X', []) })).toStrictEqual({
+      docs: { supported: false, version: undefined },
+      plans: [],
+      queue: [],
+      research: [],
+      openaflow: true,
+      workflows: [],
+    })
+    // Windows keys read the same.
+    const files = { [KEY]: '', ...workflow('c-good', { 'README.md': v(2), 'plans/good.md': plan('Good', []) }) }
+    const back = Object.fromEntries(Object.entries(files).map(([k, t]) => [k.replaceAll('/', '\\'), t]))
+    expect(buildRepoModel(back)).toEqual(buildRepoModel(files))
   })
 })
