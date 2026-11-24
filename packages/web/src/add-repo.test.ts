@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { NEED_RELOAD, RESTARTED, UNREACHABLE } from './actions-client.ts'
-import { ADD_ALREADY, ADD_BAD_PATH, TRY_AGAIN, RELOAD, addError, postRepo } from './add-repo.ts'
+import { ADD_ALREADY, ADD_BAD_PATH, SETUP_ALREADY, SETUP_BUSY, SETUP_FAILED, SETUP_MISSING, TRY_AGAIN, RELOAD, addError, postRepo, setupError } from './add-repo.ts'
 
 describe('the message for a failed add', () => {
   it('a status with no error word is a failed add', () => {
@@ -48,6 +48,39 @@ describe('postRepo', () => {
     expect(await postRepo('/repo', { fetch: fetchFn, token })).toEqual({ status: 502 })
     const ok = vi.fn(async () => new Response(JSON.stringify({ path: '/repo' }), { status: 201 }))
     expect(await postRepo('/repo', { fetch: ok, token })).toEqual({ status: 201 })
+  })
+})
+
+describe('postRepo reads openaflow', () => {
+  const token = () => 'tok-123'
+  const answer = (body: unknown, status = 201) => vi.fn(async () => new Response(JSON.stringify(body), { status }))
+
+  it('openaflow field: a boolean is passed on; anything else is left out', async () => {
+    expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: false }), token })).toEqual({ status: 201, openaflow: false })
+    expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: true }), token })).toEqual({ status: 201, openaflow: true })
+    for (const v of ['false', 0, null, 'yes']) {
+      expect(await postRepo('/r', { fetch: answer({ path: '/r', openaflow: v }), token })).toEqual({ status: 201 })
+    }
+  })
+
+  it('a refusal keeps its error word and carries no openaflow', async () => {
+    expect(await postRepo('/r', { fetch: answer({ error: 'already registered', openaflow: false }, 409), token })).toEqual({ status: 409, error: 'already registered' })
+  })
+})
+
+describe('the setup messages', () => {
+  it('read short and warm, with no period at the end', () => {
+    expect(SETUP_ALREADY).toBe('This repo already has a .openaflow file or folder')
+    for (const m of [SETUP_ALREADY, SETUP_MISSING, SETUP_BUSY, SETUP_FAILED]) expect(m, m).not.toMatch(/\.$/)
+  })
+  it('each server word maps to its line; the rest read as try again', () => {
+    expect(setupError('already set up')).toBe(SETUP_ALREADY)
+    expect(setupError('workflow missing')).toBe(SETUP_MISSING)
+    expect(setupError('setup in progress')).toBe(SETUP_BUSY)
+    expect(setupError('setup failed: EACCES')).toBe(SETUP_FAILED)
+    expect(setupError(RELOAD)).toBe(RELOAD)
+    expect(setupError('not a repo')).toBe(TRY_AGAIN)
+    expect(setupError('HTTP 500')).toBe(TRY_AGAIN)
   })
 })
 

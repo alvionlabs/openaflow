@@ -1,9 +1,9 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { RESTARTED, UNREACHABLE } from '../../actions-client.ts'
-import { ADD_ALREADY, ADD_BAD_PATH, TRY_AGAIN, RELOAD, type AddResult } from '../../add-repo.ts'
-import { AddRepoForm } from './AddRepoDialog.tsx'
+import { RESTARTED, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
+import { ADD_ALREADY, ADD_BAD_PATH, SETUP_ALREADY, SETUP_BUSY, SETUP_FAILED, SETUP_MISSING, TRY_AGAIN, RELOAD, type AddResult } from '../../add-repo.ts'
+import { AddRepoConfirm, AddRepoForm } from './AddRepoDialog.tsx'
 import { BRIDGE_FAILED, canAdd, createAddRepoFlow, pathHint, type AddRepoState } from './add-repo-flow.ts'
 
 /** A promise the test settles by hand. */
@@ -33,10 +33,16 @@ function setup(opts: { bridge: boolean }) {
     posts.push(d)
     return d.promise
   })
+  const setups: ReturnType<typeof deferred<ActionReply<{ outcome: string }>>>[] = []
+  const setupRepo = vi.fn((_path: string) => {
+    const d = deferred<ActionReply<{ outcome: string }>>()
+    setups.push(d)
+    return d.promise
+  })
   const onClose = vi.fn()
   const seen: AddRepoState[] = []
-  const flow = createAddRepoFlow({ ...(opts.bridge ? { pick } : {}), post, onClose }, (s) => seen.push(s))
-  return { flow, pick, post, onClose, picks, posts, seen }
+  const flow = createAddRepoFlow({ ...(opts.bridge ? { pick } : {}), post, setupRepo, onClose }, (s) => seen.push(s))
+  return { flow, pick, post, setupRepo, onClose, picks, posts, setups, seen }
 }
 
 const form = (s: AddRepoState) => {
@@ -432,5 +438,164 @@ describe('an error that is not about the path', () => {
     await added
     expect(form(t.flow.state())).toMatchObject({ error: RELOAD })
     expect(canAdd(t.flow.state())).toBe(true)
+  })
+})
+
+describe('the setup confirm after Add', () => {
+  /** A flow that has added `/home/me/repo` and got `reply`. */
+  async function added(reply: AddResult) {
+    const t = setup({ bridge: false })
+    t.flow.type(' /home/me/repo ')
+    const p = t.flow.add()
+    t.posts[0]!.resolve(reply)
+    await p
+    return t
+  }
+  const confirm = (s: AddRepoState) => {
+    if (s.kind !== 'confirm') throw new Error(`expected the confirm step, got ${s.kind}`)
+    return s
+  }
+
+  it('asks after add: a 201 with openaflow false moves to the confirm step and does not close', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    expect(t.flow.state()).toEqual({ kind: 'confirm', path: '/home/me/repo', busy: false })
+    expect(t.onClose).not.toHaveBeenCalled()
+    expect(t.setupRepo).not.toHaveBeenCalled()
+  })
+
+  it('create sets up: Create posts setup-workflow with the added path, and a 200 closes', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    const done = t.flow.create()
+    expect(t.setupRepo).toHaveBeenCalledTimes(1)
+    expect(t.setupRepo).toHaveBeenCalledWith('/home/me/repo')
+    expect(confirm(t.flow.state()).busy).toBe(true)
+    t.setups[0]!.resolve({ ok: true, data: { outcome: 'created' } })
+    await done
+    expect(t.flow.state()).toEqual({ kind: 'closed' })
+    expect(t.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('create is one post at a time, and Not now waits while it runs', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    const done = t.flow.create()
+    void t.flow.create()
+    t.flow.notNow()
+    expect(t.setupRepo).toHaveBeenCalledTimes(1)
+    expect(t.onClose).not.toHaveBeenCalled()
+    t.setups[0]!.resolve({ ok: true, data: { outcome: 'created' } })
+    await done
+    expect(t.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('not now writes nothing: it closes and posts no setup', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    t.flow.notNow()
+    expect(t.flow.state()).toEqual({ kind: 'closed' })
+    expect(t.onClose).toHaveBeenCalledTimes(1)
+    expect(t.setupRepo).not.toHaveBeenCalled()
+    expect(t.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancel (Escape) at the confirm step is Not now', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    t.flow.cancel()
+    expect(t.onClose).toHaveBeenCalledTimes(1)
+    expect(t.setupRepo).not.toHaveBeenCalled()
+  })
+
+  const failures: [string, ActionReply<{ outcome: string }>, string][] = [
+    ['already set up', { ok: false, status: 409, message: 'already set up' }, SETUP_ALREADY],
+    ['workflow missing', { ok: false, status: 409, message: 'workflow missing' }, SETUP_MISSING],
+    ['setup in progress', { ok: false, status: 409, message: 'setup in progress' }, SETUP_BUSY],
+    ['setup failed: EACCES', { ok: false, status: 500, message: 'setup failed: EACCES' }, SETUP_FAILED],
+    ['not a repo', { ok: false, status: 404, message: 'not a repo' }, TRY_AGAIN],
+    ['a stale token', { ok: false, status: 403, message: RELOAD }, RELOAD],
+    ['no connection', { ok: false, status: 0, message: UNREACHABLE }, TRY_AGAIN],
+  ]
+  for (const [name, reply, words] of failures) {
+    it(`setup failure (${name}): the words show, the confirm step stays, and Create works again`, async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const t = await added({ status: 201, openaflow: false })
+      const first = t.flow.create()
+      t.setups[0]!.resolve(reply)
+      await first
+      expect(t.flow.state()).toEqual({ kind: 'confirm', path: '/home/me/repo', busy: false, error: words })
+      expect(t.onClose).not.toHaveBeenCalled()
+      const again = t.flow.create()
+      expect(t.setupRepo).toHaveBeenCalledTimes(2)
+      t.setups[1]!.resolve({ ok: true, data: { outcome: 'created' } })
+      await again
+      expect(t.onClose).toHaveBeenCalledTimes(1)
+      warn.mockRestore()
+    })
+  }
+
+  it('setup failure: a post that throws reads as a failed setup, and the exact cause goes to the console', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const t = await added({ status: 201, openaflow: false })
+    const p = t.flow.create()
+    t.setups[0]!.reject(new Error('boom'))
+    await p
+    expect(t.flow.state()).toMatchObject({ kind: 'confirm', busy: false, error: TRY_AGAIN })
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  for (const [name, reply] of [['true', { status: 201, openaflow: true }], ['no field', { status: 201 }]] as const) {
+    it(`already set up closes: a 201 with openaflow ${name} closes as before, with no setup`, async () => {
+      const t = await added(reply)
+      expect(t.flow.state()).toEqual({ kind: 'closed' })
+      expect(t.onClose).toHaveBeenCalledTimes(1)
+      expect(t.setupRepo).not.toHaveBeenCalled()
+    })
+  }
+
+  it('a refused add (409) never reaches the confirm step', async () => {
+    const t = await added({ status: 409, error: 'already registered', openaflow: false })
+    expect(t.flow.state().kind).toBe('form')
+  })
+
+  it('cancel (Escape) while Create runs does nothing, and the answer still lands', async () => {
+    const t = await added({ status: 201, openaflow: false })
+    const p = t.flow.create()
+    t.flow.cancel()
+    expect(t.flow.state()).toEqual({ kind: 'confirm', path: '/home/me/repo', busy: true })
+    expect(t.onClose).not.toHaveBeenCalled()
+    t.setups[0]!.resolve({ ok: false, status: 500, message: 'setup failed: EIO' })
+    await p
+    expect(t.flow.state()).toMatchObject({ kind: 'confirm', busy: false, error: SETUP_FAILED })
+  })
+
+  it('create and not now do nothing outside the confirm step', () => {
+    const t = setup({ bridge: false })
+    void t.flow.create()
+    t.flow.notNow()
+    expect(t.setupRepo).not.toHaveBeenCalled()
+    expect(t.onClose).not.toHaveBeenCalled()
+  })
+
+  describe('the markup', () => {
+    type Confirm = Extract<AddRepoState, { kind: 'confirm' }>
+    const render = (state: Confirm) => renderToStaticMarkup(createElement(AddRepoConfirm, { state, flow: setup({ bridge: false }).flow }))
+    const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => ({ label: m[2]!, attrs: m[1]! }))
+
+    it('the question, the facts under an open Details, then Not now and Create', () => {
+      const html = render({ kind: 'confirm', path: '/home/me/repo', busy: false })
+      expect(html).toMatch(/<h2[^>]*>Create <span class="mono">\.openaflow\/<\/span> in this repo\?<\/h2>/)
+      expect(html).toMatch(/<details class="modal-details" open="">/)
+      expect(html).toMatch(/<dt>Folder<\/dt><dd>\/home\/me\/repo<\/dd><dt>Creates<\/dt><dd>\.openaflow\/workflows\/claude-pod\/<\/dd>/)
+      expect(buttons(html.slice(html.indexOf('class="modal-actions"'))).map((b) => b.label)).toEqual(['Not now', 'Create'])
+      expect(html).not.toContain('modal-alert')
+    })
+
+    it('busy turns both buttons off; an error shows in the alert box above the actions', () => {
+      const busy = render({ kind: 'confirm', path: '/r', busy: true })
+      expect(buttons(busy).every((b) => /disabled=""/.test(b.attrs))).toBe(true)
+      const html = render({ kind: 'confirm', path: '/r', busy: false, error: SETUP_FAILED })
+      expect(html.indexOf('modal-alert')).toBeGreaterThan(0)
+      expect(html.indexOf('modal-alert')).toBeLessThan(html.indexOf('class="modal-actions"'))
+      expect(html).toContain(SETUP_FAILED)
+      expect(buttons(html).find((b) => b.label === 'Create')!.attrs).not.toMatch(/disabled/)
+    })
   })
 })
