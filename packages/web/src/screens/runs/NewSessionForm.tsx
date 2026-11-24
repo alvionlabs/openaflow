@@ -185,7 +185,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
       {notice && (
         <div className="ns-workflow">
           <p className="ns-workflow-text">{notice.text}</p>
-          <button className="btn" type="button" disabled={busy} onClick={() => flow.useVersion(repoId, notice.name)}>
+          <button className="btn" type="button" disabled={busy} onClick={() => repo && flow.useVersion(repo, workflow)}>
             {posting === 'use' ? 'Updating…' : notice.use}
           </button>
         </div>
@@ -195,7 +195,7 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
           <p className="ns-workflow-text">
             Create <code className="mono">.openaflow/</code> in this repo?
           </p>
-          <button className="btn" type="button" disabled={busy} onClick={() => flow.setUp(repo.path)}>
+          <button className="btn" type="button" disabled={busy} onClick={() => flow.setUp(repo)}>
             {posting === 'setup' ? 'Setting up…' : 'Set up'}
           </button>
         </div>

@@ -297,18 +297,7 @@ describe('new session flow', () => {
     expect(workflowNotice(LEGACY(), BUNDLE)).toBeUndefined()
     expect(workflowNotice(undefined, BUNDLE)).toBeUndefined()
     // Only the first workflow whose source is claude-pod counts; one with no source or another source is skipped.
-    const many = withFiles({
-      '.openaflow/': '',
-      '.openaflow/workflows/a-other/': '',
-      '.openaflow/workflows/a-other/workflow.json': '{"source":"other","version":"9.9.9"}',
-      '.openaflow/workflows/b-nosource/': '',
-      '.openaflow/workflows/b-nosource/workflow.json': '{"version":"8.8.8"}',
-      '.openaflow/workflows/c-pod/': '',
-      '.openaflow/workflows/c-pod/workflow.json': '{"source":"claude-pod","version":"0.0.2"}',
-      '.openaflow/workflows/d-pod/': '',
-      '.openaflow/workflows/d-pod/workflow.json': '{"source":"claude-pod","version":"0.0.3"}',
-    })
-    expect(workflowNotice(many, BUNDLE)).toEqual({ text: 'This repo uses claude-pod 0.0.2; the app has 0.11.10', use: 'Use 0.11.10', name: 'c-pod' })
+    expect(workflowNotice(MANY(), BUNDLE)).toEqual({ text: 'This repo uses claude-pod 0.0.2; the app has 0.11.10', use: 'Use 0.11.10', name: 'c-pod' })
     // The first claude-pod workflow is current: no notice, even if a later one differs.
     const first = withFiles({
       '.openaflow/': '',
@@ -330,12 +319,17 @@ describe('new session flow', () => {
   it('use version', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { flow, post, reply, states } = setup()
-    flow.useVersion('notes', 'claude-pod')
+    // Nothing to use (same version, no bundle, no .openaflow/): no post.
+    flow.useVersion(SET_UP('0.11.10'), BUNDLE)
+    flow.useVersion(SET_UP('0.0.1'), undefined)
+    flow.useVersion(LEGACY(), BUNDLE)
+    expect(post).not.toHaveBeenCalled()
+    flow.useVersion(SET_UP('0.0.1'), BUNDLE)
     expect(post).toHaveBeenCalledWith('use-workflow-version', { repoId: 'notes', name: 'claude-pod' })
     expect(flow.state()).toEqual({ kind: 'posting', action: 'use' })
     // One post at a time: a second Use, a Set up, or a start while it is out posts nothing.
-    flow.useVersion('notes', 'claude-pod')
-    flow.setUp('/notes')
+    flow.useVersion(SET_UP('0.0.1'), BUNDLE)
+    flow.setUp(LEGACY())
     flow.start(input())
     expect(post).toHaveBeenCalledTimes(1)
     // Done: free again, with focus back in the text field (the Use button leaves with the next Board).
@@ -355,7 +349,7 @@ describe('new session flow', () => {
       [fail(500, 'HTTP 500'), 'Something went wrong. Please try again'],
     ]
     for (const [r, text] of words) {
-      flow.useVersion('notes', 'claude-pod')
+      flow.useVersion(SET_UP('0.0.1'), BUNDLE)
       expect(flow.state().kind).toBe('posting')
       await reply(r)
       expect(flow.state(), r.ok ? '' : r.message).toEqual({ kind: 'idle', error: text })
@@ -368,8 +362,13 @@ describe('new session flow', () => {
     const html = formHtml(SET_UP('0.0.1'), BUNDLE, flow)
     expect(html).toContain('Use 0.11.10')
     expect(html).toContain('Something went wrong. Please try again')
+    // The name is the mismatched workflow's, not the source's: the first claude-pod one.
+    const named = setup()
+    named.flow.useVersion(MANY(), BUNDLE)
+    expect(named.post).toHaveBeenCalledWith('use-workflow-version', { repoId: 'notes', name: 'c-pod' })
+    named.flow.dispose()
     // A late answer after the form left changes nothing.
-    flow.useVersion('notes', 'claude-pod')
+    flow.useVersion(SET_UP('0.0.1'), BUNDLE)
     flow.dispose()
     const before = states.length
     await reply({ ok: true, data: { outcome: 'updated', logged: true } } as never)
@@ -400,18 +399,22 @@ describe('new session flow', () => {
 
     // Set up posts setup-workflow with the repo's path; busy while it is out; done puts focus in the text field.
     const { flow, post, reply } = setup()
-    flow.setUp('/home/me/notes app')
+    // A set-up repo has no offer: no post.
+    flow.setUp(SET_UP())
+    expect(post).not.toHaveBeenCalled()
+    const spaced: BoardRepo = { ...NO_DOCS(), path: '/home/me/notes app' }
+    flow.setUp(spaced)
     expect(post).toHaveBeenCalledWith('setup-workflow', { path: '/home/me/notes app' })
     expect(flow.state()).toEqual({ kind: 'posting', action: 'setup' })
     const busy = formHtml(LEGACY(), BUNDLE, flow)
     expect(busy).toContain('Setting up…')
-    flow.setUp('/home/me/notes app')
+    flow.setUp(spaced)
     expect(post).toHaveBeenCalledTimes(1)
     await reply({ ok: true, data: { outcome: 'created', logged: true } } as never)
     expect(flow.state()).toEqual({ kind: 'idle', focusText: true })
     // While a session starts, Set up posts nothing.
     flow.start(input())
-    flow.setUp('/n')
+    flow.setUp(LEGACY())
     expect(post).toHaveBeenCalledTimes(2)
     await reply(ok())
     flow.dispose()
@@ -428,7 +431,7 @@ describe('new session flow', () => {
       [fail(403, RESTARTED), RELOAD],
     ]
     for (const [r, text] of words) {
-      s.flow.setUp('/n')
+      s.flow.setUp(LEGACY())
       await s.reply(r)
       expect(s.flow.state(), r.ok ? '' : r.message).toEqual({ kind: 'idle', error: text })
     }
@@ -465,6 +468,19 @@ const SET_UP = (version?: string) =>
     '.openaflow/workflows/claude-pod/': '',
     '.openaflow/workflows/claude-pod/workflow.json': JSON.stringify(version === undefined ? { source: 'claude-pod' } : { source: 'claude-pod', version }),
     '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 2\n',
+  })
+/** Four workflows: another source, no source, then two claude-pod ones; the first claude-pod one is c-pod. */
+const MANY = () =>
+  withFiles({
+    '.openaflow/': '',
+    '.openaflow/workflows/a-other/': '',
+    '.openaflow/workflows/a-other/workflow.json': '{"source":"other","version":"9.9.9"}',
+    '.openaflow/workflows/b-nosource/': '',
+    '.openaflow/workflows/b-nosource/workflow.json': '{"version":"8.8.8"}',
+    '.openaflow/workflows/c-pod/': '',
+    '.openaflow/workflows/c-pod/workflow.json': '{"source":"claude-pod","version":"0.0.2"}',
+    '.openaflow/workflows/d-pod/': '',
+    '.openaflow/workflows/d-pod/workflow.json': '{"source":"claude-pod","version":"0.0.3"}',
   })
 const LEGACY = () => withFiles({ 'pod-docs/README.md': '# pod docs\n\npod docs: 2\n' })
 const NO_DOCS = () => withFiles({})

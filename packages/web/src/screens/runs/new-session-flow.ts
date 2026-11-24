@@ -117,10 +117,10 @@ export type NewSessionFlow = {
   openSettings(): void
   /** The text changed: a field error no longer applies. */
   edit(): void
-  /** Use: sets the workflow `name`'s version to the app's. Posts once; ignored while busy. */
-  useVersion(repoId: string, name: string): void
-  /** Set up: creates `.openaflow/` in the repo at `path`. Posts once; ignored while busy. */
-  setUp(path: string): void
+  /** Use: sets the version of `repo`'s mismatched workflow (`workflowNotice`) to the bundle's. Posts once; ignored while busy or with no notice. */
+  useVersion(repo: BoardRepo, workflow: BundledWorkflow): void
+  /** Set up: creates `.openaflow/` at `repo`'s path. Posts once; ignored while busy or when the repo has no setup offer. */
+  setUp(repo: BoardRepo): void
   /** Drops any answer and the wait: the form left. */
   dispose(): void
 }
@@ -229,11 +229,12 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
       listed.set(repo.id, new Set((repo.hosted ?? []).map((s) => s.marker)))
       moveIfListed()
     },
-    useVersion(repoId, name) {
-      postWorkflow('use', 'use-workflow-version', { repoId, name })
+    useVersion(repo, workflow) {
+      const notice = workflowNotice(repo, workflow)
+      if (notice) postWorkflow('use', 'use-workflow-version', { repoId: repo.id, name: notice.name })
     },
-    setUp(path) {
-      postWorkflow('setup', 'setup-workflow', { path })
+    setUp(repo) {
+      if (setupOffer(repo)) postWorkflow('setup', 'setup-workflow', { path: repo.path })
     },
     openSettings: () => go(SETTINGS_HASH),
     edit() {
