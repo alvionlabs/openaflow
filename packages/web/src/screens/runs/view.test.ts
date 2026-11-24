@@ -212,11 +212,11 @@ describe('empty messages', () => {
       const message = emptyMessage(unsupported, { ...repoWith(undefined), model: buildRepoModel(files) })
       expect(message, JSON.stringify(files)).toBe(NO_STATE)
     }
-    expect(NO_STATE).toBe("This repo's workflow has no docs yet. Start a new session with init to create them.")
+    expect(NO_STATE).toBe("This repo's workflow has no docs yet. Start a New session with `init` to create them.")
     // A set-up repo with an old docs version: init updates them.
     const old = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 1\n' })
     expect(emptyMessage(unsupported, { ...repoWith(undefined), model: old })).toBe(
-      "This repo's workflow docs are version 1; OpenAFlow reads version 2. Start a new session with init to update them.",
+      "This repo's workflow docs are version 1; OpenAFlow reads version 2. Start a New session with `init` to update them.",
     )
     // A newer version than the app reads: the app's init is older than the docs, so update the app, never run init.
     const newer = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' })

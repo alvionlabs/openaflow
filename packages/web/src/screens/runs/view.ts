@@ -123,7 +123,7 @@ export function rowFigures(row: LogRow): string {
 export const NO_WORKFLOW = "This repo has no workflow yet. Set it up to use the app's claude-pod."
 
 /** A set-up repo with no readable docs (a bare `.openaflow/`, or a workflow with no state yet): New session runs init. */
-export const NO_STATE = "This repo's workflow has no docs yet. Start a new session with init to create them."
+export const NO_STATE = "This repo's workflow has no docs yet. Start a New session with `init` to create them."
 
 /** Why a run has no pipeline, and what to do about it. `repo` gives an unsupported repo's docs version and its `.openaflow/`. */
 export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
@@ -136,7 +136,7 @@ export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
       if (version === undefined) return NO_STATE
       // Newer docs than the app reads: the app's init is older, so only a newer app helps.
       if (version > SUPPORTED_DOCS_VERSION) return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Update OpenAFlow to read them.`
-      return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a new session with init to update them.`
+      return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a New session with \`init\` to update them.`
     }
     if (version !== undefined) return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
     return NO_WORKFLOW
