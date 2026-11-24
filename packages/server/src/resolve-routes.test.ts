@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseQueue, type Board, type NewActionEntry, type ResolveResult } from '@openaflow/model'
@@ -50,7 +50,7 @@ let root: string
 let repoPath: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'openaflow-resolve-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'openaflow-resolve-')))
   repoPath = join(root, 'repos', 'r')
   await mkdir(join(repoPath, 'pod-docs', 'plans', 'archive'), { recursive: true })
   await writeFile(join(repoPath, 'pod-docs', 'README.md'), '# pod docs\n\npod docs: 2\n')

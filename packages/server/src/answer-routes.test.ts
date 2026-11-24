@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AnswerResult, Board, NewActionEntry } from '@openaflow/model'
@@ -51,7 +51,7 @@ async function makeRepo(path: string, plan: string, queue: string[]) {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'openaflow-a1-routes-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'openaflow-a1-routes-')))
   repoPath = join(root, 'repos', 'r')
   claimedPath = join(root, 'repos', 'c')
   await makeRepo(repoPath, 'alpha', [HALT, NOTE, DONE, ANSWERED, TO_POD, TO_POD_BLOCKED, ASK])
