@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -165,12 +165,45 @@ describe('add repo route', () => {
     const events = await app.request('/api/events', { headers: HOST })
     const res = await post(JSON.stringify({ path: repo + '/' }))
     expect(res.status).toBe(201)
-    expect(await res.json()).toEqual({ path: normalizeRepoPath(repo, platform) })
+    expect(await res.json()).toEqual({ path: normalizeRepoPath(repo, platform), openaflow: false })
     const text = await readUntil(events, (t) => boardEvents(t).some((b) => b.repos.length === 1))
     expect(boardEvents(text).at(-1)!.repos[0]!.path).toBe(normalizeRepoPath(repo, platform))
     // The board route has it at once too.
     const board = (await (await app.request('/api/board', { headers: HOST })).json()) as Board
     expect(board.repos.map((r) => r.source)).toEqual(['registered'])
+  })
+
+  test('add repo reports openaflow', async () => {
+    // `.openaflow` as anything counts: a folder, a file, or a link whose target is gone.
+    const cases: [string, (repo: string) => Promise<void>, boolean][] = [
+      ['none', async () => {}, false],
+      ['folder', (repo) => mkdir(join(repo, '.openaflow')), true],
+      ['file', (repo) => writeFile(join(repo, '.openaflow'), ''), true],
+      ['dangling link', (repo) => symlink(join(root, 'gone'), join(repo, '.openaflow'), process.platform === 'win32' ? 'junction' : 'dir'), true],
+      // A name that only starts the same is not it.
+      ['look-alike', (repo) => mkdir(join(repo, '.openaflow.tmp-1a2b')), false],
+    ]
+    for (const [name, make, openaflow] of cases) {
+      const repo = join(root, `repo-${name.replace(' ', '-')}`)
+      await mkdir(repo)
+      await make(repo)
+      const res = await post(JSON.stringify({ path: repo }))
+      expect(res.status, name).toBe(201)
+      expect(await res.json(), name).toEqual({ path: normalizeRepoPath(repo, platform), openaflow })
+    }
+  })
+
+  test('add repo: a folder whose names cannot be read reports openaflow true, so no setup is offered', async (ctx) => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) ctx.skip('needs POSIX modes and a non-root user')
+    const repo = join(root, 'repo-locked')
+    await mkdir(repo)
+    await chmod(repo, 0o600)
+    try {
+      const res = await post(JSON.stringify({ path: repo }))
+      expect(await res.json()).toEqual({ path: normalizeRepoPath(repo, platform), openaflow: true })
+    } finally {
+      await chmod(repo, 0o700)
+    }
   })
 
   test('a charset on the JSON content type is fine', async () => {
