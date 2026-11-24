@@ -1,7 +1,7 @@
 // What `pnpm package` asks electron-builder for. The rules are in pod-docs/sprints/installer-and-updates.md and
 // pod-docs/feature-details/desktop.md. No `electron` import: this runs under Node.
 
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Configuration } from 'electron-builder'
@@ -34,6 +34,14 @@ export function packageTarget(platform: NodeJS.Platform): PackageTarget {
   if (platform === 'linux') return { platform, target: 'AppImage' }
   throw new Error(`pnpm package builds on Windows and Linux only, not ${platform}`)
 }
+
+/** `pnpm package` stops here, before electron-builder, when the workflow build has not run. */
+export function requireWorkflowDist(dir: string): void {
+  if (!existsSync(dir)) throw new Error('run pnpm build first: packages/workflow/dist/claude-pod is missing')
+}
+
+/** The workflow plugin's files: dot folders (`.claude-plugin`, the template's `.openaflow`) are kept on purpose. */
+const WORKFLOW_FILTER = ['**/*', '**/.*', '**/.*/**/*']
 
 export type BuildOptions = {
   /** The generated THIRD-PARTY-NOTICES.txt. */
@@ -102,6 +110,8 @@ export function buildConfig(o: BuildOptions): Configuration {
       { from: o.nodePtyDir ?? realpathSync.native(NODE_PTY_LINK), to: 'pty-host/node_modules/node-pty', filter: nodePtyFilter(platform) },
       // Outside the asar: claude reads the plugin folder, and runs its script, by path.
       { from: '../hooks-plugin/plugin', to: 'hooks-plugin' },
+      // Outside the asar: claude reads the plugin folder by path (--plugin-dir). Built by `pnpm build` (packages/workflow).
+      { from: '../workflow/dist/claude-pod', to: 'workflows/claude-pod', filter: WORKFLOW_FILTER },
     ],
     npmRebuild: false,
     nodeGypRebuild: false,

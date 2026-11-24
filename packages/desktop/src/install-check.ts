@@ -442,11 +442,25 @@ const PACKAGED_PARTS = [
   'hooks-plugin/.claude-plugin/plugin.json',
   'hooks-plugin/hooks/hooks.json',
   'hooks-plugin/scripts/record.sh',
+  'workflows/claude-pod/.claude-plugin/plugin.json',
+  'workflows/claude-pod/LICENSE',
+  'workflows/claude-pod/skills/init/scaffold/.openaflow/workflows/claude-pod/state/README.md',
 ]
 
 /** Each part of PACKAGED_PARTS that the resources folder lacks. */
 export function missingParts(resources: string): string[] {
   return PACKAGED_PARTS.filter((part) => !existsSync(join(resources, part)))
+}
+
+/** Throws, naming each file under `<resources>/workflows` whose path or text holds `pod-docs`. The build renames them all. */
+export function checkNoPodDocs(resources: string): void {
+  const root = join(resources, 'workflows')
+  if (!existsSync(root)) return
+  const bad = readdirSync(root, { withFileTypes: true, recursive: true })
+    .map((entry) => ({ entry, rel: relative(root, join(entry.parentPath, entry.name)) }))
+    .filter(({ entry, rel }) => rel.includes('pod-docs') || (entry.isFile() && readFileSync(join(root, rel)).includes('pod-docs')))
+    .map(({ rel }) => rel)
+  if (bad.length > 0) throw new Error(`pod-docs is left in resources/workflows: ${bad.join(', ')}`)
 }
 
 /**

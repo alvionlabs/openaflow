@@ -3,8 +3,8 @@ import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { appImageName, buildConfig, builderOptions, checkVersion, EXE_NAME, LINUX_UPDATE_FILE, packageTarget, parsePackageArgs, UPDATER_CACHE_DIR } from './build-config.ts'
-import { hooksPluginDir } from './pty-host-launch.ts'
+import { appImageName, buildConfig, builderOptions, checkVersion, EXE_NAME, LINUX_UPDATE_FILE, packageTarget, parsePackageArgs, requireWorkflowDist, UPDATER_CACHE_DIR } from './build-config.ts'
+import { hooksPluginDir, workflowsRoot } from './pty-host-launch.ts'
 import { CONFIG_DIR_NAME } from '@openaflow/server/config'
 import { APP_ID, APP_NAME } from './shell-config.ts'
 import { RELEASES_URL } from './update-flow.ts'
@@ -134,6 +134,27 @@ describe('electron-builder config', () => {
     const dir = join(pkg, '..', 'hooks-plugin', 'plugin')
     expect(readdirSync(join(dir, 'hooks'))).toContain('hooks.json')
     expect(readdirSync(join(dir, 'scripts'))).toContain('record.sh')
+  })
+
+  test('ships the workflow', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const c = config({ platform })
+      const flow = (c.extraResources as { from: string; to: string; filter?: string[] }[]).find((r) => r.to === 'workflows/claude-pod')
+      expect(flow, platform).toMatchObject({ from: '../workflow/dist/claude-pod', to: 'workflows/claude-pod' })
+      // Dot folders (.claude-plugin, the template's .openaflow) must be kept.
+      expect(flow!.filter, platform).toEqual(expect.arrayContaining(['**/*', '**/.*', '**/.*/**/*']))
+      expect(flow!.filter!.some((f) => f.startsWith('!')), platform).toBe(false)
+      expect(c.files, platform).not.toContainEqual(expect.stringContaining('workflow'))
+      expect(workflowsRoot({ packaged: true, appPath: 'unused', resourcesPath: join('R', 'resources') })).toBe(join('R', 'resources', 'workflows'))
+      expect(join(pkg, flow!.from)).toBe(join(workflowsRoot({ packaged: false, appPath: pkg, resourcesPath: 'unused' }), 'claude-pod'))
+    }
+  })
+
+  test('requireWorkflowDist stops with the pnpm build message when the folder is missing', () => {
+    const dist = join(pkg, '..', 'workflow', 'dist', 'claude-pod')
+    expect(() => requireWorkflowDist(join(pkg, 'no-such-folder'))).toThrow('run pnpm build first: packages/workflow/dist/claude-pod is missing')
+    expect(() => requireWorkflowDist(pkg)).not.toThrow()
+    expect(dist).toContain('claude-pod')
   })
 
   test('artifact names have no spaces', () => {

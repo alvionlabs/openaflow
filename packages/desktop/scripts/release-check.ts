@@ -12,6 +12,7 @@ import { extractFile } from '@electron/asar'
 import { LINUX_UPDATE_FILE } from '../src/build-config.ts'
 import {
   appImagePlace,
+  checkNoPodDocs,
   endAppImage,
   finishProof,
   launch,
@@ -101,6 +102,7 @@ async function startAppImage(file: string): Promise<void> {
       const missing = missingParts(resources)
       if (missing.length > 0) throw new Error(`the AppImage lacks ${missing.join(', ')}`)
     })
+    await step('pod-docs', () => checkNoPodDocs(resources))
     pid = (await step('launch', () => launchAppImage(file, place))).pid
     await step('health', () => waitForHealth(place, HEALTH_MS))
   } catch (err) {

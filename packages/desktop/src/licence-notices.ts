@@ -56,6 +56,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
   '@xterm/addon-serialize': XTERM_LICENCE,
 }
 
+/** claude-pod's entry in the notices: its name and version from plugin.json, and its LICENSE (MIT). `dir` is `dist/claude-pod`. */
+export function workflowNotice(dir: string): NoticeExtra {
+  if (!existsSync(dir)) throw new Error('run pnpm build first: packages/workflow/dist/claude-pod is missing')
+  const manifest = join(dir, '.claude-plugin', 'plugin.json')
+  if (!existsSync(manifest)) throw new Error(`${manifest} is missing: run pnpm build first`)
+  const { version } = JSON.parse(readFileSync(manifest, 'utf8')) as { version?: unknown }
+  if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error(`${manifest} has no valid version`)
+  const licence = join(dir, 'LICENSE')
+  if (!existsSync(licence)) throw new Error(`${licence} is missing: the notices need the LICENSE of claude-pod`)
+  return { title: `claude-pod ${version}`, text: readFileSync(licence, 'utf8').trim() }
+}
+
 const readManifest = (root: string) => JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Manifest
 
 /** The package folder of each input under node_modules. Only `inputs` are in the bundle. */
