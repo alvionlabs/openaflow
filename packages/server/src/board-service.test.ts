@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createBoardService, finalPrBranches, livePrNumbers, type BoardServiceDeps } from './board-service.ts'
 import { createGhReader, PR_CACHE_MS, type GhExec, type GhReader, type GhStatus, type PrStatus } from './gh.ts'
 import { normalizeRepoPath, repoId } from './guard.ts'
+import { blocksSideload } from './managed-settings.ts'
 import { createHookReader, createSessionStore, type StoredSession } from './session-store.ts'
 import { projectDirName } from './transcript-files.ts'
 import { boardSignature, createBoardWatcher } from './watcher.ts'
@@ -227,6 +228,139 @@ describe('board service', () => {
     expect((await service.build()).repos.find((r) => r.name === 'a')!.hosted![0]!.hooked).toBe(true)
     // With no store, no repo has the field.
     expect((await createBoardService(deps()).build()).repos.every((r) => !('hosted' in r))).toBe(true)
+  })
+
+  test('board workflow', async () => {
+    const a = copyFixture('a')
+    await register(a)
+    const bundle = { source: 'claude-pod' as const, version: '0.11.10', dir: '/opt/w/claude-pod', template: '/opt/w/claude-pod/t' }
+    let current: typeof bundle | undefined = bundle
+    const service = createBoardService({ ...deps(), workflow: () => current })
+    // The bundle's source and version only: never its folders.
+    const board = await service.build()
+    expect(board.workflow).toEqual({ source: 'claude-pod', version: '0.11.10' })
+    expect(JSON.stringify(board)).not.toContain('/opt/w')
+    // No bundle: no field. Read at each build.
+    current = undefined
+    expect(await service.build()).not.toHaveProperty('workflow')
+    // No dep: no field.
+    expect(await createBoardService(deps()).build()).not.toHaveProperty('workflow')
+  })
+
+  describe('sideload', () => {
+    const M1 = '11111111-1111-4111-8111-111111111111'
+    const M2 = '22222222-2222-4222-8222-222222222222'
+    const M3 = '33333333-3333-4333-8333-333333333333'
+    const S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const ENDED = { state: 'ended', exitCode: 1, endedAt: 2500 } as const
+    let a: string
+    let hooks: string
+    let sessionsFile: string
+    const rec = (marker: string, over: Partial<StoredSession> = {}): StoredSession => ({
+      marker,
+      repoPath: normalizeRepoPath(a, platform),
+      sessionId: S,
+      skill: 'plan',
+      startedAt: 1000,
+      state: 'live',
+      pid: 5,
+      ...over,
+    })
+    const hookLine = (marker: string, event: string) =>
+      appendFile(join(hooks, `${marker}.jsonl`), JSON.stringify({ v: 1, at: 1, payload: { hook_event_name: event, session_id: S, source: 'startup' } }) + '\n')
+    /** The managed settings file the real reader reads: `text`, or none. */
+    const managed = async (text: string | undefined) => {
+      const file = join(root, 'managed-settings.json')
+      await rm(file, { recursive: true, force: true })
+      if (text !== undefined) await writeFile(file, text)
+      return () => blocksSideload(file)
+    }
+    const ON = JSON.stringify({ disableSideloadFlags: true })
+    /** A service over `records`, with a managed settings reader (the real one over a file that turns sideloading off by default), and a count of its reads. */
+    const serviceOf = async (records: StoredSession[], read?: () => Promise<boolean>) => {
+      const blocks = read ?? (await managed(ON))
+      await writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: records }))
+      const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
+      const reads = { n: 0 }
+      const service = createBoardService({
+        ...deps(),
+        hosted: { list: store.list, hooks: createHookReader(hooks) },
+        sideload: () => {
+          reads.n++
+          return blocks()
+        },
+      })
+      const hosted = async () => (await service.build()).repos.find((r) => r.name === 'a')!.hosted!
+      return { service, reads, hosted }
+    }
+
+    beforeEach(async () => {
+      a = copyFixture('a')
+      await register(a)
+      hooks = join(root, 'config', 'hooks')
+      sessionsFile = join(root, 'config', 'sessions.json')
+      await mkdir(hooks, { recursive: true })
+    })
+
+    test('sideload blocked', async () => {
+      // Two ended sessions that never hooked or prompted: both blocked, from one read.
+      const s = await serviceOf([rec(M1, { ...ENDED }), rec(M2, { ...ENDED, startedAt: 2000 })])
+      const hosted = await s.hosted()
+      expect(hosted.map((h) => [h.marker, h.blocked])).toEqual([
+        [M1, 'sideload'],
+        [M2, 'sideload'],
+      ])
+      expect(s.reads.n).toBe(1)
+      // Read again at each build: a fixed file clears it.
+      await managed(JSON.stringify({ disableSideloadFlags: false }))
+      expect((await s.hosted()).map((h) => h.blocked)).toEqual([undefined, undefined])
+      expect(s.reads.n).toBe(2)
+    })
+
+    test('sideload edges', async () => {
+      // A missing, invalid, or false setting: no blocked.
+      for (const text of [undefined, '{', 'null', JSON.stringify({ disableSideloadFlags: false }), JSON.stringify({ disableSideloadFlags: 'true' })]) {
+        const no = await serviceOf([rec(M1, { ...ENDED })], await managed(text))
+        expect((await no.hosted())[0], String(text)).not.toHaveProperty('blocked')
+        expect(no.reads.n, String(text)).toBe(1)
+      }
+      // A reader that throws counts as no.
+      const throws = await serviceOf([rec(M1, { ...ENDED })], async () => Promise.reject(new Error('EACCES')))
+      expect((await throws.hosted())[0]).not.toHaveProperty('blocked')
+
+      // A live, starting, or stopped session, or an ended one that hooked or prompted: no blocked, and no read.
+      await hookLine(M2, 'SessionStart')
+      await hookLine(M3, 'UserPromptSubmit')
+      const none = await serviceOf([
+        rec('44444444-4444-4444-8444-444444444444'),
+        rec('55555555-5555-4555-8555-555555555555', { state: 'starting' }),
+        rec('66666666-6666-4666-8666-666666666666', { state: 'stopped', stopReason: 'app closed' }),
+        rec(M2, { ...ENDED }),
+        rec(M3, { ...ENDED }),
+      ])
+      const hosted = await none.hosted()
+      expect(hosted).toHaveLength(5)
+      for (const h of hosted) expect(h, h.marker).not.toHaveProperty('blocked')
+      expect(none.reads.n).toBe(0)
+
+      // With one that qualifies among them: only that one, from one read.
+      const mixed = await serviceOf([rec(M1, { ...ENDED }), rec(M2, { ...ENDED }), rec(M3, { ...ENDED, startedAt: 3000 })])
+      expect((await mixed.hosted()).map((h) => [h.marker, h.blocked])).toEqual([
+        [M1, 'sideload'],
+        [M2, undefined],
+        [M3, undefined],
+      ])
+      expect(mixed.reads.n).toBe(1)
+
+      // No sessions, or no dep: no read and no field.
+      const empty = await serviceOf([])
+      await empty.service.build()
+      expect(empty.reads.n).toBe(0)
+      await writeFile(sessionsFile, JSON.stringify({ v: 1, sessions: [rec(M1, { ...ENDED })] }))
+      const store = createSessionStore({ file: sessionsFile, writable: false, now: () => NOW, log: () => {} })
+      const plain = await createBoardService({ ...deps(), hosted: { list: store.list, hooks: createHookReader(hooks) } }).build()
+      expect(plain.repos[0]!.hosted![0]).not.toHaveProperty('blocked')
+    })
   })
 
   test('resume check', async () => {

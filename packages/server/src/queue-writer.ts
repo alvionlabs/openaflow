@@ -1,11 +1,11 @@
-// The one file the board writes in a repo: one line of `pod-docs/handoff-queue.md`, either an answer
+// The one file the board writes in a repo: one line of `<stateDir>/handoff-queue.md`, either an answer
 // appended to it or (Close and Keep) its `**Resolution:** pending` rewritten. Every other byte of the
 // file stays as it was. The rules and why are in pod-docs/feature-details/actions.md.
 
 import { randomBytes } from 'node:crypto'
 import { readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
-import { cleanAnswer, withAnswer, withResolution, type AnswerOutcome } from '@openaflow/model'
+import { cleanAnswer, WORKFLOW_NAME, withAnswer, withResolution, type AnswerOutcome } from '@openaflow/model'
 
 /** The file calls the writer makes. Injectable so tests can fake a symlink or a held file on any OS. */
 export type QueueFs = {
@@ -28,7 +28,16 @@ export const nodeQueueFs: QueueFs = {
 export type WriteAnswer = { outcome: AnswerOutcome; message?: string }
 export type WriteResolution = { outcome: 'resolved' | 'changed' | 'failed'; message?: string }
 
-export const QUEUE_FILE = 'pod-docs/handoff-queue.md'
+export const QUEUE_NAME = 'handoff-queue.md'
+const LEGACY_STATE = 'pod-docs'
+const STATE_DIR = /^\.openaflow\/workflows\/([^/]+)\/state$/
+
+/** `pod-docs`, or `.openaflow/workflows/<name>/state` with a valid name: the only folders the board writes in. */
+export function isStateDir(stateDir: string): boolean {
+  if (stateDir === LEGACY_STATE) return true
+  const name = STATE_DIR.exec(stateDir)?.[1]
+  return name !== undefined && WORKFLOW_NAME.test(name)
+}
 const RENAME_RETRIES = 3
 const RETRY_MS = 100
 
@@ -37,16 +46,18 @@ const MISSING = { outcome: 'changed', message: 'The queue file is missing.' } as
 const TWICE = { outcome: 'changed', message: 'Two entries read the same. Answer it in the chat.' } as const
 const MOVED = { outcome: 'changed', message: 'The queue changed while saving. Look again.' } as const
 const OUTSIDE = { outcome: 'failed', message: 'queue file is outside the repo' } as const
+const BAD_STATE = { outcome: 'failed', message: 'bad state folder' } as const
 const failed = (err: unknown) => ({ outcome: 'failed', message: `Couldn't write the queue (${codeOf(err) ?? 'unknown'}).` }) as const
 
 /**
- * Appends the answer to the queue line whose trim is `line`. A missing file is never created; a queue whose
+ * Appends the answer to the line whose trim is `line` in `<stateDir>/handoff-queue.md`. A `stateDir` of another
+ * shape fails before any file call. A missing file is never created; a queue whose
  * real path leaves the repo is never touched. The new file goes down beside the real one and is renamed over it.
  */
-export async function writeAnswer(req: { repoPath: string; line: string; text: string }, fs: QueueFs = nodeQueueFs): Promise<WriteAnswer> {
+export async function writeAnswer(req: { repoPath: string; stateDir: string; line: string; text: string }, fs: QueueFs = nodeQueueFs): Promise<WriteAnswer> {
   const clean = cleanAnswer(req.text)
   if (!clean.ok) return { outcome: 'failed', message: clean.error }
-  const r = await writeLine(req.repoPath, req.line, (raw) => answered(raw, clean.text), fs)
+  const r = await writeLine(req.repoPath, req.stateDir, req.line, (raw) => answered(raw, clean.text), fs)
   return r.outcome === 'written' ? { outcome: 'answered' } : r
 }
 
@@ -54,24 +65,25 @@ export async function writeAnswer(req: { repoPath: string; line: string; text: s
  * Rewrites the `**Resolution:** pending` of the queue line whose trim is `line` to `**Resolution:** <text>`
  * (Close and Keep), with the answer's guards. A line that no longer reads as pending is `changed`.
  */
-export async function writeResolution(req: { repoPath: string; line: string; text: string }, fs: QueueFs = nodeQueueFs): Promise<WriteResolution> {
+export async function writeResolution(req: { repoPath: string; stateDir: string; line: string; text: string }, fs: QueueFs = nodeQueueFs): Promise<WriteResolution> {
   const clean = cleanAnswer(req.text)
   if (!clean.ok) return { outcome: 'failed', message: clean.error }
-  const r = await writeLine(req.repoPath, req.line, (raw) => resolved(raw, clean.text), fs)
+  const r = await writeLine(req.repoPath, req.stateDir, req.line, (raw) => resolved(raw, clean.text), fs)
   return r.outcome === 'written' ? { outcome: 'resolved' } : r
 }
 
 type Written = { outcome: 'written' } | { outcome: 'changed' | 'failed'; message: string }
 
 /** The shared write: one line through `edit` (undefined: the line doesn't read as expected), renamed over the file. */
-async function writeLine(repoPath: string, line: string, edit: (raw: string) => string | undefined, fs: QueueFs): Promise<Written> {
+async function writeLine(repoPath: string, stateDir: string, line: string, edit: (raw: string) => string | undefined, fs: QueueFs): Promise<Written> {
+  if (!isStateDir(stateDir)) return BAD_STATE
   const req = { repoPath, line }
 
   let repo: string
   let file: string
   try {
     repo = await fs.realpath(req.repoPath)
-    file = await fs.realpath(join(req.repoPath, QUEUE_FILE))
+    file = await fs.realpath(join(req.repoPath, stateDir, QUEUE_NAME))
   } catch (err) {
     return codeOf(err) === 'ENOENT' || codeOf(err) === 'ENOTDIR' ? MISSING : failed(err)
   }

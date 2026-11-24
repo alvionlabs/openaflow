@@ -10,7 +10,8 @@ import { UUID_V4 } from './session-command.ts'
 const WIN = process.platform === 'win32'
 const MARKER = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d'
 const ON: ScopeProbe = { on: true, systemdRun: '/usr/bin/systemd-run', systemctl: '/usr/bin/systemctl' }
-const CMD = { program: '/home/me/.local/bin/claude', args: ['--resume', 'x y', '--plugin-dir', '/opt/hooks plugin'] }
+// A set-up repo's resume: both plugin folders, one with a space, pass through the wrapper whole.
+const CMD = { program: '/home/me/.local/bin/claude', args: ['--resume', 'x y', '--plugin-dir', '/opt/hooks plugin', '--plugin-dir', '/opt/workflows/claude-pod'] }
 
 const alive = (pid: number): boolean => {
   try {
@@ -53,7 +54,7 @@ describe('wrapper and probe', () => {
     expect(w.stop!.length).toBeLessThanOrEqual(32)
     for (const s of w.stop!) expect(s.length).toBeLessThanOrEqual(1024)
     expect(w.stop![0]!.startsWith('/')).toBe(true)
-    expect(CMD.args).toHaveLength(4) // the input is left alone
+    expect(CMD.args).toHaveLength(6) // the input is left alone
   })
 
   test('off: the command as it is, with no stop', () => {
