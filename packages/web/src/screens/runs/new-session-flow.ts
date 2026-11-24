@@ -1,9 +1,19 @@
 // New session (sprint terminal-tab §5 and §7): the form's words, and the flow that posts `new-session`, waits for the
 // Board to list the new session's marker (at most MARKER_WAIT_MS), then goes to the repo row and asks for its Terminal
 // tab. Also the "type it yourself" lines, kept by marker for the page's life. Pure but for its timer; NewSessionForm.tsx
-// is the glue.
+// is the glue. Sprint default-workflow §9 adds the workflow's lines: the version line, the mismatch notice with Use, and
+// the setup offer with Set up. Use and Set up post through the same flow, so only one post is out at a time.
 
-import { SKILLS, type BoardRepo, type HostedSession, type NewSessionResult, type SkillId } from '@openaflow/model'
+import {
+  SKILLS,
+  type Board,
+  type BoardRepo,
+  type HostedSession,
+  type NewSessionResult,
+  type SetupWorkflowResult,
+  type SkillId,
+  type UseWorkflowVersionResult,
+} from '@openaflow/model'
 import { postAction, UNREACHABLE, type ActionReply } from '../../actions-client.ts'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import type { ListboxItem } from '../../components/listbox.ts'
@@ -33,8 +43,29 @@ export const START_ERRORS: ReadonlyMap<string, string> = new Map([
   ['session starting', 'A session is already starting in this repo'],
   ['too many sessions', 'Ten sessions are open. End one, then try again'],
   ['terminals unavailable', "The terminals didn't answer. Please try again"],
+  ['workflow missing', "The app doesn't have this repo's workflow. Please reinstall it"],
   [UNREACHABLE, "Can't reach the board. Please try again"],
 ])
+
+/**
+ * Set up's words: the same as Add repo's confirm (A1), so the app reads the same everywhere. `setup failed: <code>` is
+ * matched by its start. Any other word, `not a repo` and an unreachable server too, shows the try-again text.
+ */
+export const SETUP_ERRORS: ReadonlyMap<string, string> = new Map([
+  ['already set up', 'This repo already has a .openaflow file or folder'],
+  ['workflow missing', 'The app has no workflow to set up. Please reinstall it'],
+  ['setup in progress', 'Setup is already running. Please wait'],
+])
+const SETUP_FAILED: readonly [string, string] = ['setup failed:', 'Setup failed. Please try again']
+
+/** Use's words. `update failed: <code>` is matched by its start; any other word shows the try-again text. */
+export const USE_ERRORS: ReadonlyMap<string, string> = new Map([
+  ['already current', "This repo already uses the app's version"],
+  ['workflow missing', 'The app has no workflow to use. Please reinstall it'],
+  ['not a workflow', "This workflow isn't on the board anymore"],
+  ['workflow.json unreadable', "Can't read this repo's workflow.json"],
+])
+const USE_FAILED: readonly [string, string] = ['update failed:', 'Update failed. Please try again']
 const START_FAILED = "The session didn't start. Please try again"
 /** The title over a wrapper error's lines. */
 export const START_FAILED_TITLE = "The session didn't start"
@@ -67,9 +98,11 @@ export type NewSessionInput = { repoId: string; skill: SkillId; text: string }
  * the Board lists `marker`. The button is off while `starting` or `waiting`.
  */
 export type NewSessionState =
-  | { kind: 'idle'; fieldError?: string; error?: string; wrapper?: WrapperError; note?: string; done?: true }
+  | { kind: 'idle'; fieldError?: string; error?: string; wrapper?: WrapperError; note?: string; done?: true; focusText?: true }
   | { kind: 'starting'; input: NewSessionInput }
   | { kind: 'waiting'; repoId: string; marker: string }
+  /** Use or Set up is out. `focusText` on the idle state after it: its button leaves with the next Board, so focus goes to the text field. */
+  | { kind: 'posting'; action: 'use' | 'setup' }
 
 export const isBusy = (s: NewSessionState) => s.kind !== 'idle'
 
@@ -83,6 +116,10 @@ export type NewSessionFlow = {
   openSettings(): void
   /** The text changed: a field error no longer applies. */
   edit(): void
+  /** Use: sets the workflow `name`'s version to the app's. Posts once; ignored while busy. */
+  useVersion(repoId: string, name: string): void
+  /** Set up: creates `.openaflow/` in the repo at `path`. Posts once; ignored while busy. */
+  setUp(path: string): void
   /** Drops any answer and the wait: the form left. */
   dispose(): void
 }
@@ -105,6 +142,16 @@ function boxError(reply: { status: number; message: string }): string {
   }
   warnUnknown('new session', START_ERRORS, reply)
   return refusalText(START_ERRORS, reply.message)
+}
+
+/** A Use or Set up refusal as the box's words; the exact cause of a try-again or a failed write goes to the console. */
+function workflowError(action: string, errors: ReadonlyMap<string, string>, failed: readonly [string, string], reply: { status: number; message: string }): string {
+  if (reply.message.startsWith(failed[0])) {
+    console.warn(`openaflow: ${action} failed (HTTP ${reply.status}: ${reply.message})`)
+    return failed[1]
+  }
+  warnUnknown(action, errors, reply)
+  return refusalText(errors, reply.message)
 }
 
 export function createNewSessionFlow(onChange: (s: NewSessionState) => void, deps: NewSessionDeps = {}): NewSessionFlow {
@@ -153,6 +200,19 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
     moveIfListed()
   }
 
+  const postWorkflow = (action: 'use' | 'setup', path: string, body: object) => {
+    if (isBusy(state)) return
+    const mine = ++seq
+    set({ kind: 'posting', action })
+    void post<UseWorkflowVersionResult | SetupWorkflowResult>(path, body).then((reply) => {
+      if (mine !== seq || state.kind !== 'posting') return
+      if (reply.ok) return set({ kind: 'idle', focusText: true })
+      const error =
+        action === 'use' ? workflowError('use workflow version', USE_ERRORS, USE_FAILED, reply) : workflowError('set up workflow', SETUP_ERRORS, SETUP_FAILED, reply)
+      set({ kind: 'idle', error })
+    })
+  }
+
   return {
     state: () => state,
     start(input) {
@@ -167,6 +227,12 @@ export function createNewSessionFlow(onChange: (s: NewSessionState) => void, dep
       if (!repo) return
       listed.set(repo.id, new Set((repo.hosted ?? []).map((s) => s.marker)))
       moveIfListed()
+    },
+    useVersion(repoId, name) {
+      postWorkflow('use', 'use-workflow-version', { repoId, name })
+    },
+    setUp(path) {
+      postWorkflow('setup', 'setup-workflow', { path })
     },
     openSettings: () => go(SETTINGS_HASH),
     edit() {
@@ -214,9 +280,9 @@ export function createTypedLines(): TypedLines {
 /** The page's own lines: the form and the card on the repo row share them. */
 export const TYPED: TypedLines = createTypedLines()
 
-/** The "Start with" options: the skills in order, Plain session after a divider. */
+/** The "Start with" options: the skills in order, Plain session after a divider. Each shows its bare name, not its command. */
 export function skillItems(): ListboxItem[] {
-  const option = (s: (typeof SKILLS)[number]): ListboxItem => ({ kind: 'option', value: s.id, label: s.label, ...(s.command ? { command: s.command } : {}), line: s.line })
+  const option = (s: (typeof SKILLS)[number]): ListboxItem => ({ kind: 'option', value: s.id, label: s.label, ...(s.name ? { command: s.name } : {}), line: s.line })
   const pod = SKILLS.filter((s) => s.command !== undefined).map(option)
   const plain = SKILLS.filter((s) => s.command === undefined).map(option)
   return [...pod, { kind: 'divider' }, ...plain]
@@ -230,3 +296,32 @@ export function menuRepo(repo: BoardRepo | undefined, bridge: TerminalBridge | u
   if (!bridge || !repo || repo.error !== undefined || !repo.model.docs.supported) return undefined
   return repo
 }
+
+/** The bundle as the Board carries it: absent with no bundle. */
+export type BundledWorkflow = Board['workflow']
+
+/** The muted line under New session: only for a set-up repo, and only when the app has a bundle. */
+export function versionLine(repo: BoardRepo | undefined, workflow: BundledWorkflow): string | undefined {
+  if (!repo?.model.openaflow || !workflow) return undefined
+  return `Workflow: claude-pod ${workflow.version}`
+}
+
+/** The mismatch line and its Use button; `name` is the workflow Use rewrites. */
+export type WorkflowNotice = { text: string; use: string; name: string }
+
+/**
+ * The mismatch notice: the repo's first workflow whose source is `claude-pod` pins a version that differs from the
+ * bundle's. None for an unset version, the same version, no bundle, or a repo without `.openaflow/`. It never blocks a start.
+ */
+export function workflowNotice(repo: BoardRepo | undefined, workflow: BundledWorkflow): WorkflowNotice | undefined {
+  if (!repo?.model.openaflow || !workflow) return undefined
+  const first = repo.model.workflows?.find((w) => w.source === 'claude-pod')
+  if (first?.version === undefined || first.version === workflow.version) return undefined
+  return { text: `This repo uses claude-pod ${first.version}; the app has ${workflow.version}`, use: `Use ${workflow.version}`, name: first.name }
+}
+
+/** The setup offer's words; the form shows `.openaflow/` in mono. */
+export const SETUP_OFFER = 'Create .openaflow/ in this repo?'
+
+/** The setup offer shows for a repo without `.openaflow/`, with docs or not. New session stays on beside it. */
+export const setupOffer = (repo: BoardRepo | undefined): boolean => repo !== undefined && repo.model.openaflow !== true

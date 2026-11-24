@@ -1,17 +1,35 @@
 // The New session form (sprint terminal-tab N1, draft section 2): "Start with" (the skill listbox), the text field, and
 // New session. The Next step card's start card and the ⋯ menu's modal both draw it. The rules are in
-// new-session-flow.ts; this file only wires them.
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
+// new-session-flow.ts; this file only wires them. The workflow's lines (sprint default-workflow §9) read the repo and
+// the Board's bundle from WorkflowContext, which RunsScreen provides.
+import { createContext, useContext, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { BoardRepo, SkillId } from '@openaflow/model'
 import { Listbox } from '../../components/Listbox.tsx'
 import { DialogAlert } from '../../components/DialogAlert.tsx'
 import { ModalAlert } from '../../components/ModalAlert.tsx'
 import { Icon } from '../../theme/icons.tsx'
-import { TEXT_MAX, createNewSessionFlow, isBusy, skillItems, textLabel, type NewSessionFlow, type NewSessionState, type WrapperError } from './new-session-flow.ts'
+import {
+  TEXT_MAX,
+  createNewSessionFlow,
+  isBusy,
+  setupOffer,
+  skillItems,
+  textLabel,
+  versionLine,
+  workflowNotice,
+  type BundledWorkflow,
+  type NewSessionFlow,
+  type NewSessionState,
+  type WrapperError,
+} from './new-session-flow.ts'
 import '../../components/modal.css'
 import './new-session.css'
 
 const ITEMS = skillItems()
+
+/** The Board's bundle and repos, for the form's workflow lines. The form is drawn by NextStepCard and the ⋯ menu's modal. */
+export type WorkflowContextValue = { workflow?: BundledWorkflow; repos: readonly BoardRepo[] }
+export const WorkflowContext = createContext<WorkflowContextValue>({ repos: [] })
 
 /**
  * The flow, fed each Board's copy of `repo`, and dropped when the caller leaves. Held by the card (not the form), so the
@@ -79,6 +97,12 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
   const field = useRef<HTMLInputElement>(null)
   const busy = isBusy(state)
   const idle = state.kind === 'idle' ? state : undefined
+  const posting = state.kind === 'posting' ? state.action : undefined
+  const { workflow, repos } = useContext(WorkflowContext)
+  const repo = repos.find((r) => r.id === repoId)
+  const notice = workflowNotice(repo, workflow)
+  const offer = setupOffer(repo)
+  const version = versionLine(repo, workflow)
 
   useEffect(() => {
     if (focusText) field.current?.focus()
@@ -90,6 +114,10 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
   useEffect(() => {
     if (idle?.fieldError) field.current?.focus()
   }, [idle?.fieldError])
+  // Use or Set up is done: its button leaves with the next Board, so focus goes to the text field.
+  useEffect(() => {
+    if (idle?.focusText) field.current?.focus()
+  }, [state])
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -154,13 +182,32 @@ export function NewSessionForm({ repoId, state, flow, focusText, cancel, inDialo
       <p className="note ns-note" role="status">
         {idle?.note ?? ''}
       </p>
+      {notice && (
+        <div className="ns-workflow">
+          <p className="ns-workflow-text">{notice.text}</p>
+          <button className="btn" type="button" disabled={busy} onClick={() => flow.useVersion(repoId, notice.name)}>
+            {posting === 'use' ? 'Updating…' : notice.use}
+          </button>
+        </div>
+      )}
+      {offer && repo && (
+        <div className="ns-workflow">
+          <p className="ns-workflow-text">
+            Create <code className="mono">.openaflow/</code> in this repo?
+          </p>
+          <button className="btn" type="button" disabled={busy} onClick={() => flow.setUp(repo.path)}>
+            {posting === 'setup' ? 'Setting up…' : 'Set up'}
+          </button>
+        </div>
+      )}
       {/* On the card the buttons stack on a phone, as every card action does; the modal keeps its row. */}
       <div className={cancel ? 'ns-actions' : 'ns-actions inplace-actions'}>
         {cancel}
         <button className="btn primary" type="submit" disabled={busy || idle?.fieldError !== undefined}>
-          {busy ? 'Starting…' : 'New session'}
+          {state.kind === 'starting' || state.kind === 'waiting' ? 'Starting…' : 'New session'}
         </button>
       </div>
+      {version && <p className="ns-version">{version}</p>}
     </form>
   )
 }
