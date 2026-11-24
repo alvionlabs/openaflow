@@ -55,7 +55,7 @@ import { QuitOverlay } from './QuitOverlay.tsx'
 import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
-import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
+import { banners, connectionStatus, tabPress } from './view.ts'
 import './runs.css'
 import type { ReloadFlag } from '../../reload-flag.ts'
 
@@ -366,7 +366,6 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                   {menu}
                 </div>
                 <p className="muted">Press Add repo in the sidebar and pick a repo's folder to see its pod runs.</p>
-                <p className="muted">Runs come from pod, a Claude Code plugin. {POD_INSTALL}</p>
               </div>
             ) : view === 'board' && pipeline && selected.plan !== undefined ? (
               <>
