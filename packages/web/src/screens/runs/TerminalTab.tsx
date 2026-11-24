@@ -11,7 +11,7 @@ import { WrapperErrorBox } from './NewSessionForm.tsx'
 import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { barStatus, createDismissFlow, type DismissState } from './dismiss-flow.ts'
 import { createResumeFlow, resumeBusy, resumeError, resumeWrapper, type ResumeState, type ResumeTarget } from './resume-session-flow.ts'
-import { browserView, canAttach, terminalBody, type StopBar } from './terminal-tab.ts'
+import { browserView, canAttach, SIDELOAD_FLAG, terminalBody, type StopBar } from './terminal-tab.ts'
 import { TerminalView } from './TerminalView.tsx'
 import './terminal.css'
 
@@ -145,7 +145,7 @@ export function StopBarPanel({
       <div className="stop-bar">
         <div className="stop-text">
           <span className={`status ${bar.dot}`}>{bar.word}</span>
-          <p className="stop-line muted">{bar.line}</p>
+          <p className="stop-line muted">{bar.sideload ? withFlag(bar.line) : bar.line}</p>
         </div>
         {bar.resume && (
           <button className="btn primary" type="button" disabled={off} aria-busy={busy === 'resume'} onClick={onResume}>
@@ -158,6 +158,18 @@ export function StopBarPanel({
       </div>
       {error && (wrapper && onOpenSettings ? <WrapperErrorBox title={error} wrapper={wrapper} onOpenSettings={onOpenSettings} /> : <ModalAlert message={error} />)}
     </div>
+  )
+}
+
+/** The line with the setting's name in mono. */
+function withFlag(line: string) {
+  const [before = '', after = ''] = line.split(SIDELOAD_FLAG)
+  return (
+    <>
+      {before}
+      <code className="stop-code">{SIDELOAD_FLAG}</code>
+      {after}
+    </>
   )
 }
 
