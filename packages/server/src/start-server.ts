@@ -167,6 +167,8 @@ export async function startServer(
     store,
     idle: createIdleCheck({ claudeDir: settings.claudeDir, now: Date.now }),
     inFlight: new Set<string>(),
+    workflows,
+    pluginDir,
   }
   sessions.onChange(() => void watcher.rebuild())
   const owner = createOwnerFile({ dir: configDir })
