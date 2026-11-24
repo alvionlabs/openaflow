@@ -176,11 +176,12 @@ const envFor = (over: Record<string, string> = {}): Record<string, string> => ({
   ...over,
 })
 
-/** Starts a server with a fake exit, and keeps it for teardown. */
+/** Starts a server with a fake exit, and keeps it for teardown. The managed settings file is a temp one, never the machine's. */
 const start = async (env: Record<string, string>, production?: Production, terminals?: ParentChannel) => {
   let exit = (_code: number) => {}
   const exited = new Promise<number>((resolve) => (exit = resolve))
-  const started = await startServer(env, { exit: (code) => exit(code), ...(production ? { production } : {}), ...(terminals ? { terminals } : {}) })
+  const managedSettings = join(tmp, 'managed-settings.json')
+  const started = await startServer(env, { exit: (code) => exit(code), managedSettings, ...(production ? { production } : {}), ...(terminals ? { terminals } : {}) })
   const entry = { started, exited }
   running.push(entry)
   return entry
@@ -636,6 +637,71 @@ describe('hosted sessions', () => {
     // The records keep them.
     const saved = JSON.parse(readFileSync(join(cfg, 'sessions.json'), 'utf8')) as { sessions: Record<string, unknown>[] }
     expect(saved.sessions[0]).toMatchObject({ state: 'stopped', stop: OLD_STOP, scrollback: 300 })
+  })
+
+  test('workflows dir wired', async () => {
+    // A set-up repo, an ended session that never hooked, a bundle, a fake claude on PATH, and a managed settings
+    // file that turns sideloading off.
+    const repo = join(tmp, 'repo')
+    await mkdir(join(repo, '.openaflow', 'workflows', 'claude-pod', 'state'), { recursive: true })
+    await writeFile(join(repo, '.openaflow', 'workflows', 'claude-pod', 'workflow.json'), JSON.stringify({ source: 'claude-pod', version: '0.11.10' }))
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    await writeFile(join(cfg, 'sessions.json'), JSON.stringify({ v: 1, sessions: [{ marker: M, repoPath: repo, sessionId: S, skill: 'plan', startedAt: 1, state: 'ended', exitCode: 1 }] }))
+    await writeFile(join(tmp, 'managed-settings.json'), JSON.stringify({ disableSideloadFlags: true }))
+    const workflows = join(tmp, 'workflows')
+    await mkdir(join(workflows, 'claude-pod', '.claude-plugin'), { recursive: true })
+    await writeFile(join(workflows, 'claude-pod', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'pod', version: '0.11.10' }))
+    const bin = join(tmp, 'bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'claude'), '#!/bin/sh\nexit 0\n')
+    await chmod(join(bin, 'claude'), 0o755)
+    const hooksPlugin = join(tmp, 'plugin')
+
+    const main = fakeMain()
+    const env = envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: hooksPlugin, OPENAFLOW_WORKFLOWS_DIR: workflows, OPENAFLOW_CLAUDE_BIN: join(bin, 'claude') })
+    const { started } = await start(env, { webDir }, main.link)
+    const token = await pageToken(started.port)
+    const headers = { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token }
+    type B = { workflow?: unknown; repos: { id: string; hosted?: { marker: string; blocked?: string }[] }[] }
+    const board = JSON.parse((await send(started.port, '/api/board')).text) as B
+    // The Board: the bundle's version, and the ended session blocked by the managed settings.
+    expect(board.workflow).toEqual({ source: 'claude-pod', version: '0.11.10' })
+    expect(board.repos[0]!.hosted).toEqual([expect.objectContaining({ marker: M, blocked: 'sideload' })])
+    // The settings preview: both folders.
+    const settings = JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text) as { wrapper?: { preview: string } }
+    if (process.platform !== 'win32') expect(settings.wrapper!.preview).toContain(`--plugin-dir ${hooksPlugin} --plugin-dir ${join(workflows, 'claude-pod')} `)
+    // New session: the start main gets loads both plugins.
+    const res = send(started.port, '/api/actions/new-session', { method: 'POST', headers, body: JSON.stringify({ repoId: board.repos[0]!.id, skill: 'plan', text: '' }) })
+    await until(() => main.sent.some((m) => m.op === 'start'))
+    const startMsg = main.sent.find((m) => m.op === 'start')!
+    const args = (startMsg.spec as { args: string[] }).args
+    expect(args.slice(-5)).toEqual(['--plugin-dir', hooksPlugin, '--plugin-dir', join(workflows, 'claude-pod'), '/pod:plan'])
+    main.answer({ op: 'started', req: startMsg.req, id: (startMsg.spec as { id: string }).id, pid: 4321 })
+    expect((await res).status).toBe(200)
+  })
+
+  test('with no workflows dir: no Board workflow, and a set-up repo answers workflow missing', async () => {
+    const repo = join(tmp, 'repo')
+    await mkdir(join(repo, '.openaflow', 'workflows', 'claude-pod'), { recursive: true })
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    const bin = join(tmp, 'bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'claude'), '#!/bin/sh\nexit 0\n')
+    await chmod(join(bin, 'claude'), 0o755)
+    const main = fakeMain()
+    const { started } = await start(envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: join(tmp, 'plugin'), OPENAFLOW_WORKFLOWS_DIR: '', OPENAFLOW_CLAUDE_BIN: join(bin, 'claude') }), { webDir }, main.link)
+    const token = await pageToken(started.port)
+    const board = JSON.parse((await send(started.port, '/api/board')).text) as { workflow?: unknown; repos: { id: string }[] }
+    expect(board).not.toHaveProperty('workflow')
+    const res = await send(started.port, '/api/actions/new-session', {
+      method: 'POST',
+      headers: { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+      body: JSON.stringify({ repoId: board.repos[0]!.id, skill: 'plan', text: '' }),
+    })
+    expect({ status: res.status, body: JSON.parse(res.text) }).toEqual({ status: 409, body: { error: 'workflow missing' } })
+    expect(main.sent.filter((m) => m.op === 'start')).toEqual([])
   })
 
   test('a server with no channel answers no terminal host and writes no store', async () => {

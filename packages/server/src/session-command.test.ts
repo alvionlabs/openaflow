@@ -398,3 +398,52 @@ describe.runIf(WIN)('windows shims on real files', () => {
     expect('typeYourself' in c2).toBe(false)
   })
 })
+
+describe('the workflow plugin', () => {
+  const HOOKS = '/opt/openaflow/resources/hooks-plugin'
+  const WORKFLOW = '/opt/openaflow/resources/workflows/claude-pod'
+  const WIN_WORKFLOW = 'C:\\Program Files\\OpenAFlow\\resources\\workflows\\claude-pod'
+  const resume = (over: Partial<SessionCommandInput> = {}) => {
+    const { skill: _skill, text: _text, ...rest } = linux(over)
+    return resumeCommand(rest)
+  }
+
+  test('two plugin dirs', () => {
+    const r = ok(sessionCommand(linux({ workflowDir: WORKFLOW })))
+    expect(r.args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW, '/pod:plan add tags'])
+    // No prompt: the workflow folder is last.
+    expect(ok(sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: '' }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW])
+    // Through an npm shim: node plus its script first.
+    const shim = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW })))
+    expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
+    // Left out, or undefined: the hooks plugin only, as before.
+    expect(ok(sessionCommand(linux({ workflowDir: undefined }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '/pod:plan add tags'])
+  })
+
+  test('resume two plugin dirs', () => {
+    const r = ok(resume({ workflowDir: WORKFLOW }))
+    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW])
+    expect(r.typeYourself).toBeUndefined()
+    // Through cmd.exe: both folders, still no prompt.
+    const { skill: _skill, text: _text, ...rest } = win({ claude: 'C:\\pnpm\\claude.bat', workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))
+    expect(ok(resumeCommand(rest)).args).toEqual(['/d', '/c', 'call', 'C:\\pnpm\\claude.bat', '--resume', SESSION, '--plugin-dir', WIN_PLUGIN, '--plugin-dir', WIN_WORKFLOW])
+    expect(ok(resume({ workflowDir: undefined })).args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS])
+  })
+
+  test('workflow dir rules', () => {
+    for (const p of ['', 'workflows/claude-pod', './claude-pod', '~/claude-pod']) {
+      expect(sessionCommand(linux({ workflowDir: p })), p).toBe('bad path')
+      expect(resume({ workflowDir: p }), p).toBe('bad path')
+    }
+    // A Linux path on Windows is relative there.
+    expect(sessionCommand(win({ workflowDir: WORKFLOW }))).toBe('bad path')
+    // The cmd.exe route refuses a workflow folder cmd.exe would act on or split, new session and resume.
+    for (const bad of ['C:\\50%\\claude-pod', 'C:\\a&b\\claude-pod', 'C:\\a^b\\claude-pod', 'C:\\a!b\\claude-pod', 'C:\\a,b\\claude-pod', 'C:\\a;b\\claude-pod', 'C:\\a=b\\claude-pod']) {
+      expect(sessionCommand(win({ workflowDir: bad }, fakeWindows({ read: 'unreadable' }))), bad).toBe('unsafe claude path')
+      const { skill: _skill, text: _text, ...rest } = win({ workflowDir: bad }, fakeWindows({ read: 'unreadable' }))
+      expect(resumeCommand(rest), bad).toBe('unsafe claude path')
+      // A shim node runs: no cmd.exe reads the args, so the folder passes whole.
+      expect(ok(sessionCommand(win({ workflowDir: bad }))).args).toContain(bad)
+    }
+  })
+})

@@ -16,6 +16,8 @@ export type SettingsRouteDeps = {
   claude(): string | undefined
   /** The hooks plugin folder a new session loads. */
   pluginDir: string | undefined
+  /** The bundled workflow plugin folder a set-up repo's new session also loads, read at each answer. None: no bundle. */
+  workflowDir(): string | undefined
 }
 
 const TEXT_KEYS = ['runWrapper', 'stopCommand'] as const
@@ -31,10 +33,13 @@ const wordsOf = (text: string) => {
   return 'error' in split ? [] : split.words
 }
 
-/** The view of `settings`: the wrapper section on Linux and macOS only, with the preview of a new session's command. */
+/**
+ * The view of `settings`: the wrapper section on Linux and macOS only, with the preview of a new session's command.
+ * With a workflow folder, the preview is a set-up repo's command, with both `--plugin-dir` flags.
+ */
 export function settingsView(
   settings: Settings,
-  o: { platform: NodeJS.Platform; probe?: ScopeProbe | undefined; claude: string | undefined; pluginDir: string | undefined },
+  o: { platform: NodeJS.Platform; probe?: ScopeProbe | undefined; claude: string | undefined; pluginDir: string | undefined; workflowDir?: string | undefined },
 ): SettingsView {
   if (o.platform === 'win32') return { scrollback: settings.scrollback }
   const defaults = defaultTexts(o.platform)
@@ -48,6 +53,8 @@ export function settingsView(
     '<session id>',
     '--plugin-dir',
     o.pluginDir ?? '<plugin dir>',
+    // A set-up repo's session; with no bundle, every session starts with the hooks plugin only.
+    ...(o.workflowDir === undefined ? [] : ['--plugin-dir', o.workflowDir]),
     '/pod:plan <your text>',
   ]
   // The default stop runs only with the default wrapper in force.
@@ -119,7 +126,7 @@ export function createSettingsActions(deps: SettingsRouteDeps): Hono {
 async function viewOf(deps: SettingsRouteDeps, settings: Settings): Promise<SettingsView> {
   // A server with a probe began it at its start; this waits only for its first answer.
   const probe = deps.platform === 'win32' ? undefined : await deps.probe?.()
-  return settingsView(settings, { platform: deps.platform, probe, claude: deps.claude(), pluginDir: deps.pluginDir })
+  return settingsView(settings, { platform: deps.platform, probe, claude: deps.claude(), pluginDir: deps.pluginDir, workflowDir: deps.workflowDir() })
 }
 
 async function jsonOf(c: Context): Promise<unknown> {
