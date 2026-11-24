@@ -64,7 +64,7 @@ export function createAnswerRoutes(deps: AnswerRouteDeps): Hono {
 
     inFlight.add(repoId)
     try {
-      const result = await settle(() => writeAnswer({ repoPath: repo.path, line, text: clean.text }, fs))
+      const result = await settle(() => writeAnswer({ repoPath: repo.path, stateDir: 'pod-docs', line, text: clean.text }, fs))
       const { outcome, message } = result ?? { outcome: 'failed' as const, message: "Couldn't write the queue (unknown)." }
       const entry: NewActionEntry = { action: 'answer', repoId, repo: repo.name, target: answerTarget(item), result: outcome }
       if (message !== undefined) entry.message = message
@@ -98,7 +98,7 @@ export function createAnswerRoutes(deps: AnswerRouteDeps): Hono {
     const text = kind === 'close' ? closeText(date, t.done!) : keepText(date, t.keep!)
     inFlight.add(repoId)
     try {
-      const written = await settle(() => writeResolution({ repoPath: repo.path, line, text }, fs))
+      const written = await settle(() => writeResolution({ repoPath: repo.path, stateDir: 'pod-docs', line, text }, fs))
       const { outcome: raw, message } = written ?? { outcome: 'failed' as const, message: "Couldn't write the queue (unknown)." }
       const outcome: ResolveOutcome = raw === 'resolved' ? (kind === 'close' ? 'closed' : 'kept') : raw
       const entry: NewActionEntry = { action: 'resolve', repoId, repo: repo.name, target: answerTarget(item), result: outcome }
