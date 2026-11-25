@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -9,6 +9,7 @@ import { liveConfigDir } from './config.ts'
 import type { ParentChannel } from './parent-link.ts'
 import { readSessionToken } from './session-token.ts'
 import { startServer, type Production, type Started } from './start-server.ts'
+import { projectDirName } from './transcript-files.ts'
 
 // Pass-through spies: the real watcher and check run, and the tests see whether they started.
 const spies = vi.hoisted(() => ({
@@ -712,6 +713,85 @@ describe('hosted sessions', () => {
     })
     expect({ status: res.status, body: JSON.parse(res.text) }).toEqual({ status: 409, body: { error: 'workflow missing' } })
     expect(main.sent.filter((m) => m.op === 'start')).toEqual([])
+  })
+
+  test('Continue in a set-up repo loads the hooks plugin and the bundle', async () => {
+    // A set-up repo whose sprint `one` ended: `continue` is sendable. Its session ran outside the app (no
+    // sessions.json), so the resume route sends it with `claude -p`.
+    const repo = join(tmp, 'repo')
+    const state = join(repo, '.openaflow', 'workflows', 'claude-pod', 'state')
+    await mkdir(join(state, 'plans'), { recursive: true })
+    await mkdir(join(state, 'sprints'), { recursive: true })
+    await writeFile(join(repo, '.openaflow', 'workflows', 'claude-pod', 'workflow.json'), JSON.stringify({ source: 'claude-pod', version: '0.11.10' }))
+    await writeFile(join(state, 'README.md'), '# pod docs\n\npod docs: 2\n')
+    await writeFile(join(state, 'handoff-queue.md'), '# Handoff Queue\n')
+    const table = (head: string, rows: string[]) => [head, `|${'---|'.repeat(head.split('|').length - 2)}`, ...rows]
+    await writeFile(
+      join(state, 'plans', 'alpha.md'),
+      ['# Plan: alpha', '', '_Generated: 2026-11-01 · Status: active_', '', '## Sprint sequence', '', ...table('| Sprint | Goal | Status | Depends on |', ['| one | goal | done | — |', '| two | goal | planned | — |']), ''].join('\n'),
+    )
+    await writeFile(
+      join(state, 'sprints', 'one.md'),
+      [
+        '# Sprint: one',
+        '',
+        '_From plan: plans/alpha.md · Slug: one · Status: active · Generated: 2026-11-01_',
+        '',
+        '## Status board',
+        '',
+        ...table('| Wave | Slice | Title | Branch | PR | Status | Confidence | Depends on |', ['| 1 | A1 | a | one-A1 | merged | done | high | — |']),
+        '',
+      ].join('\n'),
+    )
+    // The session's transcript: one engineer of sprint one, quiet for two hours, so the session is idle.
+    const session = 'sess-1'
+    const project = join(tmp, 'claude', 'projects', projectDirName(repo))
+    const sub = join(project, session, 'subagents')
+    await mkdir(sub, { recursive: true })
+    const old = new Date(Date.now() - 7_200_000)
+    const line = (o: unknown) => JSON.stringify(o) + '\n'
+    await writeFile(join(project, `${session}.jsonl`), line({ type: 'user', cwd: repo, message: { role: 'user', content: 'go' } }))
+    await writeFile(join(sub, 'agent-eng1.meta.json'), JSON.stringify({ agentType: 'pod:engineer', description: 'Build A1' }))
+    const brief = '- **sprint slug:** one\n- **slice code:** A1\n- **branch name:** one-A1\n'
+    await writeFile(
+      join(sub, 'agent-eng1.jsonl'),
+      line({ type: 'user', cwd: repo, timestamp: old.toISOString(), message: { role: 'user', content: brief } }) +
+        line({ type: 'assistant', cwd: repo, timestamp: old.toISOString(), message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'x.ts' } }] } }),
+    )
+    for (const p of [join(project, `${session}.jsonl`), join(sub, 'agent-eng1.meta.json'), join(sub, 'agent-eng1.jsonl'), sub, join(project, session)]) await utimes(p, old, old)
+    await mkdir(cfg, { recursive: true })
+    await writeFile(join(cfg, 'config.json'), JSON.stringify({ version: 1, repos: [{ path: repo }] }))
+    const workflows = join(tmp, 'workflows')
+    await mkdir(join(workflows, 'claude-pod', '.claude-plugin'), { recursive: true })
+    await writeFile(join(workflows, 'claude-pod', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'pod', version: '0.11.10' }))
+    const hooksPlugin = join(tmp, 'plugin')
+    // A fake claude that writes its args to a file: a POSIX script, or on Windows an npm-style `claude.cmd` shim that
+    // the runner reads and runs with node, as it does the real one.
+    const record = join(tmp, 'claude-args.json')
+    const bin = join(tmp, 'bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'cli.mjs'), `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)))\n`)
+    let claude: string
+    if (process.platform === 'win32') {
+      claude = join(bin, 'claude.cmd')
+      await writeFile(claude, '@ECHO off\r\nSET dp0=%~dp0\r\n"%dp0%\\cli.mjs" %*\r\n')
+    } else {
+      claude = join(bin, 'claude')
+      await writeFile(claude, `#!/bin/sh\nexec "${process.execPath}" "${join(bin, 'cli.mjs')}" "$@"\n`)
+      await chmod(claude, 0o755)
+    }
+
+    const { started } = await start(envFor({ OPENAFLOW_API_PORT: String(await freePort()), OPENAFLOW_HOOKS_PLUGIN: hooksPlugin, OPENAFLOW_WORKFLOWS_DIR: workflows, OPENAFLOW_CLAUDE_BIN: claude }), { webDir })
+    const token = await pageToken(started.port)
+    const board = JSON.parse((await send(started.port, '/api/board')).text) as { repos: { id: string }[] }
+    const res = await send(started.port, '/api/actions/resume', {
+      method: 'POST',
+      headers: { Origin: `http://127.0.0.1:${started.port}`, 'Content-Type': 'application/json', 'X-OpenAFlow-Token': token },
+      body: JSON.stringify({ repoId: board.repos[0]!.id, run: 'alpha', reply: 'continue' }),
+    })
+    expect({ status: res.status, body: JSON.parse(res.text) as unknown }).toEqual({ status: 200, body: expect.objectContaining({ outcome: 'started' }) })
+    await until(() => existsSync(record))
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(['-p', '--plugin-dir', hooksPlugin, '--plugin-dir', join(workflows, 'claude-pod'), '--resume', session, 'continue'])
   })
 
   test('a server with no channel answers no terminal host and writes no store', async () => {
