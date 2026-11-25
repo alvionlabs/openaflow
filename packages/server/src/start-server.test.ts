@@ -684,7 +684,7 @@ describe('hosted sessions', () => {
     expect(board.repos[0]!.hosted).toEqual([expect.objectContaining({ marker: M, blocked: 'sideload' })])
     // The settings preview: both folders.
     const settings = JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text) as { wrapper?: { preview: string } }
-    if (process.platform !== 'win32') expect(settings.wrapper!.preview).toContain(`--plugin-dir ${hooksPlugin} --plugin-dir ${join(workflows, 'claude-pod')} `)
+    if (process.platform !== 'win32') expect(settings.wrapper!.preview).toContain(`--plugin-dir ${hooksPlugin} --add-dir ${join(workflows, 'claude-pod')} --plugin-dir ${join(workflows, 'claude-pod')} `)
     // New session: the start main gets loads both plugins.
     const res = send(started.port, '/api/actions/new-session', { method: 'POST', headers, body: JSON.stringify({ repoId: board.repos[0]!.id, skill: 'plan', text: '' }) })
     await until(() => main.sent.some((m) => m.op === 'start'))

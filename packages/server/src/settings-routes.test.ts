@@ -170,23 +170,24 @@ describe('settings routes', () => {
     expect(settingsView({ scrollback: 5000, runWrapper: 'wrap' }, { platform: 'darwin', claude: CLAUDE, pluginDir: PLUGIN }).wrapper).not.toHaveProperty('stopSkipped')
   })
 
-  test('preview shows both plugin dirs', async () => {
+  test('preview shows both plugin dirs and the workflow add-dir', async () => {
     const WORKFLOW = '/opt/openaflow/workflows/claude-pod'
     const view = (workflowDir: string | undefined) => settingsView({ scrollback: 5000, runWrapper: '' }, { platform: 'linux', claude: CLAUDE, pluginDir: PLUGIN, workflowDir, probe: ON }).wrapper!.preview
-    // With a bundle: the hooks plugin, then the workflow, then the prompt, as a set-up repo's session starts.
-    expect(view(WORKFLOW)).toBe(`${CLAUDE} --session-id "<session id>" --plugin-dir ${PLUGIN} --plugin-dir ${WORKFLOW} "/pod:plan <your text>"`)
+    // With a bundle: the hooks plugin, then the workflow's add-dir and plugin dir, then the prompt, as a set-up repo's session starts.
+    expect(view(WORKFLOW)).toBe(`${CLAUDE} --session-id "<session id>" --plugin-dir ${PLUGIN} --add-dir ${WORKFLOW} --plugin-dir ${WORKFLOW} "/pod:plan <your text>"`)
     // A folder with a space is quoted.
-    expect(view('/opt/my apps/claude-pod')).toContain(`--plugin-dir ${PLUGIN} --plugin-dir "/opt/my apps/claude-pod" "/pod:plan`)
+    expect(view('/opt/my apps/claude-pod')).toContain(`--plugin-dir ${PLUGIN} --add-dir "/opt/my apps/claude-pod" --plugin-dir "/opt/my apps/claude-pod" "/pod:plan`)
     // No bundle: the hooks plugin only, as every session starts then.
     expect(view(undefined)).toBe(`${CLAUDE} --session-id "<session id>" --plugin-dir ${PLUGIN} "/pod:plan <your text>"`)
+    expect(view(undefined)).not.toContain('--add-dir')
     // Through the route: the folder is read at each answer.
     let dir: string | undefined = WORKFLOW
     const live = createSettingsRead({ store: createSettingsStore({ file, log: () => {} }), platform: 'linux', claude: () => CLAUDE, pluginDir: PLUGIN, workflowDir: () => dir })
     const preview = async () => ((await (await live.request('/')).json()) as SettingsView).wrapper!.preview
-    expect(await preview()).toContain(`--plugin-dir ${PLUGIN} --plugin-dir ${WORKFLOW} `)
+    expect(await preview()).toContain(`--plugin-dir ${PLUGIN} --add-dir ${WORKFLOW} --plugin-dir ${WORKFLOW} `)
     dir = undefined
     expect(await preview()).not.toContain(WORKFLOW)
-    expect(((await appOf({ workflowDir: WORKFLOW }).get()).body.wrapper as { preview: string }).preview).toContain(`--plugin-dir ${WORKFLOW} `)
+    expect(((await appOf({ workflowDir: WORKFLOW }).get()).body.wrapper as { preview: string }).preview).toContain(`--add-dir ${WORKFLOW} --plugin-dir ${WORKFLOW} `)
   })
 
   test('windows has no wrapper', async () => {
