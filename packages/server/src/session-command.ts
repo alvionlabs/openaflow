@@ -18,8 +18,9 @@ export type SessionCommandInput = {
   /** The hooks plugin folder, loaded with `--plugin-dir`. */
   pluginDir: string
   /**
-   * The bundled workflow plugin folder, loaded with a second `--plugin-dir` after the hooks plugin. Only a repo with
-   * `.openaflow/` gets one; left out, the session starts with the hooks plugin only (sprint default-workflow §6).
+   * The bundled workflow plugin folder, loaded with a second `--plugin-dir` after the hooks plugin, and also passed as
+   * `--add-dir`, so claude reads the workflow's own files with no prompt. Only a repo with `.openaflow/` gets one; left
+   * out, the session starts with the hooks plugin only (sprint default-workflow §6).
    */
   workflowDir?: string | undefined
   /** The server's live config folder; hook state goes to its `hooks` folder. */
@@ -52,7 +53,7 @@ const CMD_UNSAFE = /["%!^&|<>\r\n,;=]/
 
 /**
  * The program, args, folder, and env that start a hosted `claude` session, or the word for why not.
- * Args: `--session-id <id> --plugin-dir <hooks>`, then `--plugin-dir <workflow>` when given, then at most one prompt, last. Never `-p`, `--bare`,
+ * Args: `--session-id <id> --plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when given, then at most one prompt, last. Never `-p`, `--bare`,
  * a permission flag, or a model flag: the session is the user's own interactive `claude`.
  */
 export function sessionCommand(o: SessionCommandInput): SessionCommand | SessionCommandError {
@@ -72,7 +73,7 @@ export type ResumeCommandError = Exclude<SessionCommandError, 'bad skill' | 'bad
 
 /**
  * The command that resumes `sessionId` in a hosted `claude`: as `sessionCommand`, with the args
- * `--resume <id> --plugin-dir <hooks>` (and `--plugin-dir <workflow>` when given) and no prompt, so a Windows shim never needs `typeYourself`.
+ * `--resume <id> --plugin-dir <hooks>` (and `--add-dir <workflow> --plugin-dir <workflow>` when given) and no prompt, so a Windows shim never needs `typeYourself`.
  */
 export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCommandError {
   const bad = badInput(o)
@@ -80,8 +81,11 @@ export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCom
   return build(o, ['--resume', o.sessionId, ...pluginFlags(o)], undefined)
 }
 
-/** `--plugin-dir <hooks>`, then `--plugin-dir <workflow>` when there is one. */
-const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : ['--plugin-dir', o.workflowDir])]
+/**
+ * `--plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when there is one. `--add-dir` takes every
+ * word up to the next flag, so it goes before the workflow's `--plugin-dir`: a prompt right after it would be read as a folder.
+ */
+const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : ['--add-dir', o.workflowDir, '--plugin-dir', o.workflowDir])]
 
 /**
  * The command for `flags` and an optional prompt, last. A Windows shim only cmd.exe can read gets no prompt:

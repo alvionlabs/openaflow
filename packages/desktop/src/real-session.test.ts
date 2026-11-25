@@ -294,7 +294,7 @@ async function twoPluginDirsCheck(h: Harness, w: World): Promise<void> {
   const marker = answer.body.marker as string
   const sessionId = (await hosted(h, w, marker))!.sessionId
   await until('the fake to start', () => starts(w).length > 0, 15_000, h, w)
-  expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--plugin-dir', await workflowDir(h), PROMPT])
+  expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h), PROMPT])
   // The Board names the bundle's version, read from its plugin.json.
   const version = (JSON.parse(readFileSync(join(await workflowDir(h), '.claude-plugin', 'plugin.json'), 'utf8')) as { version: string }).version
   expect((await board(h)).workflow).toEqual({ source: 'claude-pod', version })

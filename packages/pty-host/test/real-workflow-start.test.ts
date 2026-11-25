@@ -10,7 +10,8 @@ import { envKey, resolveBin } from '../../server/src/bin-path.ts'
 import { sessionCommand, type SessionCommand } from '../../server/src/session-command.ts'
 
 // A set-up repo's session with real `claude` (sprint default-workflow §6): the hooks plugin and the bundled
-// claude-pod (`packages/workflow/dist/claude-pod`, made by `pnpm build`), with the server's exact args. Never in
+// claude-pod (`packages/workflow/dist/claude-pod`, made by `pnpm build`), with the server's exact args from `sessionCommand`,
+// `--add-dir <workflow>` included, so claude reads the workflow's own files with no read prompt. Never in
 // `pnpm verify` or CI. It runs only with OPENAFLOW_REAL_CLAUDE=1 and OPENAFLOW_REAL_CLAUDE_CONFIG_DIR, a separate
 // Claude Code config folder the human signed in to once (see real-claude-start.test.ts). The launch gets it as
 // CLAUDE_CONFIG_DIR; the test never reads, copies, or links a login file. The model is haiku, set in the temp
@@ -150,6 +151,8 @@ describe.runIf('dir' in GATE)('real workflow start', () => {
       while (!has('Stop') && !exited && Date.now() < end) {
         const text = screen()
         if (/select login method|please run \/login|invalid api key|choose the text style/i.test(text)) throw new Error(`${claudeDir} is not signed in; ${SIGN_IN}. Screen:\n${text}`)
+        // A read prompt for the workflow's own files: the session stalls there, so fail now with the screen.
+        if (/do you want to proceed|allow reading from/i.test(text)) throw new Error(`claude asked to read a file. Screen:\n${text}`)
         // A new temp folder: claude asks to trust it once. Move to "Yes", then Enter.
         if (!seen.trust && /trust/i.test(text) && /folder|files/i.test(text)) {
           seen.trust = true
@@ -188,8 +191,9 @@ describe.runIf('dir' in GATE)('real workflow start', () => {
   })
 
   test('bundled workflow writes the state folder', () => {
-    // The server's args: both plugin folders, then the prompt.
-    expect(seen.cmd!.args.slice(-5)).toEqual(['--plugin-dir', HOOKS_PLUGIN, '--plugin-dir', WORKFLOW, `/pod:idea ${IDEA}`])
+    // The server's args: the hooks plugin, the workflow as --add-dir and --plugin-dir, then the prompt. The run above
+    // got past the workflow's own file reads with no prompt, so --add-dir took only the folder, not the prompt.
+    expect(seen.cmd!.args.slice(-7)).toEqual(['--plugin-dir', HOOKS_PLUGIN, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW, `/pod:idea ${IDEA}`])
     // The hook file got a SessionStart line, so the hooks plugin loaded beside the workflow.
     expect(hookLines(seen.hookText).some((h) => h.payload?.hook_event_name === 'SessionStart'), `hooks: ${seen.hookText}\nscreen:\n${seen.screen}`).toBe(true)
     // Every new or changed file is under the state folder (claude's own .claude/ aside), and an idea file is one of them.

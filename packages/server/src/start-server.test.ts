@@ -690,7 +690,7 @@ describe('hosted sessions', () => {
     await until(() => main.sent.some((m) => m.op === 'start'))
     const startMsg = main.sent.find((m) => m.op === 'start')!
     const args = (startMsg.spec as { args: string[] }).args
-    expect(args.slice(-5)).toEqual(['--plugin-dir', hooksPlugin, '--plugin-dir', join(workflows, 'claude-pod'), '/pod:plan'])
+    expect(args.slice(-7)).toEqual(['--plugin-dir', hooksPlugin, '--add-dir', join(workflows, 'claude-pod'), '--plugin-dir', join(workflows, 'claude-pod'), '/pod:plan'])
     main.answer({ op: 'started', req: startMsg.req, id: (startMsg.spec as { id: string }).id, pid: 4321 })
     expect((await res).status).toBe(200)
   })
