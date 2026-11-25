@@ -5,7 +5,7 @@
 
 import {
   formatTokens,
-  SUPPORTED_DOCS_VERSION,
+  unsupportedCase,
   type AgentState,
   type Board,
   type BoardRepo,
@@ -15,6 +15,7 @@ import {
   type OtherAgent,
   type RunState,
   type RunSummary,
+  type Unsupported,
 } from '@openaflow/model'
 import type { StreamState } from '../../board-stream.ts'
 import { hashFor, type View } from '../../selection.ts'
@@ -25,16 +26,26 @@ import { toggleTab, type Tab } from './tab-memory.ts'
 export type ChipClass = 's-run' | 's-ok' | 's-you' | 's-bad' | 's-idle'
 export type Chip = { cls: ChipClass; label: string }
 
-const RUN_CHIPS: Record<RunState, Chip> = {
+const RUN_CHIPS: Record<Exclude<RunState, 'unsupported'>, Chip> = {
   blocked: { cls: 's-bad', label: 'blocked' },
   'needs-you': { cls: 's-you', label: 'needs you' },
   running: { cls: 's-run', label: 'running' },
   idle: { cls: 's-idle', label: 'idle' },
-  unsupported: { cls: 's-you', label: 'update pod' },
   error: { cls: 's-bad', label: 'error' },
 }
 
-export const runChip = (s: RunState): Chip => RUN_CHIPS[s]
+/** An unsupported run's chip names the fix its card gives (`emptyMessage`): never `update pod` for a set-up repo. */
+const UNSUPPORTED_LABELS: Record<Unsupported, string> = {
+  'no-state': 'needs init',
+  'old-state': 'needs init',
+  'newer-state': 'update app',
+  'old-pod': 'update pod',
+  'no-workflow': 'set up',
+}
+
+/** A run's chip. An unsupported run reads its reason (`RunSummary.unsupported`); with none, `update pod` as before. */
+export const runChip = (s: RunState, why?: Unsupported): Chip =>
+  s === 'unsupported' ? { cls: 's-you', label: why === undefined ? 'update pod' : UNSUPPORTED_LABELS[why] } : RUN_CHIPS[s]
 
 const LOST: Chip = { cls: 's-bad', label: 'lost · retrying' }
 
@@ -131,15 +142,19 @@ export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
   if (r.state === 'unsupported') {
     if (!repo) return "This repo's pod docs are from an older pod. Update pod in this repo to see its runs."
     const { version } = repo.model.docs
-    // A set-up repo loads the app's own workflow, so updating pod can't help: init writes or updates its docs.
-    if (repo.model.openaflow) {
-      if (version === undefined) return NO_STATE
-      // Newer docs than the app reads: the app's init is older, so only a newer app helps.
-      if (version > SUPPORTED_DOCS_VERSION) return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Update OpenAFlow to read them.`
-      return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a New session with \`init\` to update them.`
+    // The same reason the run's chip names (`unsupportedCase`), so the two never disagree.
+    switch (unsupportedCase(repo)) {
+      case 'no-state':
+        return NO_STATE
+      case 'newer-state':
+        return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Update OpenAFlow to read them.`
+      case 'old-state':
+        return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a New session with \`init\` to update them.`
+      case 'old-pod':
+        return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
+      case 'no-workflow':
+        return NO_WORKFLOW
     }
-    if (version !== undefined) return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
-    return NO_WORKFLOW
   }
   if (r.plan === undefined) return 'No active plan in this repo. A plan shows here once pod starts one.'
   return `Can't find plan ${r.plan} in this repo's pod docs.`
