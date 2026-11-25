@@ -25,6 +25,8 @@ export const RESUME_ERRORS: ReadonlyMap<string, string> = new Map([
   ['claude not found', START_ERRORS.get('claude not found')!],
   ['session starting', START_ERRORS.get('session starting')!],
   ['too many sessions', START_ERRORS.get('too many sessions')!],
+  // A set-up repo with no bundle: a retry never works, so reinstall, as New session says.
+  ['workflow missing', START_ERRORS.get('workflow missing')!],
   // Another window resumed or dismissed it; the Board catches up.
   ['no session', 'This session is already gone'],
   ['session is live', 'This session is already running'],

@@ -8,15 +8,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Arch, build, Platform } from 'electron-builder'
-import { builderOptions, packageTarget, parsePackageArgs } from '../src/build-config.ts'
+import { builderOptions, packageTarget, parsePackageArgs, requireWorkflowDist } from '../src/build-config.ts'
 import { bundleDesktop } from '../src/bundle-desktop.ts'
-import { bundleRoots, LICENCE_OVERRIDES, packageRootsFromMetafile, productionClosure, renderNotices, type BundleMeta } from '../src/licence-notices.ts'
+import { bundleRoots, LICENCE_OVERRIDES, packageRootsFromMetafile, productionClosure, renderNotices, workflowNotice, type BundleMeta } from '../src/licence-notices.ts'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
 const root = join(pkg, '..', '..')
 const server = join(pkg, '..', 'server')
 const web = join(pkg, '..', 'web')
 const ptyHost = join(pkg, '..', 'pty-host')
+const workflowDist = join(pkg, '..', 'workflow', 'dist', 'claude-pod')
 
 const readMeta = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as BundleMeta
 
@@ -32,6 +33,7 @@ function writeNotices(): string {
     extras: [
       { title: 'Geist (font)', text: readFileSync(join(web, 'public', 'fonts', 'geist-OFL.txt'), 'utf8').trim() },
       { title: 'Geist Mono (font)', text: readFileSync(join(web, 'public', 'fonts', 'geist-mono-OFL.txt'), 'utf8').trim() },
+      workflowNotice(workflowDist),
     ],
   })
   const file = join(pkg, 'dist', 'THIRD-PARTY-NOTICES.txt')
@@ -55,6 +57,13 @@ const targets = picked.platform === 'win32' ? Platform.WINDOWS.createTarget(pick
 
 const built = spawnSync('pnpm -w run build', { cwd: root, shell: true, stdio: 'inherit', windowsHide: true })
 if (built.status !== 0) process.exit(built.status ?? 1)
+
+try {
+  requireWorkflowDist(workflowDist)
+} catch (err) {
+  console.error(`openaflow: ${err instanceof Error ? err.message : String(err)}`)
+  process.exit(1)
+}
 
 // No signing, also on a machine that has a certificate.
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'

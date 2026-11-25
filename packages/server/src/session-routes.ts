@@ -24,6 +24,7 @@ import { resumeCommand, sessionCommand, type SessionCommand, type SessionCommand
 import { hostedSession, resumeFacts, resumeOf, type HookReader, type SessionStore, type StoredSession } from './session-store.ts'
 import type { SettingsStore } from './settings-store.ts'
 import { NoAnswer, type TerminalChannel } from './terminal-channel.ts'
+import type { WorkflowResolver } from './workflow-resolver.ts'
 
 export type SessionRouteDeps = {
   /** The current Board. */
@@ -38,6 +39,8 @@ export type SessionRouteDeps = {
   claude(): string | undefined
   /** `OPENAFLOW_HOOKS_PLUGIN`: the hooks plugin folder main names. None: `409 no terminal host`. */
   pluginDir: string | undefined
+  /** The bundled workflow plugins: a set-up repo's sessions load the one its workflows ask for. */
+  workflows: Pick<WorkflowResolver, 'forRepo'>
   /** The live config folder: the hook files go to its `hooks` folder, the saved screens to its `screens` folder. */
   configDir: string
   /** The hook files' reader: Resume reads each session's live session and the sessions it holds. */
@@ -91,6 +94,17 @@ const size = (v: unknown, r: { min: number; max: number; default: number }) =>
   v === undefined ? r.default : Number.isInteger(v) && (v as number) >= r.min && (v as number) <= r.max ? (v as number) : undefined
 /** The log's target: the skill's command or `plain`, and the marker's first 8 characters. Never the text. */
 const targetOf = (skill: SkillId, marker: string) => `${skillCommand(skill) ?? 'plain'} · ${marker.slice(0, 8)}`
+
+/**
+ * The workflow plugin folder a session in `repo` loads (sprint default-workflow §6). A repo without `.openaflow/`
+ * gets none and starts as before, with the hooks plugin only. A set-up repo gets its workflows' bundle, or
+ * `missing` when there is no bundle or every workflow names an unknown source.
+ */
+function workflowOf(repo: BoardRepo, workflows: SessionRouteDeps['workflows']): { dir?: string } | 'missing' {
+  if (repo.model.openaflow !== true) return {}
+  const bundle = workflows.forRepo(repo.model.workflows)
+  return bundle === undefined ? 'missing' : { dir: bundle.dir }
+}
 
 async function body(c: Context): Promise<Record<string, unknown> | undefined> {
   try {
@@ -176,6 +190,8 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     if (!repo) return c.json({ error: 'not a repo' }, 404)
     const claude = deps.claude()
     if (claude === undefined) return c.json({ error: 'claude not found' }, 409)
+    const workflow = workflowOf(repo, deps.workflows)
+    if (workflow === 'missing') return c.json({ error: 'workflow missing' }, 409)
     // Before the checks below: the server start began it, so this waits only for its first answer.
     const scope = await probe()
     const start = await startSettings(scope)
@@ -196,6 +212,7 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
       sessionId,
       runMarker: marker,
       pluginDir: deps.pluginDir,
+      workflowDir: workflow.dir,
       configDir: deps.configDir,
       env: deps.env(),
       platform: deps.platform,
@@ -257,6 +274,9 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
     const find = (records: readonly StoredSession[]) => (repo ? records.find((r) => r.marker === b.marker && inRepo(repo, r)) : undefined)
     const first = find(deps.store.list())
     if (!repo || !first) return c.json({ error: 'no session' }, 404)
+    // The repo as it is now: one set up since the session started resumes with the workflow.
+    const workflow = workflowOf(repo, deps.workflows)
+    if (workflow === 'missing') return c.json({ error: 'workflow missing' }, 409)
 
     // What the check needs from disk, read now. Every record's sessions, for `in use`; the old one's live session.
     const scope = await probe()
@@ -286,6 +306,7 @@ export function createSessionRoutes(deps: SessionRouteDeps): Hono {
       sessionId: liveSession,
       runMarker: marker,
       pluginDir: deps.pluginDir,
+      workflowDir: workflow.dir,
       configDir: deps.configDir,
       env: deps.env(),
       platform: deps.platform,

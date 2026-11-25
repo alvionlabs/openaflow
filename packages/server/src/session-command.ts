@@ -17,6 +17,11 @@ export type SessionCommandInput = {
   runMarker: string
   /** The hooks plugin folder, loaded with `--plugin-dir`. */
   pluginDir: string
+  /**
+   * The bundled workflow plugin folder, loaded with a second `--plugin-dir` after the hooks plugin. Only a repo with
+   * `.openaflow/` gets one; left out, the session starts with the hooks plugin only (sprint default-workflow §6).
+   */
+  workflowDir?: string | undefined
   /** The server's live config folder; hook state goes to its `hooks` folder. */
   configDir: string
   /** The server's own env; it is left alone. */
@@ -47,7 +52,7 @@ const CMD_UNSAFE = /["%!^&|<>\r\n,;=]/
 
 /**
  * The program, args, folder, and env that start a hosted `claude` session, or the word for why not.
- * Args: `--session-id <id> --plugin-dir <dir>`, then at most one prompt, last. Never `-p`, `--bare`,
+ * Args: `--session-id <id> --plugin-dir <hooks>`, then `--plugin-dir <workflow>` when given, then at most one prompt, last. Never `-p`, `--bare`,
  * a permission flag, or a model flag: the session is the user's own interactive `claude`.
  */
 export function sessionCommand(o: SessionCommandInput): SessionCommand | SessionCommandError {
@@ -57,7 +62,7 @@ export function sessionCommand(o: SessionCommandInput): SessionCommand | Session
   const prompt = startPrompt(o.skill, o.text)
   if (prompt === 'bad text') return prompt
 
-  return build(o, ['--session-id', o.sessionId, '--plugin-dir', o.pluginDir], prompt)
+  return build(o, ['--session-id', o.sessionId, ...pluginFlags(o)], prompt)
 }
 
 /** What `resumeCommand` takes: `sessionId` is the session to resume, `runMarker` the new record's marker. */
@@ -67,13 +72,16 @@ export type ResumeCommandError = Exclude<SessionCommandError, 'bad skill' | 'bad
 
 /**
  * The command that resumes `sessionId` in a hosted `claude`: as `sessionCommand`, with the args
- * `--resume <id> --plugin-dir <dir>` and no prompt, so a Windows shim never needs `typeYourself`.
+ * `--resume <id> --plugin-dir <hooks>` (and `--plugin-dir <workflow>` when given) and no prompt, so a Windows shim never needs `typeYourself`.
  */
 export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCommandError {
   const bad = badInput(o)
   if (bad !== undefined) return bad
-  return build(o, ['--resume', o.sessionId, '--plugin-dir', o.pluginDir], undefined)
+  return build(o, ['--resume', o.sessionId, ...pluginFlags(o)], undefined)
 }
+
+/** `--plugin-dir <hooks>`, then `--plugin-dir <workflow>` when there is one. */
+const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : ['--plugin-dir', o.workflowDir])]
 
 /**
  * The command for `flags` and an optional prompt, last. A Windows shim only cmd.exe can read gets no prompt:
@@ -93,7 +101,7 @@ function build(o: CommandBase, flags: string[], prompt: string | undefined): Ses
 
   // A shim only cmd.exe can read. node-pty quotes an arg with a space and escapes any quote in it, so no free
   // text can pass through cmd.exe intact: the session starts with no prompt, and the user types it.
-  if (CMD_UNSAFE.test(o.claude) || CMD_UNSAFE.test(o.pluginDir)) return 'unsafe claude path'
+  if ([o.claude, o.pluginDir, o.workflowDir ?? ''].some((p) => CMD_UNSAFE.test(p))) return 'unsafe claude path'
   const cmd = windows.cmdPath(o.env)
   if (cmd === undefined) return 'cmd.exe not found'
   // `call` first: cmd.exe strips the quotes of the line after /c only when it starts with a quote.
@@ -105,7 +113,8 @@ function build(o: CommandBase, flags: string[], prompt: string | undefined): Ses
 function badInput(o: CommandBase): 'bad id' | 'bad path' | undefined {
   if (!UUID_V4.test(o.sessionId) || !UUID_V4.test(o.runMarker) || o.sessionId === o.runMarker) return 'bad id'
   const win = o.platform === 'win32'
-  if (![o.claude, o.repo, o.pluginDir, o.configDir].every((p) => isAbsoluteFor(p, win))) return 'bad path'
+  const paths = [o.claude, o.repo, o.pluginDir, o.configDir, ...(o.workflowDir === undefined ? [] : [o.workflowDir])]
+  if (!paths.every((p) => isAbsoluteFor(p, win))) return 'bad path'
   return undefined
 }
 

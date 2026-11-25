@@ -6,6 +6,7 @@ import type { Board, BoardRepo, PrStatus } from './board.ts'
 import { fixPr, fixRunAgents, fixRuns } from './fix-runs.ts'
 import { rowSessions, sessionView, shownSession, type SessionView } from './hosted.ts'
 import { handBackPr, isDrafting, isPlanAgent, isRun, isRunning, pendingHandBack, planState, prByBranch, roleOf } from './pipeline.ts'
+import { SUPPORTED_DOCS_VERSION } from './formats.ts'
 import type { PlanModel } from './run-model.ts'
 
 export type RunState = 'blocked' | 'needs-you' | 'running' | 'idle' | 'unsupported' | 'error'
@@ -21,6 +22,24 @@ export type RunSummary = {
   where: string
   state: RunState
   portBase?: number
+  /** Set on an unsupported repo's row: why its docs can't be read (`unsupportedCase`), so its chip names the fix. */
+  unsupported?: Unsupported
+}
+
+/**
+ * Why a repo's docs can't be read, and so what fixes them. A set-up repo (`.openaflow/`) loads the app's own
+ * workflow, so updating pod can't help it: `no-state` and `old-state` need `init`, and `newer-state` a newer app.
+ * A repo without `.openaflow/` has pod-docs of another version (`old-pod`: update pod) or no workflow yet (`no-workflow`).
+ */
+export type Unsupported = 'no-state' | 'old-state' | 'newer-state' | 'old-pod' | 'no-workflow'
+
+export function unsupportedCase(repo: Pick<BoardRepo, 'model'>): Unsupported {
+  const { version } = repo.model.docs
+  if (repo.model.openaflow) {
+    if (version === undefined) return 'no-state'
+    return version > SUPPORTED_DOCS_VERSION ? 'newer-state' : 'old-state'
+  }
+  return version === undefined ? 'no-workflow' : 'old-pod'
 }
 
 const ACTIVE = new Set<RunState>(['blocked', 'needs-you', 'running'])
@@ -40,7 +59,7 @@ export const activeRuns = (runs: RunSummary[]) => runs.filter((r) => ACTIVE.has(
 function repoRuns(repo: BoardRepo, now: number): RunSummary[] {
   const base = { repoId: repo.id, repo: repo.name }
   if (repo.error !== undefined) return [{ ...base, where: repo.error || 'cannot read repo', state: 'error' }]
-  if (!repo.model.docs.supported) return [{ ...base, where: 'update pod', state: 'unsupported' }]
+  if (!repo.model.docs.supported) return [{ ...base, where: 'update pod', state: 'unsupported', unsupported: unsupportedCase(repo) }]
   const runs = repo.model.plans.filter((p) => isRun(repo, p, now)).map((p) => planRun(repo, p, now))
   runs.push(...fixRuns(repo, now).map((f) => ({ ...base, ...f })))
   const raised = runs.map((run) => raiseForWaiting(repo, run, now))

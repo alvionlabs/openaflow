@@ -29,10 +29,10 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
-function appOf(o: { platform?: NodeJS.Platform; probe?: ScopeProbe; failWrite?: boolean } = {}) {
+function appOf(o: { platform?: NodeJS.Platform; probe?: ScopeProbe; failWrite?: boolean; workflowDir?: string } = {}) {
   const lines: string[] = []
   const store = createSettingsStore({ file, log: (l) => lines.push(l), ...(o.failWrite ? { rename: async () => Promise.reject(new Error('disk full')) } : {}) })
-  const deps = { store, platform: o.platform ?? 'linux', claude: () => CLAUDE, pluginDir: PLUGIN, ...(o.probe ? { probe: async () => o.probe! } : {}) }
+  const deps = { store, platform: o.platform ?? 'linux', claude: () => CLAUDE, pluginDir: PLUGIN, workflowDir: () => o.workflowDir, ...(o.probe ? { probe: async () => o.probe! } : {}) }
   const app = createApp({
     ports: [PORT],
     token: TOKEN,
@@ -168,6 +168,25 @@ describe('settings routes', () => {
     const mac = settingsView({ scrollback: 5000 }, { platform: 'darwin', claude: CLAUDE, pluginDir: PLUGIN, probe: { on: false, reason: 'not on Linux (darwin)' } }).wrapper!
     expect(mac).toEqual({ runWrapper: '', stopCommand: '', isDefault: true, defaults: { runWrapper: '', stopCommand: '' }, preview: tail })
     expect(settingsView({ scrollback: 5000, runWrapper: 'wrap' }, { platform: 'darwin', claude: CLAUDE, pluginDir: PLUGIN }).wrapper).not.toHaveProperty('stopSkipped')
+  })
+
+  test('preview shows both plugin dirs', async () => {
+    const WORKFLOW = '/opt/openaflow/workflows/claude-pod'
+    const view = (workflowDir: string | undefined) => settingsView({ scrollback: 5000, runWrapper: '' }, { platform: 'linux', claude: CLAUDE, pluginDir: PLUGIN, workflowDir, probe: ON }).wrapper!.preview
+    // With a bundle: the hooks plugin, then the workflow, then the prompt, as a set-up repo's session starts.
+    expect(view(WORKFLOW)).toBe(`${CLAUDE} --session-id "<session id>" --plugin-dir ${PLUGIN} --plugin-dir ${WORKFLOW} "/pod:plan <your text>"`)
+    // A folder with a space is quoted.
+    expect(view('/opt/my apps/claude-pod')).toContain(`--plugin-dir ${PLUGIN} --plugin-dir "/opt/my apps/claude-pod" "/pod:plan`)
+    // No bundle: the hooks plugin only, as every session starts then.
+    expect(view(undefined)).toBe(`${CLAUDE} --session-id "<session id>" --plugin-dir ${PLUGIN} "/pod:plan <your text>"`)
+    // Through the route: the folder is read at each answer.
+    let dir: string | undefined = WORKFLOW
+    const live = createSettingsRead({ store: createSettingsStore({ file, log: () => {} }), platform: 'linux', claude: () => CLAUDE, pluginDir: PLUGIN, workflowDir: () => dir })
+    const preview = async () => ((await (await live.request('/')).json()) as SettingsView).wrapper!.preview
+    expect(await preview()).toContain(`--plugin-dir ${PLUGIN} --plugin-dir ${WORKFLOW} `)
+    dir = undefined
+    expect(await preview()).not.toContain(WORKFLOW)
+    expect(((await appOf({ workflowDir: WORKFLOW }).get()).body.wrapper as { preview: string }).preview).toContain(`--plugin-dir ${WORKFLOW} `)
   })
 
   test('windows has no wrapper', async () => {

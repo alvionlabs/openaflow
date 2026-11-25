@@ -102,7 +102,12 @@ describe('New session item', () => {
     expect(menuRepo(repo(), undefined)).toBeUndefined()
     expect(menuRepo(undefined, bridge)).toBeUndefined()
     expect(menuRepo(repo({ error: 'folder not found' }), bridge)).toBeUndefined()
-    expect(menuRepo(repo({ model: { docs: { supported: false } } } as never), bridge)).toBeUndefined()
+    // A set-up repo whose docs the app can't read: the item, so init can write them.
+    expect(menuRepo(repo({ model: { docs: { supported: false }, openaflow: true } } as never), bridge)?.id).toBe('notes')
+    expect(menuRepo(repo({ model: { docs: { supported: false }, openaflow: true } } as never), undefined)).toBeUndefined()
+    // A repo without .openaflow/, with or without docs: the item (sprint default-workflow §9).
+    expect(menuRepo(repo({ model: { docs: { supported: false } } } as never), bridge)?.id).toBe('notes')
+    expect(menuRepo(repo({ model: { docs: { supported: false } } } as never), undefined)).toBeUndefined()
 
     // The item: a plain action named New session, after Ports and before the danger items.
     expect(text(render({ portBase: 3100 }))).not.toContain('New session')

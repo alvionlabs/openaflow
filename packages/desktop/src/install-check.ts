@@ -6,7 +6,7 @@ import { execFile, spawn } from 'node:child_process'
 import { readdir, readFile, readlink } from 'node:fs/promises'
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { configPath } from '@openaflow/server/config'
 import { processAlive } from '@openaflow/server/parent-link'
 import { EXE_NAME, UPDATER_CACHE_DIR } from './build-config.ts'
@@ -442,11 +442,25 @@ const PACKAGED_PARTS = [
   'hooks-plugin/.claude-plugin/plugin.json',
   'hooks-plugin/hooks/hooks.json',
   'hooks-plugin/scripts/record.sh',
+  'workflows/claude-pod/.claude-plugin/plugin.json',
+  'workflows/claude-pod/LICENSE',
+  'workflows/claude-pod/skills/init/scaffold/.openaflow/workflows/claude-pod/state/README.md',
 ]
 
 /** Each part of PACKAGED_PARTS that the resources folder lacks. */
 export function missingParts(resources: string): string[] {
   return PACKAGED_PARTS.filter((part) => !existsSync(join(resources, part)))
+}
+
+/** Throws, naming each file under `<resources>/workflows` whose path or text holds `pod-docs`. The build renames them all. */
+export function checkNoPodDocs(resources: string): void {
+  const root = join(resources, 'workflows')
+  if (!existsSync(root)) return
+  const bad = readdirSync(root, { withFileTypes: true, recursive: true })
+    .map((entry) => ({ entry, rel: relative(root, join(entry.parentPath, entry.name)) }))
+    .filter(({ entry, rel }) => rel.includes('pod-docs') || (entry.isFile() && readFileSync(join(root, rel)).includes('pod-docs')))
+    .map(({ rel }) => rel)
+  if (bad.length > 0) throw new Error(`pod-docs is left in resources/workflows: ${bad.join(', ')}`)
 }
 
 /**
@@ -544,3 +558,48 @@ export async function endAppImage(pid: number, place: ProofPlace, o: { endMs?: n
 
 /** Removes the root, unpack and all. */
 export const removeAppImagePlace = (place: ProofPlace): Promise<void> => removeWithRetry(place.root)
+
+/**
+ * Every file and folder under `root`, as `/`-separated relative paths, minus each `.gitkeep` and each folder that holds
+ * no other file (electron-builder drops every `.gitkeep`, and with it such a folder; setup makes the template's).
+ */
+function treeOf(root: string): Map<string, 'dir' | 'file'> {
+  const all = new Map<string, 'dir' | 'file'>()
+  for (const entry of readdirSync(root, { withFileTypes: true, recursive: true })) {
+    const rel = relative(root, join(entry.parentPath, entry.name)).split(sep).join('/')
+    all.set(rel, entry.isDirectory() ? 'dir' : 'file')
+  }
+  const out = new Map<string, 'dir' | 'file'>()
+  const real = [...all].filter(([rel, kind]) => kind === 'file' && !rel.split('/').includes('.gitkeep')).map(([rel]) => rel)
+  for (const [rel, kind] of all) {
+    if (kind === 'file' ? !real.includes(rel) : !real.some((f) => f.startsWith(`${rel}/`))) continue
+    out.set(rel, kind)
+  }
+  return out
+}
+
+/**
+ * How `packaged` differs from `source`, sorted by path: `missing <path>` (in the source only), `extra <path>` (in the
+ * copy only), `differs <path>` (a file whose bytes differ, or a file in one and a folder in the other). Folders count,
+ * but a `.gitkeep`, and a folder with no other file in it, don't (`treeOf`). Empty: the same tree.
+ */
+export function compareTrees(packaged: string, source: string): string[] {
+  const want = treeOf(source)
+  const have = treeOf(packaged)
+  const out: { rel: string; line: string }[] = []
+  for (const [rel, kind] of want) {
+    const got = have.get(rel)
+    if (got === undefined) out.push({ rel, line: `missing ${rel}` })
+    else if (got !== kind || (kind === 'file' && !readFileSync(join(packaged, rel)).equals(readFileSync(join(source, rel))))) out.push({ rel, line: `differs ${rel}` })
+  }
+  for (const rel of have.keys()) if (!want.has(rel)) out.push({ rel, line: `extra ${rel}` })
+  return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)).map((d) => d.line)
+}
+
+/** Throws unless `<resources>/workflows/claude-pod` is the same tree as `source` (`packages/workflow/dist/claude-pod`). */
+export function checkWorkflowCopy(resources: string, source: string): void {
+  const copy = join(resources, 'workflows', 'claude-pod')
+  if (!existsSync(copy)) throw new Error('the packaged workflow is missing: resources/workflows/claude-pod')
+  const diff = compareTrees(copy, source)
+  if (diff.length > 0) throw new Error(`the packaged workflow differs from dist/claude-pod: ${diff.join(', ')}`)
+}

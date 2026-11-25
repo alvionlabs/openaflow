@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { buildRepoModel, listRuns, WAITING_AFTER_MS, type AgentRun, type BoardRepo, type Claim, type HostedSession, type PrStatus, type RunSummary } from '@openaflow/model'
 import { loadFixture } from '../../../../model/test/load-fixture.ts'
 import { cardTerminal, codeParts, DESKTOP_START, DESKTOP_TERMINAL, gateTitle, nextSteps, START_DETAIL, START_TITLE, WAITING_DETAIL, WAITING_TITLE, type NextItem, type NextSteps } from './next-step.ts'
-import { emptyMessage } from './view.ts'
+import { emptyMessage, NO_STATE } from './view.ts'
+import { menuRepo } from './new-session-flow.ts'
+
+const BRIDGE = { connect: async () => {}, onHostState: () => () => {} }
 
 // Boards built from the chess-web fixture: plan sparring-ladder, an autopilot run on wave 3 of sprint ladder
 // (T1 pending), with three PENDING entries routed to you (H1, U1, wave 2). Each case edits the files first.
@@ -232,7 +235,17 @@ describe('next step', () => {
     const old: BoardRepo = { ...chess(), model: buildRepoModel(loadFixture('speak-out')) }
     const oldRun = runs(old)[0]!
     expect(oldRun.state).toBe('unsupported')
+    // Without .openaflow/ it is the start card (setup start card), and the empty message is its detail.
     expect(nextSteps(oldRun, old, NOW)?.card.detail).toBe(emptyMessage(oldRun, old))
+    // A set-up repo with no readable docs (a bare .openaflow/): the start card too, so init can run; its detail names init.
+    const bare: BoardRepo = { ...chess(), model: buildRepoModel({ '.openaflow/': '' }) }
+    const bareRun = runs(bare)[0]!
+    expect(bareRun.state).toBe('unsupported')
+    expect(nextSteps(bareRun, bare, NOW)?.card).toMatchObject({ key: 'new-session', title: 'No active plan', detail: emptyMessage(bareRun, bare), action: { kind: 'new-session', repoId: 'chess' } })
+    expect(emptyMessage(bareRun, bare)).toMatch(/init/)
+    // An error stays the nothing card, set up or not.
+    const gone: BoardRepo = { ...bare, error: 'folder not found' }
+    expect(nextSteps(runs(gone)[0]!, gone, NOW)?.card).toMatchObject({ key: 'nothing', action: { kind: 'none' } })
     const row: RunSummary = { repoId: 'chess', repo: 'chess-web', where: 'no active plan', state: 'idle' }
     // A plan-less row is the place to start a session: the start card (N1), still calm.
     expect(nextSteps(row, chess(), NOW)?.card).toMatchObject({ tier: 'nothing', title: 'No active plan', detail: 'Pick what to start, then describe it.' })
@@ -568,11 +581,9 @@ describe('hosted sessions', () => {
     // An old ended session beside a live one: the live one is shown, so no start card.
     const both = bare({ hosted: [session({ marker: 'm0', state: 'ended', startedAt: NOW - 9 * MIN }), session()] })
     expect(rowSteps(both).card.key).toBe('running:mark-1')
-    // An error or unsupported repo never offers one.
+    // An error repo never offers one (an unsupported one: setup start card).
     const broken = bare({ error: 'folder not found' })
     expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card.action.kind).toBe('none')
-    const old: BoardRepo = { ...bare(), model: buildRepoModel(loadFixture('speak-out')) }
-    expect(nextSteps(runs(old)[0]!, old, NOW)?.card.action.kind).toBe('none')
     // A plan run never gets it.
     expect(steps(chess([onlyQueue()])).card.action.kind).toBe('none')
     // A real stop that joins no plan keeps the repo row's card.
@@ -584,6 +595,61 @@ describe('hosted sessions', () => {
     expect(cardTerminal(card, true)).toEqual({ detail: START_DETAIL, form: true, openTerminal: false })
     expect(cardTerminal(card, false)).toEqual({ detail: DESKTOP_START, form: false, openTerminal: false })
     expect(DESKTOP_START).toBe('Open the desktop app to start a session.')
+  })
+
+  it('setup start card', () => {
+    const noOpenaflow = 'This repo has no workflow yet. Set it up to use the app\'s claude-pod.'
+    // No docs at all, no .openaflow/: unsupported, yet the start card, with the set-up line as its detail.
+    const empty = bare({ model: buildRepoModel({}) })
+    const emptyRun = runs(empty)[0]!
+    expect(emptyRun.state).toBe('unsupported')
+    expect(nextSteps(emptyRun, empty, NOW)?.card).toEqual<NextItem>({
+      key: 'new-session',
+      tier: 'nothing',
+      status: 'idle',
+      title: START_TITLE,
+      detail: noOpenaflow,
+      action: { kind: 'new-session', repoId: 'notes' },
+    })
+    expect(menuRepo(empty, BRIDGE)?.id).toBe('notes')
+    // The card keeps that line over the form in the desktop app; the browser adds the desktop note.
+    const card = nextSteps(emptyRun, empty, NOW)!.card
+    expect(cardTerminal(card, true)).toEqual({ detail: noOpenaflow, form: true, openTerminal: false })
+    expect(cardTerminal(card, false)).toEqual({ detail: noOpenaflow, form: false, openTerminal: false, note: DESKTOP_START })
+    // Older pod docs, no .openaflow/: the start card too, its detail the version message.
+    const old: BoardRepo = { ...bare(), model: buildRepoModel(loadFixture('speak-out')) }
+    const oldRun = runs(old)[0]!
+    expect(oldRun.state).toBe('unsupported')
+    expect(nextSteps(oldRun, old, NOW)?.card).toMatchObject({ action: { kind: 'new-session' }, detail: emptyMessage(oldRun, old) })
+    expect(menuRepo(old, BRIDGE)?.id).toBe('notes')
+    // pod-docs v2, no .openaflow/: the start card as today, and the menu.
+    expect(rowSteps(bare()).card).toMatchObject({ action: { kind: 'new-session' }, detail: START_DETAIL })
+    expect(menuRepo(bare(), BRIDGE)?.id).toBe('notes')
+    // A set-up repo with readable state: the start card and the menu.
+    const setUp = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 2\n' }) })
+    expect(rowSteps(setUp).card).toMatchObject({ action: { kind: 'new-session' }, detail: START_DETAIL })
+    expect(menuRepo(setUp, BRIDGE)?.id).toBe('notes')
+    // A set-up repo with no docs in its state: the start card and the menu item, so init can write them; the detail names init.
+    const unread = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }) })
+    const unreadRun = runs(unread)[0]!
+    expect(unreadRun.state).toBe('unsupported')
+    expect(nextSteps(unreadRun, unread, NOW)?.card).toMatchObject({ action: { kind: 'new-session' }, detail: NO_STATE })
+    expect(menuRepo(unread, BRIDGE)?.id).toBe('notes')
+    // A set-up repo whose docs are newer than the app reads: no start card and no menu item, since the app's pod is older.
+    const newer = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' }) })
+    expect(nextSteps(runs(newer)[0]!, newer, NOW)?.card).toMatchObject({ action: { kind: 'none' }, detail: emptyMessage(runs(newer)[0]!, newer) })
+    expect(menuRepo(newer, BRIDGE)).toBeUndefined()
+    // An older version: init updates them, so both.
+    const older = bare({ model: buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 1\n' }) })
+    expect(nextSteps(runs(older)[0]!, older, NOW)?.card.action.kind).toBe('new-session')
+    expect(menuRepo(older, BRIDGE)?.id).toBe('notes')
+    // An error repo: neither, with or without .openaflow/.
+    const broken = bare({ model: buildRepoModel({}), error: 'folder not found' })
+    expect(nextSteps(runs(broken)[0]!, broken, NOW)?.card.action.kind).toBe('none')
+    expect(menuRepo(broken, BRIDGE)).toBeUndefined()
+    // A live session in a no-docs repo: the running card, not a second start.
+    const live = bare({ model: buildRepoModel({}), hosted: [session({ hooked: true })] })
+    expect(rowSteps(live).card.action.kind).toBe('open-terminal')
   })
 
   it('waiting card', () => {
