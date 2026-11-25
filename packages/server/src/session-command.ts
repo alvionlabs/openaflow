@@ -82,8 +82,9 @@ export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCom
 }
 
 /**
- * `--plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when there is one. `--add-dir` takes every
- * word up to the next flag, so it goes before the workflow's `--plugin-dir`: a prompt right after it would be read as a folder.
+ * `--plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when there is one. `claude --help` lists
+ * `--add-dir <directories...>`, which takes every word up to the next flag, so it goes before the workflow's `--plugin-dir`:
+ * a prompt right after it would be read as a folder.
  */
 const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : ['--add-dir', o.workflowDir, '--plugin-dir', o.workflowDir])]
 
