@@ -45,7 +45,7 @@ export function RunsList({ runs, selected, repos, removable, onRemove, auto }: P
         <ul className="run-list">
           {runs.map((r) => {
             const href = hashFor(r)
-            const state = runChip(r.state)
+            const state = runChip(r.state, r.unsupported)
             const card = runCard(r, repoOfRun(repos, r))
             const tag = runTag(r)
             const more = onRemove && removable?.(r)
