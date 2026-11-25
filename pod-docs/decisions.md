@@ -690,3 +690,38 @@ Consequences: until you set up a repo, its sessions use whatever claude-pod is i
 Context: plan `default-workflow`, wave 4 hands-on test. Add repo asked "Create .openaflow/ in this repo?" every time. For a repo without `pod-docs/`, setup loses nothing, and adding the repo to OpenAFlow already says you want OpenAFlow there, so the question was one click with no new information.
 Decision: Add repo on a repo without `.openaflow/` and without `pod-docs/` creates `.openaflow/workflows/claude-pod/` at once, and a short line confirms it. A repo with `pod-docs/` still gets the confirm, with a warning that its `pod-docs/` runs will no longer show on the board. New session's **Set up** offer stays, and it shows the same warning for a repo with `pod-docs/`. This narrows decision 2 / plan Q13 b ("the app writes only after you agree") to repos where setup hides something.
 Consequences: adding a new repo writes `.openaflow/` into it right away, and it shows in `git status`. Rejected: always create with no question (it would silently hide a `pod-docs/` repo's history), and always ask (the old behavior).
+
+## 2026-11-24 — Package the app in the wave check of any wave that touches the bundle (human)
+Context: plan `default-workflow`. electron-builder drops every `.gitkeep`, so the packaged template lacked 5 empty folders. That bug existed from wave 1, but only the plan review ran `pnpm package`, so it was found three waves late (review finding 2, PR #166).
+Decision: a wave whose slices touch what the app ships (`packages/desktop` build config or scripts, `packages/workflow`, `extraResources`, the install or release check) runs `pnpm package` and `pnpm release:check packages/desktop/release` on Linux as part of its wave check, beside `pnpm verify` and `pnpm test:electron`.
+Consequences: about 3 more minutes on those waves only. Other waves are unchanged. Rejected: packaging on every wave (slow, rarely useful), and leaving it to the plan review (finds bundle bugs late).
+
+## 2026-11-24 — A second fix pass for plan default-workflow (human)
+Context: the round 2 review of PR #166 still returned `fix`, with 2 findings: the sidebar chip reads `update pod` next to a card that says to run `init`, and no test covers the server wiring of plugin folders into Continue. Pod allows one fix pass, then halts at gate 2.
+Decision: the human allowed a second fix pass for these two findings, then a short round 3.
+Consequences: this is a one-time exception for this plan, not a change to pod's one-pass rule.
+
+## 2026-11-24 — Setup error words (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: The setup error words: `This repo already has a .openaflow file or folder` · `The app has no workflow to set up. Please reinstall it` · `Setup is already running. Please wait` · `Setup failed. Please try again`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Add repo confirm buttons (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: In the Add repo confirm, **Create** is primary and takes first focus, **Not now** is quiet, the facts sit under an open Details, and Escape acts as Not now unless Create is running. A redesign is parked as idea `rework-setup-dialogs`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — New session workflow controls (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: Every control is off while a Use or Set up is sent; focus moves to the text field after one; the mismatch line and the setup offer share one slot above the buttons; at 375 px Use and Set up keep their width; busy labels `Updating…` and `Setting up…`; Use errors `This repo already uses the app's version`, `The app has no workflow to use. Please reinstall it`, `This workflow isn't on the board anymore`, `Can't read this repo's workflow.json`, `Update failed. Please try again`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Repo added box after setup (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: After a no-question setup on Add repo, a "Repo added · Created .openaflow/workflows/claude-pod/" box closes itself after 3 s (Close or Escape sooner). A status line in the main screen would replace it; see idea `rework-setup-dialogs`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Newer workflow docs block New session (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: A set-up repo whose docs are newer than version 2 gets no New session and reads "… Update OpenAFlow to read them.", because the app's older `pod` could damage them.
+Consequences: the value in use stays until you change it.

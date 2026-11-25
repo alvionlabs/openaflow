@@ -1,6 +1,6 @@
 # Plan: Default workflow
 
-_Generated: 2026-11-23 · Status: active · Grilled-with: pod (fast)_
+_Generated: 2026-11-23 · Status: archived · Grilled-with: pod (fast)_
 
 Port base: 3200
 
