@@ -176,10 +176,29 @@ describe('createClaudeRunner', () => {
     expect((await readRecord()).argv).toEqual(['-p', '--resume', SESSION, 'go'])
   })
 
+  test('passes the workflow folder as --add-dir and --plugin-dir, after the other plugins', async () => {
+    const hooks = join(tmp, 'hooks plugin')
+    const workflowDir = join(tmp, 'work flows', 'claude-pod')
+    const runner = createClaudeRunner({ bin: 'claude', logDir, env: envWith(), windowMs: 3000 })
+    expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins: [hooks], workflowDir })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'continue'])
+
+    // With no hooks plugin, the workflow pair alone.
+    rmSync(recordFile)
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, workflowDir })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
+
+    // No workflow: no --add-dir.
+    rmSync(recordFile)
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [hooks] })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).not.toContain('--add-dir')
+  })
+
   test('refuses a relative or empty plugin folder', async () => {
     const runner = createClaudeRunner({ bin: 'claude', logDir, env: envWith(), windowMs: 3000 })
     for (const bad of ['', 'plugins', join('..', 'plugins'), '--bare']) {
       expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins: [join(tmp, 'ok'), bad] }), bad).toEqual({ outcome: 'failed', message: 'bad plugin folder' })
+      expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins: [join(tmp, 'ok')], workflowDir: bad }), bad).toEqual({ outcome: 'failed', message: 'bad plugin folder' })
     }
     expect(existsSync(recordFile)).toBe(false)
   })
@@ -192,8 +211,15 @@ describe('createClaudeRunner', () => {
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins })).toEqual({ outcome: 'started' })
     expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', plugins[0], '--plugin-dir', plugins[1], '--resume', SESSION, 'go'])
 
+    // The workflow folder, with a space, quoted as one arg for both flags.
+    rmSync(recordFile)
+    const [hooks, workflowDir] = [join(tmp, 'hooks plugin'), join(tmp, 'work flows', 'claude-pod')]
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [hooks], workflowDir })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
+
     rmSync(recordFile)
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [join(tmp, 'a&calc')] })).toEqual({ outcome: 'failed', message: 'unsafe claude path' })
+    expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, workflowDir: join(tmp, 'a&calc') })).toEqual({ outcome: 'failed', message: 'unsafe claude path' })
     expect(existsSync(recordFile)).toBe(false)
   })
 

@@ -22,7 +22,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-type Start = { session: string; word: string; cwd: string; plugins?: readonly string[] }
+type Start = { session: string; word: string; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 
 /** A fake runner: records each start and answers with `result`. No real claude, ever. */
 function fakeRunner(result: () => Promise<StartResult> | StartResult = () => ({ outcome: 'started' })) {
@@ -351,12 +351,20 @@ describe('automatic check', () => {
 })
 
 describe('workflow plugin folders', () => {
-  test('an automatic send in a set-up repo carries the hooks and workflow folders', async () => {
+  test('an automatic send in a set-up repo carries the hooks plugin and the workflow folder', async () => {
     const store = createAutoContinueStore({ file })
     await store.set('/r', 'alpha', true)
     const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: true })), store })
     await s.auto.check()
-    expect(s.runner.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin'), join(root, 'workflows', 'claude-pod')] }])
+    expect(s.runner.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin')], workflowDir: join(root, 'workflows', 'claude-pod') }])
+  })
+
+  test('an automatic send in a repo without .openaflow/ gets no plugin or workflow folder', async () => {
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE)), store })
+    await s.auto.check()
+    expect(s.runner.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r' }])
   })
 
   test('an automatic send in a set-up repo with no bundle fails as workflow missing', async () => {

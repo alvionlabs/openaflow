@@ -33,13 +33,14 @@ export type ResumeDeps = {
 /**
  * The plugin folders a `-p` run in `repo` loads, as a hosted session's (sprint default-workflow §6, the same rule as
  * session-routes.ts `workflowOf`). A repo without `.openaflow/` gets none, so its args stay today's. A set-up repo gets
- * the hooks plugin (when there is one) and its workflows' bundle, or `missing` when there is no bundle or no resolver.
+ * the hooks plugin (when there is one) and its workflows' bundle as `workflowDir`, which the runner passes as both
+ * `--add-dir` and `--plugin-dir`; or `missing` when there is no bundle or no resolver.
  */
-function pluginsOf(repo: BoardRepo, d: Pick<ResumeDeps, 'workflows' | 'pluginDir'>): { plugins?: string[] } | 'missing' {
+function pluginsOf(repo: BoardRepo, d: Pick<ResumeDeps, 'workflows' | 'pluginDir'>): { plugins?: string[]; workflowDir?: string } | 'missing' {
   if (repo.model.openaflow !== true) return {}
   const bundle = d.workflows?.forRepo(repo.model.workflows)
   if (bundle === undefined) return 'missing'
-  return { plugins: [...(d.pluginDir === undefined ? [] : [d.pluginDir]), bundle.dir] }
+  return { ...(d.pluginDir === undefined ? {} : { plugins: [d.pluginDir] }), workflowDir: bundle.dir }
 }
 
 /** A resume request or a running child already holds this session. */
