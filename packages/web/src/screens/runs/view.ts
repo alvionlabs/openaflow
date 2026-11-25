@@ -5,6 +5,7 @@
 
 import {
   formatTokens,
+  unsupportedCase,
   type AgentState,
   type Board,
   type BoardRepo,
@@ -14,6 +15,7 @@ import {
   type OtherAgent,
   type RunState,
   type RunSummary,
+  type Unsupported,
 } from '@openaflow/model'
 import type { StreamState } from '../../board-stream.ts'
 import { hashFor, type View } from '../../selection.ts'
@@ -24,16 +26,26 @@ import { toggleTab, type Tab } from './tab-memory.ts'
 export type ChipClass = 's-run' | 's-ok' | 's-you' | 's-bad' | 's-idle'
 export type Chip = { cls: ChipClass; label: string }
 
-const RUN_CHIPS: Record<RunState, Chip> = {
+const RUN_CHIPS: Record<Exclude<RunState, 'unsupported'>, Chip> = {
   blocked: { cls: 's-bad', label: 'blocked' },
   'needs-you': { cls: 's-you', label: 'needs you' },
   running: { cls: 's-run', label: 'running' },
   idle: { cls: 's-idle', label: 'idle' },
-  unsupported: { cls: 's-you', label: 'update pod' },
   error: { cls: 's-bad', label: 'error' },
 }
 
-export const runChip = (s: RunState): Chip => RUN_CHIPS[s]
+/** An unsupported run's chip names the fix its card gives (`emptyMessage`): never `update pod` for a set-up repo. */
+const UNSUPPORTED_LABELS: Record<Unsupported, string> = {
+  'no-state': 'needs init',
+  'old-state': 'needs init',
+  'newer-state': 'update app',
+  'old-pod': 'update pod',
+  'no-workflow': 'set up',
+}
+
+/** A run's chip. An unsupported run reads its reason (`RunSummary.unsupported`); with none, `update pod` as before. */
+export const runChip = (s: RunState, why?: Unsupported): Chip =>
+  s === 'unsupported' ? { cls: 's-you', label: why === undefined ? 'update pod' : UNSUPPORTED_LABELS[why] } : RUN_CHIPS[s]
 
 const LOST: Chip = { cls: 's-bad', label: 'lost · retrying' }
 
@@ -118,18 +130,31 @@ export function rowFigures(row: LogRow): string {
   return parts.join(' · ')
 }
 
-/** pod's own install steps, from its README. OpenAFlow has no runs to show without it. */
-export const POD_INSTALL = 'To install pod, open Claude Code and run /plugin marketplace add iamphduc/claude-pod, then /plugin install pod@pod.'
+/** A repo with no docs and no `.openaflow/`: New session offers the setup beside it (sprint default-workflow §9). */
+export const NO_WORKFLOW = "This repo has no workflow yet. Set it up to use the app's claude-pod."
 
-/** Why a run has no pipeline, and what to do about it. `repo` gives an unsupported repo's docs version. */
+/** A set-up repo with no readable docs (a bare `.openaflow/`, or a workflow with no state yet): New session runs init. */
+export const NO_STATE = "This repo's workflow has no docs yet. Start a New session with `init` to create them."
+
+/** Why a run has no pipeline, and what to do about it. `repo` gives an unsupported repo's docs version and its `.openaflow/`. */
 export function emptyMessage(r: RunSummary, repo?: BoardRepo): string {
   if (r.state === 'error') return `Can't read this repo: ${r.where}. Check that the folder still exists.`
   if (r.state === 'unsupported') {
     if (!repo) return "This repo's pod docs are from an older pod. Update pod in this repo to see its runs."
     const { version } = repo.model.docs
-    return version === undefined
-      ? `This repo has no pod docs, or they are from an older pod. Update pod in this repo. ${POD_INSTALL}`
-      : `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
+    // The same reason the run's chip names (`unsupportedCase`), so the two never disagree.
+    switch (unsupportedCase(repo)) {
+      case 'no-state':
+        return NO_STATE
+      case 'newer-state':
+        return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Update OpenAFlow to read them.`
+      case 'old-state':
+        return `This repo's workflow docs are version ${version}; OpenAFlow reads version 2. Start a New session with \`init\` to update them.`
+      case 'old-pod':
+        return `This repo's pod docs are version ${version}; OpenAFlow reads version 2. Update pod in this repo.`
+      case 'no-workflow':
+        return NO_WORKFLOW
+    }
   }
   if (r.plan === undefined) return 'No active plan in this repo. A plan shows here once pod starts one.'
   return `Can't find plan ${r.plan} in this repo's pod docs.`

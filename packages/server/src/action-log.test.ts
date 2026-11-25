@@ -153,6 +153,27 @@ describe('action log', () => {
     ])
   })
 
+  test('workflow entries', async () => {
+    // Setup and Use, appended by one log and read back by the next start's; a result from the other kind is a bad line.
+    const log = createActionLog({ file, now: () => 7 })
+    const created: NewActionEntry = { action: 'setup-workflow', repoId: 'id-r', repo: 'r', target: '.openaflow/workflows/claude-pod · 0.11.10', result: 'created' }
+    const setupFailed: NewActionEntry = { action: 'setup-workflow', repoId: 'id-r', repo: 'r', target: '.openaflow/workflows/claude-pod · 0.11.10', result: 'failed', message: 'setup failed: ENOSPC' }
+    const updated: NewActionEntry = { action: 'use-workflow-version', repoId: 'id-r', repo: 'r', target: '.openaflow/workflows/claude-pod · 0.11.9 → 0.11.10', result: 'updated' }
+    const useFailed: NewActionEntry = { action: 'use-workflow-version', repoId: 'id-r', repo: 'r', target: '.openaflow/workflows/claude-pod · 0.11.9 → 0.11.10', result: 'failed', message: 'update failed: EACCES' }
+    for (const e of [created, setupFailed, updated, useFailed]) expect(await log.append(e)).toBe(true)
+    const bad = [
+      { at: 8, action: 'setup-workflow', repoId: 'id-r', repo: 'r', target: 'x', result: 'updated' },
+      { at: 9, action: 'use-workflow-version', repoId: 'id-r', repo: 'r', target: 'x', result: 'created' },
+    ]
+    await writeFile(file, (await readFile(file, 'utf8')) + bad.map((e) => JSON.stringify(e)).join('\n') + '\n')
+    expect(createActionLog({ file, now: () => 10 }).recent()).toEqual([
+      { at: 7, ...useFailed },
+      { at: 7, ...updated },
+      { at: 7, ...setupFailed },
+      { at: 7, ...created },
+    ])
+  })
+
   test('reads resume entries', async () => {
     const resume = (result: 'started' | 'failed', auto: boolean, message?: string): NewActionEntry => ({
       action: 'resume',

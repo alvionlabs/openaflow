@@ -77,6 +77,7 @@ runs the same command on Windows only; macOS and Linux aren't checked.
 - `packages/server`: Hono API server: finds repos, watches their files, and serves the board.
 - `packages/web`: React and Vite web app: the interface the desktop app shows.
 - `packages/desktop`: Electron shell: window, tray, toasts, installer, and updates.
+- `packages/workflow`: fetches the pinned claude-pod release and builds the workflow plugin the app ships.
 
 ## License
 

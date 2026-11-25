@@ -6,6 +6,7 @@
 import { autoSends, isHostedSession, repoPathKey, type Board, type BoardRepo, type NewActionEntry, type ResumeResult } from '@openaflow/model'
 import type { AutoContinueStore } from './auto-continue-store.ts'
 import type { ClaudeRunner, ResumeWord, StartResult } from './claude-runner.ts'
+import type { WorkflowResolver } from './workflow-resolver.ts'
 
 /** How often the check runs with no new Board: idle depends on time passing. */
 export const AUTO_TICK_MS = 15_000
@@ -22,7 +23,24 @@ export type ResumeDeps = {
   idle(repo: BoardRepo, session: string): boolean
   /** Sessions with a resume request starting now, shared by the route and the check. */
   inFlight: Set<string>
+  /** The bundled workflow a set-up repo's run loads. With none, a set-up repo's run fails as `workflow missing`. */
+  workflows?: Pick<WorkflowResolver, 'forRepo'>
+  /** The hooks plugin folder; `undefined` when the server has none (the browser build). */
+  pluginDir?: string | undefined
   now?: () => number
+}
+
+/**
+ * The plugin folders a `-p` run in `repo` loads, as a hosted session's (sprint default-workflow §6, the same rule as
+ * session-routes.ts `workflowOf`). A repo without `.openaflow/` gets none, so its args stay today's. A set-up repo gets
+ * the hooks plugin (when there is one) and its workflows' bundle as `workflowDir`, which the runner passes as both
+ * `--add-dir` and `--plugin-dir`; or `missing` when there is no bundle or no resolver.
+ */
+function pluginsOf(repo: BoardRepo, d: Pick<ResumeDeps, 'workflows' | 'pluginDir'>): { plugins?: string[]; workflowDir?: string } | 'missing' {
+  if (repo.model.openaflow !== true) return {}
+  const bundle = d.workflows?.forRepo(repo.model.workflows)
+  if (bundle === undefined) return 'missing'
+  return { ...(d.pluginDir === undefined ? {} : { plugins: [d.pluginDir] }), workflowDir: bundle.dir }
 }
 
 /** A resume request or a running child already holds this session. */
@@ -31,17 +49,21 @@ export const isResuming = (d: Pick<ResumeDeps, 'inFlight' | 'runner'>, session: 
 /**
  * Starts the runner (a throw is a failed start) and logs one entry, whatever the result. A session in the app's
  * terminal host, in any state, never gets a `-p` send: the runner doesn't start, and the entry is `failed`, `hosted session`.
+ * A set-up repo with no bundle doesn't start either: `failed`, `workflow missing`.
  */
 export async function runResume(
-  d: Pick<ResumeDeps, 'runner' | 'log'>,
+  d: Pick<ResumeDeps, 'runner' | 'log' | 'workflows' | 'pluginDir'>,
   r: { repo: BoardRepo; run: string; session: string; word: ResumeWord; auto: boolean },
 ): Promise<ResumeResult> {
   let start: StartResult
+  const plugins = pluginsOf(r.repo, d)
   if (isHostedSession(r.repo, r.session)) {
     start = { outcome: 'failed', message: 'hosted session' }
+  } else if (plugins === 'missing') {
+    start = { outcome: 'failed', message: 'workflow missing' }
   } else {
     try {
-      start = await d.runner.start({ session: r.session, word: r.word, cwd: r.repo.path })
+      start = await d.runner.start({ session: r.session, word: r.word, cwd: r.repo.path, ...plugins })
     } catch (err) {
       start = { outcome: 'failed', message: err instanceof Error ? err.message : String(err) }
     }

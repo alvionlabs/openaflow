@@ -61,6 +61,16 @@ export type ResumeSessionOutcome = 'started' | 'failed'
 /** What the resume-session route sends back on success: the new session's marker. */
 export type ResumeSessionResult = { outcome: 'started'; marker: string; logged: boolean }
 
+export type SetupWorkflowOutcome = 'created' | 'failed'
+
+/** What the setup-workflow route sends back on success: the repo's `.openaflow/` was created. */
+export type SetupWorkflowResult = { outcome: 'created'; logged: boolean }
+
+export type UseWorkflowVersionOutcome = 'updated' | 'failed'
+
+/** What the use-workflow-version route sends back on success: the workflow's `version` now is the bundled one. */
+export type UseWorkflowVersionResult = { outcome: 'updated'; logged: boolean }
+
 /**
  * One logged action. A merge's `target` is `PR #N`; an answer's is the queue entry's
  * `<date> · <TYPE> · <from → to>`, never the answer text or the body; a resolve's (Close or Keep) the same. A resume's is
@@ -68,6 +78,8 @@ export type ResumeSessionResult = { outcome: 'started'; marker: string; logged: 
  * A forget-run's is `<run> · port base <N>`.
  * A new-session's and a dismiss-session's is `<skill command or plain> · <marker first 8>`, never the text.
  * A resume-session's is the same, with the new session's marker.
+ * A setup-workflow's is `.openaflow/workflows/claude-pod · <bundled version>`. A use-workflow-version's is
+ * `.openaflow/workflows/<name> · <old version> → <bundled version>`.
  */
 export type ActionEntry = { at: number; repoId: string; repo: string; target: string; message?: string } & (
   | { action: 'merge'; result: MergeOutcome }
@@ -79,6 +91,8 @@ export type ActionEntry = { at: number; repoId: string; repo: string; target: st
   | { action: 'new-session'; result: NewSessionOutcome }
   | { action: 'dismiss-session'; result: DismissSessionOutcome }
   | { action: 'resume-session'; result: ResumeSessionOutcome }
+  | { action: 'setup-workflow'; result: SetupWorkflowOutcome }
+  | { action: 'use-workflow-version'; result: UseWorkflowVersionOutcome }
 )
 
 /** An entry before the log stamps its time. Omit spreads over the union, so `action` and `result` stay paired. */

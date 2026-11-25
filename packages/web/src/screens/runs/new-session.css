@@ -93,3 +93,41 @@
   white-space: pre-wrap;
   min-width: 0;
 }
+
+/*
+ * The workflow's lines (sprint default-workflow §9): the mismatch notice with Use, or the setup offer with Set up, one
+ * muted line above the actions with a secondary button beside it; the version line, muted, under the actions. The
+ * button wraps under the line on a narrow screen.
+ */
+.ns-workflow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.ns-workflow-text,
+.ns-version {
+  font-size: var(--size-dense);
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Under the setup offer of a repo with pod-docs/ docs: a muted line on its own row, under the line and Set up. */
+.ns-workflow-warning {
+  flex-basis: 100%;
+  font-size: var(--size-dense);
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ns-workflow-text code {
+  font-size: var(--size-small);
+}
+
+.ns-version {
+  font-size: var(--size-small);
+}

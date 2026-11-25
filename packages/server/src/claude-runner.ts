@@ -9,9 +9,16 @@ export { resolveBin }
 
 export type ResumeWord = Exclude<ReplyWord, 'try'>
 export type StartResult = { outcome: 'started' | 'failed'; message?: string }
+/**
+ * `plugins`: absolute plugin folders, each passed as `--plugin-dir <folder>` after `-p`. `workflowDir`: the absolute
+ * bundled workflow folder, passed after them as `--add-dir <folder> --plugin-dir <folder>`, so claude reads the
+ * workflow's own files with no prompt. A set-up repo's run gets the hooks plugin and its bundled workflow (sprint
+ * default-workflow §6); with both left out, the args are today's.
+ */
+export type StartRequest = { session: string; word: ResumeWord; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 export type ClaudeRunner = {
-  /** Starts `claude -p --resume <session> <word>` in `cwd` and reports how its first `windowMs` went. */
-  start(r: { session: string; word: ResumeWord; cwd: string }): Promise<StartResult>
+  /** Starts `claude -p [--plugin-dir <folder>]… [--add-dir <workflow> --plugin-dir <workflow>] --resume <session> <word>` in `cwd` and reports how its first `windowMs` went. */
+  start(r: StartRequest): Promise<StartResult>
   /** A child this runner started for `session` is still alive. */
   isRunning(session: string): boolean
 }
@@ -187,9 +194,13 @@ export function createClaudeRunner(o: {
     else live.delete(session)
   }
 
-  async function start(r: { session: string; word: ResumeWord; cwd: string }): Promise<StartResult> {
+  async function start(r: StartRequest): Promise<StartResult> {
     if (!SESSION.test(r.session)) return failed('bad session id')
     if (!WORDS.includes(r.word)) return failed('bad reply word')
+    const plugins = r.plugins ?? []
+    const folders = r.workflowDir === undefined ? plugins : [...plugins, r.workflowDir]
+    // Absolute only: a relative folder would resolve in the repo, and nothing may read as a flag.
+    if (!folders.every((p) => isAbsoluteFor(p, process.platform === 'win32'))) return failed('bad plugin folder')
     const env = childEnv((typeof o.env === 'function' ? o.env() : o.env) ?? process.env)
     let file: string | undefined
     if (typeof o.bin === 'function') {
@@ -205,7 +216,12 @@ export function createClaudeRunner(o: {
     } catch {}
     if (!isDir) return failed('repo folder not found')
 
-    const args = ['-p', '--resume', r.session, r.word]
+    // `--add-dir` takes every word up to the next flag, so the workflow's `--plugin-dir` follows it.
+    const folderArgs = (q: (p: string) => string) => [
+      ...plugins.flatMap((p) => ['--plugin-dir', q(p)]),
+      ...(r.workflowDir === undefined ? [] : ['--add-dir', q(r.workflowDir), '--plugin-dir', q(r.workflowDir)]),
+    ]
+    const args = ['-p', ...folderArgs((p) => p), '--resume', r.session, r.word]
     const isShim = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file)
     // npm's shim names what it runs, so that runs directly; only an unknown shim needs cmd.exe.
     const target = isShim ? readShim(file, env, fallbackNode) : { file, pre: [] }
@@ -213,7 +229,7 @@ export function createClaudeRunner(o: {
     const shim = target === undefined
     // Absolute, so cmd.exe's redirect can't land in the repo folder the run starts in.
     const logPath = path.resolve(o.logDir, `${r.session}-${Date.now()}.log`)
-    if (shim && (CMD_UNSAFE.test(file) || CMD_UNSAFE.test(logPath))) return failed('unsafe claude path')
+    if (shim && [file, logPath, ...folders].some((p) => CMD_UNSAFE.test(p))) return failed('unsafe claude path')
     const cmd = shim ? cmdPath(env) : undefined
     if (shim && cmd === undefined) return failed('cmd.exe not found')
 
@@ -235,7 +251,9 @@ export function createClaudeRunner(o: {
         // cmd.exe doesn't hand its std handles on, so the line redirects them itself, and
         // the board must not hold the log open.
         closeSync(fd)
-        const line = `""${file}" ${args.join(' ')} <NUL >NUL 2>>"${logPath}""`
+        // Each plugin folder is quoted: an install path may hold a space.
+        const quoted = ['-p', ...folderArgs((p) => `"${p}"`), '--resume', r.session, r.word]
+        const line = `""${file}" ${quoted.join(' ')} <NUL >NUL 2>>"${logPath}""`
         child = spawn(cmd!, ['/d', '/s', '/c', line], {
           ...opts,
           stdio: 'ignore',

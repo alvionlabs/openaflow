@@ -12,9 +12,19 @@ const read = (name: string) => {
 
 type Step = { name?: string; uses?: string; run?: string; if?: string; shell?: string; 'working-directory'?: string; with?: Record<string, unknown>; env?: Record<string, unknown> }
 type Job = { name?: string; 'runs-on'?: string; strategy?: { 'fail-fast'?: boolean; matrix?: Record<string, unknown> }; steps?: Step[] }
-type Workflow = { on?: Record<string, { branches?: string[] } | null>; jobs?: Record<string, Job> }
+type Workflow = { on?: Record<string, { branches?: string[] } | null>; concurrency?: { group?: string; 'cancel-in-progress'?: boolean }; jobs?: Record<string, Job> }
 
 const ci = () => parse(read('pod-ci.yml')) as Workflow
+
+// CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR), never on a push:
+// a push to pod-staging and the staging PR would run the same code twice. A wave PR into the plan branch runs none
+// (pod-docs/decisions.md, 2026-11-17 and 2026-11-22). A new push to a PR cancels that PR's older run.
+const expectTriggers = (flow: Workflow) => {
+  expect(Object.keys(flow.on ?? {})).toEqual(['pull_request'])
+  expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
+  expect(flow.on?.push).toBeUndefined()
+  expect(flow.concurrency).toEqual({ group: 'pod-ci-${{ github.event.pull_request.number }}', 'cancel-in-progress': true })
+}
 
 describe('pod-ci.yml', () => {
   test('unit stays free of packaging', () => {
@@ -29,11 +39,7 @@ describe('pod-ci.yml', () => {
 
   test('unit on both systems', () => {
     const flow = ci()
-    // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
-    // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
-    expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
-    expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
-    expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
+    expectTriggers(flow)
     const job = flow.jobs?.unit
     expect(job?.name).toBe('unit (${{ matrix.os }})')
     expect(job?.['runs-on']).toBe('${{ matrix.os }}')
@@ -47,11 +53,7 @@ describe('pod-ci.yml', () => {
 
   test('e2e jobs', () => {
     const flow = ci()
-    // CI runs on PRs into pod-staging or main (the sprint-end check, the final plan PR, the staging PR) and on a
-    // push to pod-staging; a wave PR into the plan branch runs none (pod-docs/decisions.md, 2026-11-17).
-    expect(Object.keys(flow.on ?? {}).sort()).toEqual(['pull_request', 'push'])
-    expect(flow.on?.pull_request).toEqual({ branches: ['pod-staging', 'main'] })
-    expect(flow.on?.push).toEqual({ branches: ['pod-staging'] })
+    expectTriggers(flow)
     // The e2e jobs took over the pty proof's.
     expect(flow.jobs?.['pty-proof']).toBeUndefined()
 

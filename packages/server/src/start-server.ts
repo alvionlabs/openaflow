@@ -22,6 +22,7 @@ import { configPath, envValue, listenConfig, liveConfigDir, oldConfigDir, portFr
 import { moveOldConfig } from './config-move.ts'
 import { createFoundGhExec, createGhReader, defaultGhExec } from './gh.ts'
 import { openWithFallback, wantedPort } from './listen.ts'
+import { blocksSideload, managedSettingsPath } from './managed-settings.ts'
 import { createRemoveRepoRoutes } from './remove-repo-routes.ts'
 import { createForgetRunRoutes } from './forget-run-routes.ts'
 import { addRepo, removeRepo } from './repos-config.ts'
@@ -34,6 +35,7 @@ import { createScreenRoutes } from './screen-route.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createSettingsActions, createSettingsRead, type SettingsRouteDeps } from './settings-routes.ts'
 import { createSettingsStore } from './settings-store.ts'
+import { createSetupRoutes } from './setup-routes.ts'
 import { createHookReader, createSessionStore, followChannel, reconcileSessions, type StoredSession } from './session-store.ts'
 import { createSessionToken, writeSessionToken } from './session-token.ts'
 import { createShutdown, createWorkTracker } from './shutdown.ts'
@@ -42,6 +44,7 @@ import { createToolFinder } from './tool-finder.ts'
 import { claudeDir, transcriptDays } from './transcript-files.ts'
 import { createBoardWatcher } from './watcher.ts'
 import { createWebApp } from './web-app.ts'
+import { createWorkflowResolver } from './workflow-resolver.ts'
 
 const HOSTNAME = '127.0.0.1'
 
@@ -70,10 +73,11 @@ async function pickConfigDir(env: Env, platform: NodeJS.Platform): Promise<strin
 /**
  * `terminals`: the parent channel to the desktop's main process (`linkParent`'s), which relays to the terminal host.
  * With none, the session routes answer `409 no terminal host` and `sessions.json` is only read.
+ * `managedSettings`: Claude Code's managed settings file. Left out: the platform's own (`managedSettingsPath`).
  */
 export async function startServer(
   env: Env,
-  o: { production?: Production; exit?: (code: number) => void; terminals?: ParentChannel | undefined } = {},
+  o: { production?: Production; exit?: (code: number) => void; terminals?: ParentChannel | undefined; managedSettings?: string } = {},
 ): Promise<Started> {
   const platform = process.platform
   const production = o.production
@@ -130,6 +134,9 @@ export async function startServer(
   // The settings file, read at each use by every mode; the session routes read it at each start.
   const settingsStore = createSettingsStore({ file: join(configDir, 'settings.json'), log: (line) => console.log(line) })
   const pluginDir = envValue(env, 'OPENAFLOW_HOOKS_PLUGIN')
+  // The bundled workflow plugin: one resolver for the Board, the session routes, the settings preview, and setup.
+  const workflows = createWorkflowResolver({ root: envValue(env, 'OPENAFLOW_WORKFLOWS_DIR') })
+  const managedSettings = o.managedSettings ?? managedSettingsPath(platform)
   const settingsDeps = (): SettingsRouteDeps => ({
     store: settingsStore,
     platform,
@@ -137,8 +144,18 @@ export async function startServer(
     // The claude a new session would start: the tool finder's in production, else the PATH lookup's.
     claude: () => (tools ? tools.path('claude') : resolveBin(settings.claudeBin, env, platform)),
     pluginDir,
+    workflowDir: () => workflows.bundled()?.dir,
   })
-  const service = createBoardService({ ...settings, platform, gh, actions: log.recent, autoContinue: store.list, hosted })
+  const service = createBoardService({
+    ...settings,
+    platform,
+    gh,
+    actions: log.recent,
+    autoContinue: store.list,
+    hosted,
+    workflow: () => workflows.bundled(),
+    sideload: () => blocksSideload(managedSettings),
+  })
   const watcher = createBoardWatcher({ service, ...settings, poll: env.OPENAFLOW_POLL === '1' })
 
   // The resume route and the automatic check share one set of sessions being resumed.
@@ -150,6 +167,8 @@ export async function startServer(
     store,
     idle: createIdleCheck({ claudeDir: settings.claudeDir, now: Date.now }),
     inFlight: new Set<string>(),
+    workflows,
+    pluginDir,
   }
   sessions.onChange(() => void watcher.rebuild())
   const owner = createOwnerFile({ dir: configDir })
@@ -205,6 +224,7 @@ export async function startServer(
             terminals,
             claude: () => tools?.path('claude'),
             pluginDir,
+            workflows,
             configDir,
             hooks: hosted.hooks,
             claudeDir: settings.claudeDir,
@@ -214,6 +234,10 @@ export async function startServer(
             platform,
             now: Date.now,
           }),
+        )
+        .route(
+          '/',
+          createSetupRoutes({ board: () => watcher.board(), configFile, rebuild: () => watcher.rebuild(), log, workflows, platform }),
         )
         .route(
           '/',

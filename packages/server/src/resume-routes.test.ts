@@ -10,6 +10,7 @@ import { createAutoContinueStore, type AutoContinueStore } from './auto-continue
 import type { StartResult } from './claude-runner.ts'
 import { createResumeRoutes } from './resume-routes.ts'
 import { createSessionToken } from './session-token.ts'
+import type { WorkflowBundle, WorkflowResolver } from './workflow-resolver.ts'
 
 const API = 3060
 const WEB = 3061
@@ -28,7 +29,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-type Start = { session: string; word: string; cwd: string }
+type Start = { session: string; word: string; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 
 type SetupOpts = {
   board: Board
@@ -38,7 +39,14 @@ type SetupOpts = {
   store?: AutoContinueStore
   inFlight?: Set<string>
   token?: boolean
+  /** The bundled workflow a set-up repo gets. Default: one under `root`. */
+  workflows?: Pick<WorkflowResolver, 'forRepo'>
+  /** The hooks plugin folder. Default: one under `root`; a key with `undefined`: none. */
+  pluginDir?: string | undefined
 }
+
+/** A bundle under `root`: its folder is absolute on every system. */
+const bundleIn = (dir: string): WorkflowBundle => ({ source: 'claude-pod', version: '0.11.10', dir, template: join(dir, 'template') })
 
 /** The resume routes behind the real app and guard, with a fake runner (never a real claude) and a fake clock. */
 function setup(o: SetupOpts) {
@@ -81,6 +89,8 @@ function setup(o: SetupOpts) {
       return o.idle ?? true
     },
     inFlight,
+    workflows: o.workflows ?? { forRepo: () => bundleIn(join(root, 'workflows', 'claude-pod')) },
+    pluginDir: 'pluginDir' in o ? o.pluginDir : join(root, 'hooks-plugin'),
     now: () => NOW,
   })
   const source = { board: () => board, subscribe: () => () => {}, rebuild }
@@ -189,6 +199,46 @@ describe('resume route', () => {
     // The same run with no hosted session sends, as before.
     const free = setup({ board: boardOf(planRepo(SPRINT_DONE)) })
     await expectRes(await free.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
+  })
+
+  test('a repo without .openaflow/ resumes with no plugin folders', async () => {
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE)) })
+    await expectRes(await s.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
+    // Today's start, with no `plugins` key at all.
+    expect(s.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r' }])
+  })
+
+  test('a set-up repo resumes with the hooks plugin and the workflow folder', async () => {
+    const asked: unknown[] = []
+    const flow = join(root, 'workflows', 'claude-pod')
+    const workflows = {
+      forRepo: (w: readonly { source?: string }[] | undefined) => {
+        asked.push(w)
+        return bundleIn(flow)
+      },
+    }
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: { json: { source: 'claude-pod', version: '0.11.10' } } })), workflows })
+    await expectRes(await s.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
+    expect(s.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin')], workflowDir: flow }])
+    // The resolver gets the repo's own workflows.
+    expect(asked).toEqual([[{ name: 'claude-pod', stateDir: '.openaflow/workflows/claude-pod/state', source: 'claude-pod', version: '0.11.10' }]])
+
+    // With no hooks plugin (the browser build), the workflow folder alone.
+    const bare = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: {} })), pluginDir: undefined })
+    await expectRes(await bare.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
+    expect(bare.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', workflowDir: flow }])
+  })
+
+  test('a set-up repo with no bundle fails as workflow missing and starts nothing', async () => {
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: { json: { source: 'other-flow' } } })), workflows: { forRepo: () => undefined } })
+    await s.store.set('/r', 'alpha', true)
+    await expectRes(await s.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'failed', message: 'workflow missing', logged: true })
+    expect(s.starts).toEqual([])
+    expect(s.logged).toEqual([
+      { action: 'resume', repoId: 'id-r', repo: 'r', target: 'alpha · continue', result: 'failed', reply: 'continue', auto: false, message: 'workflow missing' },
+    ])
+    // The stop stays raised, as any failed start's does.
+    expect(s.board().autoContinue).toEqual([{ repoId: 'id-r', run: 'alpha' }])
   })
 
   test('sends only sendable replies', async () => {
@@ -511,13 +561,20 @@ function agent(over: Partial<AgentRun>): AgentRun {
 }
 
 /** A repo whose plan `alpha` is at `stop`, with one ended agent in `session` (none when `session` is empty). */
-function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string } = {}): BoardRepo {
+function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string; setUp?: { json?: unknown } } = {}): BoardRepo {
+  // A set-up repo keeps the same docs in its workflow's state folder.
+  const dir = o.setUp ? '.openaflow/workflows/claude-pod/state' : 'pod-docs'
   const files: RepoFiles = {
-    'pod-docs/README.md': README,
-    'pod-docs/plans/alpha.md': planDoc('alpha', stop.sprints),
-    'pod-docs/handoff-queue.md': (stop.queue ?? []).join('\n'),
+    [`${dir}/README.md`]: README,
+    [`${dir}/plans/alpha.md`]: planDoc('alpha', stop.sprints),
+    [`${dir}/handoff-queue.md`]: (stop.queue ?? []).join('\n'),
   }
-  for (const [s, rows] of Object.entries(stop.docs ?? {})) files[`pod-docs/sprints/${s}.md`] = sprintDoc(s, 'alpha', rows)
+  for (const [s, rows] of Object.entries(stop.docs ?? {})) files[`${dir}/sprints/${s}.md`] = sprintDoc(s, 'alpha', rows)
+  if (o.setUp) {
+    files['.openaflow/'] = ''
+    files['.openaflow/workflows/claude-pod/'] = ''
+    if (o.setUp.json !== undefined) files['.openaflow/workflows/claude-pod/workflow.json'] = JSON.stringify(o.setUp.json)
+  }
   const session = o.session ?? 'sess-1'
   return {
     id: o.id ?? 'id-r',

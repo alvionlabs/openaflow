@@ -8,6 +8,9 @@ import {
   appImagePlace,
   createRealConfigReader,
   endAppImage,
+  checkNoPodDocs,
+  checkWorkflowCopy,
+  compareTrees,
   missingParts,
   processesUnder,
   proofPlace,
@@ -18,6 +21,9 @@ import {
 } from './install-check.ts'
 
 let dir: string
+
+const TEMPLATE_README = 'workflows/claude-pod/skills/init/scaffold/.openaflow/workflows/claude-pod/state/README.md'
+const WORKFLOW_PARTS = ['workflows/claude-pod/.claude-plugin/plugin.json', 'workflows/claude-pod/LICENSE', TEMPLATE_README]
 
 beforeEach(() => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'openaflow-install-check-')))
@@ -238,7 +244,7 @@ describe.runIf(process.platform === 'linux')('appImagePlace', () => {
 
 describe('missingParts', () => {
   test('names each part the AppImage lacks outside its asar', () => {
-    const parts = ['app.asar', 'server/server.mjs', 'THIRD-PARTY-NOTICES.txt', 'pty-host/pty-host.cjs', 'pty-host/node_modules/node-pty/package.json', 'pty-host/node_modules/node-pty/prebuilds/linux-x64/pty.node', 'hooks-plugin/.claude-plugin/plugin.json', 'hooks-plugin/hooks/hooks.json', 'hooks-plugin/scripts/record.sh']
+    const parts = ['app.asar', 'server/server.mjs', 'THIRD-PARTY-NOTICES.txt', 'pty-host/pty-host.cjs', 'pty-host/node_modules/node-pty/package.json', 'pty-host/node_modules/node-pty/prebuilds/linux-x64/pty.node', 'hooks-plugin/.claude-plugin/plugin.json', 'hooks-plugin/hooks/hooks.json', 'hooks-plugin/scripts/record.sh', ...WORKFLOW_PARTS]
     for (const part of parts) {
       mkdirSync(join(dir, part, '..'), { recursive: true })
       writeFileSync(join(dir, part), '')
@@ -305,5 +311,109 @@ describe.runIf(process.platform === 'linux')('endAppImage', () => {
     } finally {
       child.kill('SIGKILL')
     }
+  })
+})
+
+
+const plantFile = (rel: string, text = '') => {
+  mkdirSync(join(dir, rel, '..'), { recursive: true })
+  writeFileSync(join(dir, rel), text)
+}
+
+describe('workflow parts', () => {
+  test('missingParts names workflows/claude-pod/.claude-plugin/plugin.json, its LICENSE, and the template README when absent', () => {
+    expect(missingParts(dir)).toEqual(expect.arrayContaining(WORKFLOW_PARTS))
+    for (const part of WORKFLOW_PARTS) {
+      plantFile(part)
+      expect(missingParts(dir), part).not.toContain(part)
+    }
+    // Each one alone is named when it is the one that is absent.
+    for (const part of WORKFLOW_PARTS) {
+      rmSync(join(dir, part))
+      expect(missingParts(dir).filter((p) => p.startsWith('workflows/')), part).toEqual([part])
+      plantFile(part)
+    }
+  })
+})
+
+describe('leftover pod-docs', () => {
+  test('leftover pod-docs fails', () => {
+    for (const part of WORKFLOW_PARTS) plantFile(part, 'clean')
+    expect(() => checkNoPodDocs(dir)).not.toThrow()
+    // A name with pod-docs in a path.
+    plantFile('workflows/claude-pod/skills/init/scaffold/pod-docs/README.md', 'clean')
+    expect(() => checkNoPodDocs(dir)).toThrow(/pod-docs[\\/]README\.md/)
+    rmSync(join(dir, 'workflows/claude-pod/skills/init/scaffold/pod-docs'), { recursive: true })
+    // Text in a file, in a dot folder.
+    plantFile('workflows/claude-pod/.claude-plugin/x.json', 'see pod-docs/plans')
+    expect(() => checkNoPodDocs(dir)).toThrow(/\.claude-plugin[\\/]x\.json/)
+    rmSync(join(dir, 'workflows/claude-pod/.claude-plugin/x.json'))
+    expect(() => checkNoPodDocs(dir)).not.toThrow()
+    // Other places under resources may say pod-docs; only workflows/ is checked. No workflows folder is fine here (missingParts names it).
+    plantFile('server/server.mjs', 'pod-docs')
+    expect(() => checkNoPodDocs(dir)).not.toThrow()
+    rmSync(join(dir, 'workflows'), { recursive: true })
+    expect(() => checkNoPodDocs(dir)).not.toThrow()
+  })
+})
+
+describe('packaged workflow copy', () => {
+  const STATE = 'skills/init/scaffold/.openaflow/workflows/claude-pod/state'
+  /** The built workflow: its README, a file in a dot folder, and the template's empty folders, each held by a `.gitkeep`. */
+  const plantSource = (root: string) => {
+    const put = (rel: string, text = '') => {
+      mkdirSync(join(root, rel, '..'), { recursive: true })
+      writeFileSync(join(root, rel), text)
+    }
+    put('.claude-plugin/plugin.json', '{"version":"0.11.10"}')
+    put(`${STATE}/README.md`, '# pod docs\n\npod docs: 2\n')
+    put(`${STATE}/handoff-queue.md`, '# Handoff Queue\n')
+    for (const d of ['plans', 'sprints/archive', 'ideas', 'known-issues', 'feature-details']) put(`${STATE}/${d}/.gitkeep`)
+    return put
+  }
+
+  test('the same tree matches, a dropped .gitkeep and its empty folder count as the same, and every other difference is named', () => {
+    const source = join(dir, 'source')
+    const packaged = join(dir, 'packaged')
+    plantSource(source)
+    const put = plantSource(packaged)
+    expect(compareTrees(packaged, source)).toEqual([])
+
+    // What electron-builder does: every .gitkeep gone, so the empty folders are gone too. Setup makes those folders.
+    for (const d of ['plans', 'sprints', 'ideas', 'known-issues', 'feature-details']) rmSync(join(packaged, STATE, d), { recursive: true })
+    expect(compareTrees(packaged, source)).toEqual([])
+    // An empty folder, or one that holds only .gitkeep files, in the copy only: the same.
+    mkdirSync(join(packaged, 'empty', 'deeper'), { recursive: true })
+    put('kept/.gitkeep')
+    expect(compareTrees(packaged, source)).toEqual([])
+
+    // A missing file, a changed file, an extra file, and a folder with a real file in it.
+    rmSync(join(packaged, STATE, 'README.md'))
+    put('.claude-plugin/plugin.json', '{"version":"0.11.9"}')
+    put('extra.txt', 'x')
+    put('kept/notes.md', 'x')
+    expect(compareTrees(packaged, source)).toEqual([
+      'differs .claude-plugin/plugin.json',
+      'extra extra.txt',
+      'extra kept',
+      'extra kept/notes.md',
+      `missing ${STATE}/README.md`,
+    ])
+  })
+
+  test('checkWorkflowCopy reads resources/workflows/claude-pod, and names the step and each difference', () => {
+    const source = join(dir, 'dist', 'claude-pod')
+    plantSource(source)
+    const copy = join(dir, 'resources', 'workflows', 'claude-pod')
+    plantSource(copy)
+    expect(() => checkWorkflowCopy(join(dir, 'resources'), source)).not.toThrow()
+    // A dropped .gitkeep is not a difference: setup makes the folder.
+    rmSync(join(copy, STATE, 'plans'), { recursive: true })
+    expect(() => checkWorkflowCopy(join(dir, 'resources'), source)).not.toThrow()
+    rmSync(join(copy, STATE, 'README.md'))
+    expect(() => checkWorkflowCopy(join(dir, 'resources'), source)).toThrow(`the packaged workflow differs from dist/claude-pod: missing ${STATE}/README.md`)
+    // No packaged copy at all: one line, not a list of every file.
+    rmSync(join(dir, 'resources'), { recursive: true })
+    expect(() => checkWorkflowCopy(join(dir, 'resources'), source)).toThrow('the packaged workflow is missing: resources/workflows/claude-pod')
   })
 })

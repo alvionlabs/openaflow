@@ -4,7 +4,7 @@ import type { Board, HostedSession } from '@openaflow/model'
 import { describe, expect, test } from 'vitest'
 import { projectDirName } from '../../server/src/transcript-files.ts'
 import { DESKTOP, harnessDir, launchHarness, packagedApp, removeWithRetry, type Harness } from '../test/electron-harness.ts'
-import { hooksPluginDir } from './pty-host-launch.ts'
+import { hooksPluginDir, workflowsRoot } from './pty-host-launch.ts'
 import type { TestQuit, TestTerminals } from './test-hooks-main.ts'
 
 // Hosted sessions through the product path, in the real Electron app: the New session and Dismiss routes, the
@@ -182,6 +182,21 @@ async function pluginDir(h: Harness): Promise<string> {
   return dir
 }
 
+/** The bundled workflow folder main names in OPENAFLOW_WORKFLOWS_DIR, for this build (`pnpm build` makes it). */
+async function workflowDir(h: Harness): Promise<string> {
+  const place = await h.app.evaluate(({ app }) => ({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }))
+  const dir = join(workflowsRoot({ ...place, appPath: DESKTOP }), 'claude-pod')
+  expect(existsSync(join(dir, '.claude-plugin', 'plugin.json')), dir).toBe(true)
+  return dir
+}
+
+/** Makes the world's repo a set-up repo: `.openaflow/workflows/claude-pod/` with its `workflow.json` and state folder. */
+function setUpRepo(w: World): void {
+  const folder = join(w.repo, '.openaflow', 'workflows', 'claude-pod')
+  mkdirSync(join(folder, 'state'), { recursive: true })
+  writeFileSync(join(folder, 'workflow.json'), JSON.stringify({ source: 'claude-pod', version: '0.11.10' }, null, 2) + '\n')
+}
+
 /** A started session, live and then hooked on the Board. Answers its marker and its record's pid. */
 async function liveSession(h: Harness, w: World): Promise<{ marker: string; repoId: string; sessionId: string }> {
   const { answer, repoId } = await newSession(h, w)
@@ -272,6 +287,21 @@ async function productPathCheck(h: Harness, w: World): Promise<void> {
   expect(starts(w).at(-1)!.args).toEqual(['-p', '--resume', sessionId, 'continue'])
 }
 
+/** A set-up repo's new session loads the hooks plugin, then the bundled workflow, then the prompt. */
+async function twoPluginDirsCheck(h: Harness, w: World): Promise<void> {
+  const { answer } = await newSession(h, w)
+  expect(answer, await details(h, w)).toMatchObject({ status: 200, body: { outcome: 'started', logged: true } })
+  const marker = answer.body.marker as string
+  const sessionId = (await hosted(h, w, marker))!.sessionId
+  await until('the fake to start', () => starts(w).length > 0, 15_000, h, w)
+  expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h), PROMPT])
+  // The Board names the bundle's version, read from its plugin.json.
+  const version = (JSON.parse(readFileSync(join(await workflowDir(h), '.claude-plugin', 'plugin.json'), 'utf8')) as { version: string }).version
+  expect((await board(h)).workflow).toEqual({ source: 'claude-pod', version })
+  await hooks(h).kill(marker)
+  await until('the session ended', async () => (await hosted(h, w, marker))?.state === 'ended', 15_000, h, w)
+}
+
 async function windowsShimsCheck(h: Harness, w: World): Promise<void> {
   // A readable npm shim: node plus the script, with the prompt whole.
   const npm = await newSession(h, w)
@@ -303,9 +333,10 @@ async function windowsShimsCheck(h: Harness, w: World): Promise<void> {
   for (const marker of [npmMarker, cmdMarker]) await until(`${marker} ended`, async () => (await hosted(h, w, marker))?.state === 'ended', 15_000, h, w)
 }
 
-/** Runs `check` on a new world and app, and always ends the app, the fakes, and the folders. */
-async function inWorld(check: (h: Harness, w: World) => Promise<void>): Promise<void> {
+/** Runs `check` on a new world (changed by `prepare` before the launch) and app, and always ends the app, the fakes, and the folders. */
+async function inWorld(check: (h: Harness, w: World) => Promise<void>, prepare: (w: World) => void = () => {}): Promise<void> {
   const w = makeWorld()
+  prepare(w)
   try {
     const h = await launch(w)
     try {
@@ -322,6 +353,11 @@ async function inWorld(check: (h: Harness, w: World) => Promise<void>): Promise<
 describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (process.platform === 'linux' || WIN))(`real session (${PACKAGED ? 'packaged' : 'unpackaged'})`, () => {
   test('a new session through the product path', async () => {
     await inWorld(productPathCheck)
+  }, RUN_MS)
+
+  // The test above runs in a repo with pod-docs/ and no .openaflow/: it starts with the hooks plugin only (§6).
+  test('two plugin dirs', async () => {
+    await inWorld(twoPluginDirsCheck, setUpRepo)
   }, RUN_MS)
 
   test.runIf(!PACKAGED)('server crash', async () => {

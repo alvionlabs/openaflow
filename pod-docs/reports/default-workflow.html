@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan report: Default workflow</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fff; --fg: #1b1b1f; --muted: #5d5d66; --line: #d9d9e0; --soft: #f4f4f7;
+  --accent: #3554d1; --ok: #1d7a3e; --bad: #b42318; --warn: #a15c07;
+  --display: system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #131316; --fg: #ececf1; --muted: #a2a2ad; --line: #34343c; --soft: #1d1d22;
+          --accent: #8da2ff; --ok: #5cc98a; --bad: #ff8a80; --warn: #f0b45c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.55 system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.25; }
+h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+h2 { font-size: 1.4rem; margin: 2.5rem 0 .75rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; margin: 1.25rem 0 .5rem; }
+a { color: var(--accent); }
+code, pre { font: 15px/1.45 ui-monospace, Consolas, monospace; }
+pre { background: var(--soft); padding: .75rem; overflow-x: auto; border-radius: 6px; }
+.meta { color: var(--muted); margin: 0 0 1rem; }
+nav.toc { background: var(--soft); border-radius: 8px; padding: .75rem 1rem; }
+nav.toc ol { margin: 0; padding-left: 1.25rem; columns: 2 14rem; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+th, td { border: 1px solid var(--line); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+th { background: var(--soft); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: 1rem 0 .25rem; }
+.stat { background: var(--soft); border-radius: 8px; padding: .5rem .75rem; }
+.stat b { display: block; font-size: 1.3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat span { color: var(--muted); font-size: .9rem; }
+.note { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; }
+.pill { display: inline-block; padding: 0 .5rem; border-radius: 99px; font-size: .9rem; border: 1px solid currentColor; white-space: nowrap; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); } .muted { color: var(--muted); }
+.lead { font-size: 1.1rem; font-weight: 600; margin: 0 0 .75rem; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: .5rem .9rem; margin: .5rem 0; }
+details > summary { cursor: pointer; font-weight: 600; }
+details[open] > summary { margin-bottom: .5rem; }
+table.decisions td:first-child { font-weight: 600; min-width: 12rem; }
+.shots { display: grid; grid-template-columns: 3fr 1fr; gap: .75rem; align-items: start; }
+.shots figure { margin: 0; } .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+figcaption { color: var(--muted); font-size: .9rem; }
+.small { display: block; color: var(--muted); font-size: .9rem; }
+table.risks td:first-child { font-weight: 600; }
+pre.mermaid { background: var(--soft); text-align: center; }
+@media (max-width: 520px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { body { font-size: 16px; } .shots { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Default workflow</h1>
+<p class="meta">Plan <code>default-workflow</code> · final PR <a href="https://github.com/alvionlabs/openaflow/pull/166">#166</a> (review round 1 <code>fix</code>, 5 findings, all fixed in PR #167; round 2 pending) · written 2026-11-24 by pod:reporter</p>
+
+<nav class="toc" aria-label="Contents"><ol>
+  <li><a href="#glance">At a glance</a></li>
+  <li><a href="#features">Key features</a></li>
+  <li><a href="#proof">Proof</a></li>
+  <li><a href="#risks">Risks and undo</a></li>
+  <li><a href="#fit">How it fits together, as built</a></li>
+  <li><a href="#decisions">Key decisions</a></li>
+  <li><a href="#left">What's left</a></li>
+</ol></nav>
+
+<section id="glance">
+<h2>At a glance</h2>
+<p><b>Goal:</b> OpenAFlow ships its own default workflow, claude-pod at a pinned release, and each repo keeps its pin and the workflow's state in one committed <code>.openaflow/</code> folder.</p>
+<p><b>Shipped:</b></p>
+<ul>
+  <li>A build that pins claude-pod by tag and commit, renames <code>pod-docs</code> to <code>.openaflow/workflows/claude-pod/state</code>, and bundles it in the app.</li>
+  <li>Add repo creates <code>.openaflow/workflows/claude-pod/</code> (at once, or after a confirm for a repo with <code>pod-docs/</code>).</li>
+  <li>Hosted sessions in a set-up repo load the bundled workflow; the board and the queue read and write its state folder.</li>
+  <li>New session shows bare skill names, the workflow version, a mismatch notice with <b>Use</b>, and a <b>Set up</b> offer.</li>
+  <li>The Terminal tab names <code>disableSideloadFlags</code> when an organization blocks the plugin flags.</li>
+</ul>
+<div class="stats">
+  <div class="stat"><b>1 · 4 · 10</b><span>sprints · waves · slices</span></div>
+  <div class="stat"><b>6</b><span>PRs</span></div>
+  <div class="stat"><b>121 · +6,758 −355</b><span>files · lines changed</span></div>
+  <div class="stat"><b>~5 h</b><span>wall time</span></div>
+  <div class="stat"><b>~1.78M</b><span>agent context</span></div>
+  <div class="stat"><b>fix · r2 pending</b><span>review, 1 round</span></div>
+</div>
+<p class="note">Lines and files count all of <code>pod-docs/</code> too. Wall time is estimated: about 20 h from first to last commit, minus a 15 h idle gap.</p>
+<p class="note">PRs: four wave PRs (#162–#165), the review fix #167, and the final #166. Agent context is the Sprint summary's figure, summed over the 11 engineer hand-backs (each final context size, not tokens billed). CI on #166 passes on all 4 jobs, Windows included.</p>
+<h3>Look here first</h3>
+<ol>
+  <li><code>packages/server/src/setup-routes.ts</code> (the largest new file, 269 lines): the only code that writes into a user's repo. It builds <code>.openaflow.tmp-*</code>, then renames. A small race on Linux can lose an empty <code>.openaflow</code> made in the gap.</li>
+  <li><code>packages/server/src/session-command.ts</code>, <code>claude-runner.ts</code>, and <code>auto-continue.ts</code>: they add the second <code>--plugin-dir</code>. The review found Continue skipped it (finding 1), and no real <code>claude</code> has ever run with two flags.</li>
+  <li><code>packages/workflow/src/fetch.ts</code> and <code>transform.ts</code>: the build fetches third-party plugin text and rewrites it. Check the leftover <code>pod-docs</code> rule and the rule that refuses links and non-UTF-8 rewrites.</li>
+  <li><code>packages/model/src/run-model.ts</code> and <code>packages/server/src/repo-files.ts</code>: once a repo has <code>.openaflow/</code>, the board stops reading its <code>pod-docs/</code>, so its history disappears.</li>
+  <li><code>packages/web/src/screens/runs/add-repo-flow.ts</code>: after a human decision, Add repo now writes <code>.openaflow/</code> with no question for a repo without <code>pod-docs/</code>.</li>
+</ol>
+</section>
+
+<section id="features">
+<h2>Key features</h2>
+<p class="lead">You add a repo, and OpenAFlow's own claude-pod runs in it from a committed pin, with no claude-pod install.</p>
+<div class="scroll"><table>
+  <tr><th>Feature</th><th>What changed</th><th>Shown by</th></tr>
+  <tr><td>Default workflow build</td><td>claude-pod <code>v0.11.10</code> pinned by tag and commit, renamed, bundled</td><td>result: <code>grep -r pod-docs</code> on the output finds nothing</td></tr>
+  <tr><td><code>bump-workflow</code></td><td><code>pnpm bump-workflow &lt;tag&gt;</code> rewrites only the lock</td><td>result: an unknown tag exits 1 and keeps the lock</td></tr>
+  <tr><td>Repo setup (Add repo)</td><td>creates <code>.openaflow/workflows/claude-pod/</code>, with a warning for <code>pod-docs/</code> repos</td><td>screenshots 1 and 2</td></tr>
+  <tr><td>New session</td><td>bare skill names, version line, mismatch with <b>Use</b>, <b>Set up</b> offer</td><td>screenshots 3, 4 and 5</td></tr>
+  <tr><td>Bundled workflow in sessions</td><td>a set-up repo starts, resumes, and continues with both plugin folders</td><td>result: fake-<code>claude</code> tests (no real <code>claude</code>)</td></tr>
+  <tr><td>State reading</td><td>board and queue read every <code>.openaflow/workflows/*/state/</code>; <code>pod-docs/</code> only with no <code>.openaflow/</code></td><td>result: API run with temp repos</td></tr>
+  <tr><td>Sideload stop line</td><td>stop bar names <code>disableSideloadFlags</code> and offers only Dismiss</td><td>result: unit tests, a static page</td></tr>
+</table></div>
+<p class="note">Screenshots are the browser build with a stubbed desktop bridge, on temp folders and fixture copies. No session was started and no <code>claude</code> ran.</p>
+<h3>1. Add repo, a repo with <code>pod-docs/</code></h3>
+<div class="shots">
+  <figure><img alt="Add repo confirm: Create .openaflow/ in this repo, with the warning that pod-docs runs will no longer show" src="default-workflow/add-confirm-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same confirm at 375 px" src="default-workflow/add-confirm-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>2. Add repo, a repo with neither folder</h3>
+<div class="shots">
+  <figure><img alt="Repo added box: Created .openaflow/workflows/claude-pod/" src="default-workflow/add-created-desktop.jpg"><figcaption>Desktop (the box closes by itself after 3 s)</figcaption></figure>
+  <figure><img alt="The same box at 375 px" src="default-workflow/add-created-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>3. New session, set-up repo pinned to another version</h3>
+<div class="shots">
+  <figure><img alt="New session card with the mismatch line, a Use 0.11.10 button, and the line Workflow: claude-pod 0.11.10" src="default-workflow/newsession-version-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same card at 375 px" src="default-workflow/newsession-version-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>4. Start with list, bare names</h3>
+<div class="shots">
+  <figure><img alt="Start with list: init, plan, ship, task, research, idea, Plain session" src="default-workflow/dropdown-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same list at 375 px" src="default-workflow/dropdown-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+<h3>5. New session, repo with <code>pod-docs/</code>: the Set up offer</h3>
+<div class="shots">
+  <figure><img alt="New session dialog with Create .openaflow/ in this repo, a Set up button, and the pod-docs warning" src="default-workflow/newsession-podocs-desktop.jpg"><figcaption>Desktop</figcaption></figure>
+  <figure><img alt="The same dialog at 375 px" src="default-workflow/newsession-podocs-375.jpg"><figcaption>375 px</figcaption></figure>
+</div>
+</section>
+
+<section id="proof">
+<h2>Proof</h2>
+<p class="lead">4 of 6 rows met, 2 checked by nobody. The real <code>claude</code> proof never ran, and two met rows rest on the engineers' own tests.</p>
+<div class="scroll"><table>
+  <tr><th>Criterion or feature</th><th>Result</th><th>Checked by</th><th>How</th></tr>
+  <tr><td>Real <code>claude</code> takes two <code>--plugin-dir</code> flags, the bundled <code>pod</code> replaces an installed one with its hooks, and Glob and Grep find files under <code>.openaflow/</code></td><td><span class="pill warn">not checked</span></td><td>nobody</td><td>the gated test <code>real-workflow-start.test.ts</code> never ran</td></tr>
+  <tr><td>Installed app on Windows: Add repo creates the folder</td><td><span class="pill warn">not checked</span></td><td>nobody</td><td>CI Windows jobs pass; the installed app never ran</td></tr>
+  <tr><td>Sideload stop line</td><td><span class="pill ok">met</span></td><td>engineer's tests</td><td>unit tests and a static page; never in the app</td></tr>
+  <tr><td>The 5 round 1 findings</td><td><span class="pill ok">met</span></td><td>engineer's tests</td><td>red then green tests in #167; CI passes; round 2 pending</td></tr>
+  <tr><td>Clean build and package: no <code>pod-docs</code>, locked version, bump changes only the lock</td><td><span class="pill ok">met</span></td><td>reviewer</td><td><code>pnpm package</code>, release check, bump on a scratch lock</td></tr>
+  <tr><td>Setup, Use, board reading, queue answers, New session</td><td><span class="pill ok">met</span></td><td>reviewer, this report</td><td>API run on temp repos; browser screenshots above</td></tr>
+</table></div>
+<h3>Not checked by this report</h3>
+<ul>
+  <li>No <code>claude</code> and no desktop window ran here. The screenshots use a stubbed bridge, and the sideload line has no screenshot.</li>
+  <li>Round 2 of the review has no comment yet. Only the round 1 comment and the CI results were read.</li>
+</ul>
+</section>
+
+<section id="risks">
+<h2>Risks and undo</h2>
+<p class="lead">Every change writes into a user's repo or loads third-party code, and each undoes by deleting a folder or reverting a file. No migration, money, or auth change. The PR says <code>Door: two-way</code>.</p>
+<div class="scroll"><table class="risks">
+  <tr><th>Risk</th><th>Undo</th></tr>
+  <tr><td>Add repo writes <code>.openaflow/</code> at once for a repo with no <code>pod-docs/</code>; the files show in <code>git status</code><span class="small"><code>packages/server/src/setup-routes.ts</code></span></td><td>Delete <code>&lt;repo&gt;/.openaflow/</code>.</td></tr>
+  <tr><td>Setup on a <code>pod-docs/</code> repo hides its runs from the board<span class="small"><code>packages/model/src/run-model.ts</code></span></td><td>Delete <code>&lt;repo&gt;/.openaflow/</code>; the runs return.</td></tr>
+  <tr><td><b>Use</b> rewrites a committed <code>workflow.json</code> for the whole team, and can lower a newer pin<span class="small"><code>packages/server/src/setup-routes.ts</code></span></td><td>Revert the file in git.</td></tr>
+  <tr><td>The queue writer appends answers to a state folder's <code>handoff-queue.md</code><span class="small"><code>packages/server/src/queue-writer.ts</code></span></td><td>Edit out the <code>**Answer (human):**</code> text.</td></tr>
+  <tr><td>The build fetches claude-pod's tag over the network and bundles it; the check is the locked commit<span class="small"><code>packages/workflow/workflow.lock.json</code></span></td><td><code>pnpm bump-workflow &lt;old tag&gt;</code>, then rebuild.</td></tr>
+  <tr><td>The bundled <code>pod</code> silently replaces an installed claude-pod in set-up repos; real <code>claude</code> never proved it<span class="small"><code>packages/server/src/session-command.ts</code></span></td><td>Delete <code>.openaflow/</code>; the repo starts as before.</td></tr>
+</table></div>
+</section>
+
+<section id="fit">
+<h2>How it fits together, as built</h2>
+<p class="lead">A build step makes the plugin, the app ships it, and the server's resolver hands it to session start and setup.</p>
+<pre class="mermaid">
+flowchart LR
+  B["scripts/build.ts"] -- "reads tag and commit" --> L["workflow.lock.json"]
+  B -- "writes plugin, fails on pod-docs" --> D["dist/claude-pod"]
+  C["build-config.ts"] -- "extraResources" --> D
+  S["server-launch.ts"] -- "workflowsRoot()" --> P["pty-host-launch.ts"]
+  S -- "OPENAFLOW_WORKFLOWS_DIR" --> R["workflow-resolver.ts"]
+  R -- "plugin.json, template state" --> D
+  SR["session-routes.ts"] -- "plugin folder for --plugin-dir" --> R
+  SU["setup-routes.ts"] -- "template, version" --> R
+  BS["board-service.ts"] -- "files of each state folder" --> RF["repo-files.ts"]
+  BS -- "runs per workflow" --> RM["run-model.ts"]
+</pre>
+<h3>Differences from the plan</h3>
+<ul>
+  <li>The resolver is <code>packages/server/src/workflow-resolver.ts</code>, not in <code>packages/desktop</code>, as the sprint's slice S1 planned. The desktop only passes the folder.</li>
+  <li>Sessions load the bundled workflow only in a repo with <code>.openaflow/</code>. A repo without it starts as before (human decision, 2026-11-24). The plan said every hosted session.</li>
+  <li>Continue (<code>claude-runner.ts</code>) and auto-continue (<code>auto-continue.ts</code>) also pass both plugin folders. The plan named only session start. Review finding 1.</li>
+  <li>Setup makes the five empty template folders itself (<code>TEMPLATE_FOLDERS</code> in <code>setup-routes.ts</code>), because electron-builder drops every <code>.gitkeep</code>. Review finding 2.</li>
+  <li>The sideload block is read from Claude Code's managed settings file (<code>managed-settings.ts</code>), not from <code>claude</code>'s printed text, which can change.</li>
+  <li>The version line shows the app's bundled version, not the repo's pin, as the sprint's section 9 set it. The plan's example showed the pin.</li>
+</ul>
+</section>
+
+<section id="decisions">
+<h2>Key decisions</h2>
+<p class="lead">Seven of eight decisions came from the human. The two newest change the plan: one narrows when setup asks, and one adds packaging to wave checks.</p>
+<div class="scroll"><table class="decisions">
+  <tr><th>Decision</th><th>By</th><th>Why</th><th>Instead of</th><th>Consequence</th></tr>
+  <tr><td><a href="../decisions.md#2026-11-23--openaflow-and-claude-pod-are-separate-workflows-live-in-openaflowworkflows-human">Separate projects; one <code>.openaflow/</code> with a folder per workflow</a></td><td>human</td><td>OpenAFlow works alone, and a second workflow can come later</td><td>a folder-name setting in claude-pod</td><td>dropping claude-pod removes one folder, not code</td></tr>
+  <tr><td>The repo commits a pin, not a copy (<code>workflow.json</code>)</td><td>human</td><td>a team shares one version, and a bump is a one-line diff</td><td>a full copy in each repo (about 1.7 MB, stale on every bump)</td><td>a version mismatch shows a notice and <b>Use</b>, no block</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-24--a-repo-without-openaflow-starts-hosted-sessions-as-today-human">A repo without <code>.openaflow/</code> starts sessions as today</a></td><td>human</td><td>blocking would cut every <code>pod-docs/</code> repo off after an update</td><td>block New session and Resume until setup</td><td>such repos keep using the installed claude-pod</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-24--add-repo-sets-up-openaflow-with-no-question-unless-the-repo-has-pod-docs-human">Add repo sets up with no question unless the repo has <code>pod-docs/</code></a></td><td>human</td><td>adding a repo already says you want OpenAFlow there</td><td>always ask, or always create silently</td><td>a new repo gets <code>.openaflow/</code> in <code>git status</code> at once</td></tr>
+  <tr><td><a href="../decisions.md#2026-11-24--package-the-app-in-the-wave-check-of-any-wave-that-touches-the-bundle-human">Package the app in the wave check of waves that touch the bundle</a></td><td>human</td><td>the missing <code>.gitkeep</code> bug was found three waves late</td><td>package every wave, or leave it to the plan review</td><td>about 3 more minutes on those waves</td></tr>
+  <tr><td>Rename <code>pod-docs</code> at build time, with a leftover check</td><td>human</td><td>claude-pod stays unchanged, and a bump re-runs the transform</td><td>a fork of claude-pod</td><td>a new claude-pod layout can fail the build on purpose</td></tr>
+  <tr><td>Pin by lock file and a <code>git</code> fetch checked against the commit</td><td>agent</td><td>claude-pod releases have no assets to hash</td><td>submodule, npm <code>github:</code> dependency, tarball hash</td><td>a moved tag fails the build; the first build needs <code>git</code> and the network</td></tr>
+  <tr><td>Plugin keeps its <code>pod</code> prefix; the dropdown hides it</td><td>human</td><td><code>/plan</code> and <code>/init</code> are Claude Code built-ins</td><td>unprefixed skills through <code>--add-dir</code></td><td>the app sends <code>/pod:plan …</code>; the terminal still needs the prefix</td></tr>
+</table></div>
+</section>
+
+<section id="left">
+<h2>What's left</h2>
+<p class="lead">29 queue entries are open: 1 to fix next, 3 before hosting (two name the same real-claude proof), 5 value-in-use decisions to confirm, 20 someday.</p>
+<h3>Fix next</h3>
+<ul>
+  <li>Continue in the Reply panel shows the bare word <code>workflow missing</code> in a set-up repo with no bundle (<code>resume-flow.ts</code> maps no route words).</li>
+</ul>
+<h3>Before hosting</h3>
+<ul>
+  <li>Run <code>real-workflow-start.test.ts</code> with a signed-in test config. It proves two <code>--plugin-dir</code> flags, the bundled <code>pod</code> replacing an installed one, and Glob and Grep under <code>.openaflow/</code>.</li>
+  <li><code>init</code>'s own scaffold copy in the installed app lacks the five empty folders. Only the workflow build can fix it.</li>
+</ul>
+<h3>Someday</h3>
+<ul>
+  <li>The Windows <code>installAndStart</code> release check runs neither <code>missingParts</code> nor <code>checkNoPodDocs</code>.</li>
+  <li>The browser build shows "This repo has no workflow yet" with no <b>Set up</b> button, because setup is in New session (desktop only).</li>
+  <li>The sidebar chip still reads <code>update pod</code> for a set-up repo with no readable docs.</li>
+  <li>Nothing in CI catches a new empty template folder after a bump.</li>
+  <li>5 value-in-use decisions (setup words, button focus, Repo added box, New session layout, newer docs) wait for your confirm, plus 16 smaller notes in <code>pod-docs/handoff-queue.md</code>.</li>
+</ul>
+</section>
+
+
+</main>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "strict" });
+</script>
+</body>
+</html>

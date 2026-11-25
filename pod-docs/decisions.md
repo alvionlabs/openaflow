@@ -298,6 +298,9 @@ Decision: keep the UI as it is. A row is still a run. The run view with nodes an
 Consequences: terminals attach to a run; they are not rows. A terminal that starts before its plan exists needs a home (proposal in the research doc).
 
 ## 2026-11-11 — Outside runs are watch-only (human decision, not in force until planned)
+
+_Partly replaced on 2026-11-23: runs in your own terminal use claude-pod and write `pod-docs/`; the bundled workflow is never installed outside the app. See the 2026-11-23 entry._
+
 Context: a run can start in the app's terminal or in the user's own terminal. Both use OpenAFlow's plugin, so both write `.openaflow/`.
 Decision: runs started in the app get everything: Workflow, the Terminal tab, Continue, and auto-continue. Runs started in the user's own terminal are watch-only: Workflow, merge, and answer, with no Terminal tab, no Continue, and no auto-continue. Reading state never depends on whether a run is hosted.
 Consequences: the old `claude -p --resume` runner is not needed. For outside runs to write `.openaflow/`, the plugin must also be installable outside the app, not only loaded with `--plugin-dir`.
@@ -435,6 +438,8 @@ Other consequences: the plan's Look ("rules out icon-only signs") no longer hold
 **Rejected:** Windows-only CI. Why: nothing would prove the Linux build, and no maintainer machine runs Windows tests for every PR.
 
 ## 2026-11-17 — CI once per sprint, not per wave PR (human)
+
+_Partly replaced on 2026-11-22: CI no longer runs on a push to `pod-staging`. See [CI runs on PRs only](#2026-11-22--ci-runs-on-prs-only-not-on-a-push-to-pod-staging-human)._
 
 - **Decision:** wave PRs into the plan branch run no CI; they merge on the orchestrator's local wave check (`pnpm verify` and `pnpm test:electron` on Linux). CI (Linux and Windows) runs on PRs into `pod-staging` or `main` and on a push to `pod-staging`. At each sprint end, the orchestrator opens a draft PR from the plan branch into `pod-staging` (`ci: sprint <slug> check`) and closes it when green; a red run halts before the next sprint. In the last sprint, the final plan PR is that check. Engineers no longer open `wip: … CI check` draft PRs.
 - **Why:** a wave is a piece of a feature, not a feature: two to five parts built in parallel in one to two hours, often not wired together yet (session-life wave 1 changed nothing a user could see). Only a sprint holds a real part of the feature, so that is the level where a full Linux and Windows CI run tests something the engineers' own tests did not. The per-wave CI and the engineers' draft CI rounds also cost about 10 minutes of waiting per wave; CI minutes are free (public repo), so time is the only cost.
@@ -635,3 +640,88 @@ _Partly replaced on 2026-11-20: the full words now show only in the Reload banne
   - "Not saved", "Couldn't save", "Changes lost: reload above", and no line at all: the human disliked "Not saved", and the others do not say what to do.
 - **Draft:** [reload-banner-choices.html](design-drafts/reload-banner-choices.html) (option b, with the words changed).
 - **From:** task PR #159.
+
+## 2026-11-22 — CI runs on PRs only, not on a push to pod-staging (human)
+
+- **Decision:** `.github/workflows/pod-ci.yml` runs on `pull_request` into `pod-staging` or `main` only. The `push` trigger on `pod-staging` is gone. A workflow-level `concurrency` group per PR (`pod-ci-${{ github.event.pull_request.number }}`) with `cancel-in-progress: true` cancels a PR's older run when a new push arrives.
+- **Why:** merging a PR into `pod-staging` fired a `push` run. The staging PR `pod-staging` into `main` then fired a `pull_request` run on the same commit. The same 4 jobs (`unit` and `e2e` on Ubuntu and Windows) ran twice on the same code (seen on PR #160).
+- **Gives up:** no run right after a merge into `pod-staging`. The risk is low: PRs merge one at a time, and the staging PR into `main` tests the combined code.
+- **Rejected:** `concurrency` alone (it does not dedupe across a `push` and a `pull_request` event); `fkirc/skip-duplicate-actions` (no source shows it works across `push` and `pull_request`, and it adds a dependency); a merge queue (it adds a third run; the repo is a public organization repo, so the plan is not the blocker); dropping `main` from `pull_request` and relying on the push run (the human chose PR gates).
+- **Research:** [ci-duplicate-runs.md](research/ci-duplicate-runs.md).
+- **Full record:** [decisions/ci.md](decisions/ci.md).
+
+## 2026-11-22 — OpenAFlow ships claude-pod as its default workflow (human)
+
+_Open points settled on 2026-11-23: see the 2026-11-23 entry below._
+
+- **Decision:** OpenAFlow ships claude-pod as the user's default workflow. claude-pod's own repo stays the one source: OpenAFlow pins a tagged claude-pod release and its build fetches it (for example a git submodule or a release download). An update in OpenAFlow is a version bump, done when the human asks.
+- **Why one source:** a copy inside OpenAFlow would mean every workflow fix is made twice, in claude-pod and again here. claude-pod has its own users, so its repo stays the home of the workflow.
+- **Replaceable later, not now:** users will later be able to edit the workflow or replace it with their own. Not in v0.1.0, because it is too big. But the structure keeps a clear seam between the workflow and the app, so replacing it later is a change, not a rewrite.
+- **Rejected:**
+  - Fork claude-pod under a new name: two copies to keep in step.
+  - Copy claude-pod into OpenAFlow and sync by hand (chosen first on 2026-11-22, then dropped the same day): every fix made twice.
+  - Move claude-pod's source into this repo and publish claude-pod from here: claude-pod has its own users, so its repo stays the source.
+  - Replaceable workflows in v0.1.0: too big for now.
+- **Open for the plan:**
+  - The state folder. claude-pod writes `pod-docs/`. Either claude-pod gets a setting for its folder name (so OpenAFlow can use `.openaflow/`), or OpenAFlow keeps `pod-docs/`.
+  - Where the workflow lives: in each repo's `.openaflow/`, or in the app, loaded with `--plugin-dir`.
+  - How the pin works: submodule, release download, or another way.
+- **Plan:** `default-workflow` (the parked idea is still named `openaflow-plugin`).
+- **From:** session of 2026-11-22.
+
+## 2026-11-23 — OpenAFlow and claude-pod are separate; workflows live in `.openaflow/workflows/` (human)
+
+- **Decision:** OpenAFlow reuses claude-pod's workflow and nothing else. Each repo keeps everything OpenAFlow-related in one `.openaflow/`. `.openaflow/workflows/<name>/` holds one workflow: `workflow.json` (`source`, `version`) and `state/`. Both are committed, so a team shares one workflow and version. claude-pod is the first workflow. Plain claude-pod still writes `pod-docs/` on its own.
+- **Pin, not copy:** the repo commits only `workflow.json`. The workflow's skills and agents ship in the app (`resources/workflows/claude-pod`) and load with `--plugin-dir`, beside the hooks plugin. When the repo pins another version than the app ships, New session shows a notice with **Use <version>**, which rewrites `workflow.json`; sessions are not blocked.
+- **Build:** OpenAFlow pins claude-pod in a lock file (repo, tag, commit), fetches the tag with `git`, checks the commit, and renames `pod-docs` to `.openaflow/workflows/claude-pod/state` in the plugin text. claude-pod is not changed. A leftover `pod-docs` fails the build. The bump is done only when OpenAFlow wants it.
+- **Skills:** the plugin keeps its prefix (human); the New session dropdown shows bare skill names. The manifest name stays `pod` (agent default, open for the human).
+- **State reading:** the board reads every `.openaflow/workflows/*/state/`, and `pod-docs/` only in repos with no `.openaflow/`. A later plan removes `pod-docs/` support. This replaces research decision 25 and the outside-run part of decision 7 (runs in your own terminal use claude-pod and write `pod-docs/`).
+- **Setup:** Add repo asks, then writes `workflow.json` and the template state (decision 2). No workflow picker until a second workflow exists.
+- **Rejected:** a folder-name setting in claude-pod (claude-pod would change for OpenAFlow); a fork; a full workflow copy in each repo (about 1.7 MB, stale on every bump); a submodule; an npm `github:` dependency; unprefixed skills via `--add-dir` (takes built-in `/plan` and `/init` away; docs disagree on loading); blocking sessions on a version mismatch.
+- **Settles:** the open points of the 2026-11-22 decision.
+- **Plan:** [default-workflow](plans/default-workflow.md). **Research:** [default-workflow.md](research/default-workflow.md).
+
+## 2026-11-24 — A repo without .openaflow/ starts hosted sessions as today (human)
+Context: plan `default-workflow`, sprint doc §6. The sprint planner's default blocked New session and Resume in a repo with no `.openaflow/` until setup. Setup then hides that repo's `pod-docs/` runs from the board, so every `pod-docs/` repo, this one included, would lose hosted sessions after an update.
+Decision: in a repo without `.openaflow/`, New session and Resume start as today, with the hooks plugin only and no bundled workflow. An installed claude-pod writes `pod-docs/`. New session still shows the setup offer. Only a set-up repo loads the bundled workflow and shows the version line.
+Consequences: until you set up a repo, its sessions use whatever claude-pod is installed, not the app's version. Rejected: block both until setup (the planner's default), and block new sessions but allow resume.
+
+## 2026-11-24 — Add repo sets up .openaflow/ with no question unless the repo has pod-docs/ (human)
+Context: plan `default-workflow`, wave 4 hands-on test. Add repo asked "Create .openaflow/ in this repo?" every time. For a repo without `pod-docs/`, setup loses nothing, and adding the repo to OpenAFlow already says you want OpenAFlow there, so the question was one click with no new information.
+Decision: Add repo on a repo without `.openaflow/` and without `pod-docs/` creates `.openaflow/workflows/claude-pod/` at once, and a short line confirms it. A repo with `pod-docs/` still gets the confirm, with a warning that its `pod-docs/` runs will no longer show on the board. New session's **Set up** offer stays, and it shows the same warning for a repo with `pod-docs/`. This narrows decision 2 / plan Q13 b ("the app writes only after you agree") to repos where setup hides something.
+Consequences: adding a new repo writes `.openaflow/` into it right away, and it shows in `git status`. Rejected: always create with no question (it would silently hide a `pod-docs/` repo's history), and always ask (the old behavior).
+
+## 2026-11-24 — Package the app in the wave check of any wave that touches the bundle (human)
+Context: plan `default-workflow`. electron-builder drops every `.gitkeep`, so the packaged template lacked 5 empty folders. That bug existed from wave 1, but only the plan review ran `pnpm package`, so it was found three waves late (review finding 2, PR #166).
+Decision: a wave whose slices touch what the app ships (`packages/desktop` build config or scripts, `packages/workflow`, `extraResources`, the install or release check) runs `pnpm package` and `pnpm release:check packages/desktop/release` on Linux as part of its wave check, beside `pnpm verify` and `pnpm test:electron`.
+Consequences: about 3 more minutes on those waves only. Other waves are unchanged. Rejected: packaging on every wave (slow, rarely useful), and leaving it to the plan review (finds bundle bugs late).
+
+## 2026-11-24 — A second fix pass for plan default-workflow (human)
+Context: the round 2 review of PR #166 still returned `fix`, with 2 findings: the sidebar chip reads `update pod` next to a card that says to run `init`, and no test covers the server wiring of plugin folders into Continue. Pod allows one fix pass, then halts at gate 2.
+Decision: the human allowed a second fix pass for these two findings, then a short round 3.
+Consequences: this is a one-time exception for this plan, not a change to pod's one-pass rule.
+
+## 2026-11-24 — Setup error words (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: The setup error words: `This repo already has a .openaflow file or folder` · `The app has no workflow to set up. Please reinstall it` · `Setup is already running. Please wait` · `Setup failed. Please try again`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Add repo confirm buttons (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: In the Add repo confirm, **Create** is primary and takes first focus, **Not now** is quiet, the facts sit under an open Details, and Escape acts as Not now unless Create is running. A redesign is parked as idea `rework-setup-dialogs`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — New session workflow controls (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: Every control is off while a Use or Set up is sent; focus moves to the text field after one; the mismatch line and the setup offer share one slot above the buttons; at 375 px Use and Set up keep their width; busy labels `Updating…` and `Setting up…`; Use errors `This repo already uses the app's version`, `The app has no workflow to use. Please reinstall it`, `This workflow isn't on the board anymore`, `Can't read this repo's workflow.json`, `Update failed. Please try again`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Repo added box after setup (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: After a no-question setup on Add repo, a "Repo added · Created .openaflow/workflows/claude-pod/" box closes itself after 3 s (Close or Escape sooner). A status line in the main screen would replace it; see idea `rework-setup-dialogs`.
+Consequences: the value in use stays until you change it.
+
+## 2026-11-24 — Newer workflow docs block New session (agent default — override anytime)
+Context: plan `default-workflow`, sorted at plan complete.
+Decision: A set-up repo whose docs are newer than version 2 gets no New session and reads "… Update OpenAFlow to read them.", because the app's older `pod` could damage them.
+Consequences: the value in use stays until you change it.

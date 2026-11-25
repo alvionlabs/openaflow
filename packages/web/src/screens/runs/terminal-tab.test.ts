@@ -8,7 +8,7 @@ import type { TerminalBridge } from '../../desktop-bridge.ts'
 import { createTerminalLink } from '../../terminal-link.ts'
 import { StopBarPanel, TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { SavedScreen } from './TerminalView.tsx'
-import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, stopBar, terminalOptions, DEFAULT_SCROLLBACK, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
+import { browserView, canAttach, CANT_RESUME, clock, ENDED_NO_TIME, focusMove, screenHandlers, screenUnder, wantSaved, focusRun, keepFocusAsk, RESUME_BLOCKED, RESUME_LINE, SIDELOAD_LINE, stopBar, terminalOptions, DEFAULT_SCROLLBACK, tabDot, terminalBody, UNAVAILABLE } from './terminal-tab.ts'
 
 // Local times, so the HH:MM checks hold in any time zone.
 const START = new Date(2026, 10, 15, 13, 40).getTime()
@@ -336,5 +336,39 @@ describe('terminal tab', () => {
     // The rest of today's options stay.
     expect(opts(undefined, true)).toMatchObject({ minimumContrastRatio: 4.5, cursorBlink: true, disableStdin: true, fontFamily: 'f' })
     expect(opts(undefined, false).disableStdin).toBe(false)
+  })
+})
+
+describe('sideload stop line', () => {
+  const BLOCKED = session({ state: 'ended', exitCode: 1, endedAt: END, hooked: false, prompted: false, blocked: 'sideload', resume: 'ok' })
+  const LINE = "Claude couldn't start. Your organization's disableSideloadFlags setting blocks the plugins OpenAFlow loads."
+
+  it('names disableSideloadFlags, offers no Resume, keeps Dismiss', () => {
+    expect(SIDELOAD_LINE).toBe(LINE)
+    const bar = stopBar(BLOCKED, NOW, true)
+    expect(bar.line).toBe(LINE)
+    expect(bar.resume).toBe(false)
+    const html = tab(BLOCKED, BRIDGE)
+    expect(buttons(html)).toEqual(['Dismiss'])
+    expect(html).toMatch(/<code class="stop-code">disableSideloadFlags<\/code>/)
+    expect(html.replace(/<[^>]+>/g, '')).toContain(text(LINE))
+    expect(html).not.toContain(RESUME_LINE)
+    // Even with a resume reason, the sideload line wins and no Resume shows.
+    expect(buttons(tab({ ...BLOCKED, resume: 'in use' }, BRIDGE))).toEqual(['Dismiss'])
+  })
+
+  it('shows the same line for a stopped session', () => {
+    expect(stopBar({ ...BLOCKED, state: 'stopped' }, NOW, true).line).toBe(LINE)
+  })
+})
+
+describe('other ends unchanged', () => {
+  it('an ended session with no blocked field reads as before', () => {
+    for (const s of [ENDED, ENDED_CODE, APP_CLOSED, ENDED_UNTIMED]) {
+      expect(stopBar(s, NOW, true)).not.toHaveProperty('code')
+      expect(tab(s, BRIDGE)).not.toContain('disableSideloadFlags')
+    }
+    expect(stopBar({ ...ENDED, resume: 'ok' }, NOW, true).resume).toBe(true)
+    expect(buttons(tab({ ...ENDED, resume: 'ok' }, BRIDGE))).toEqual(['Resume', 'Dismiss'])
   })
 })

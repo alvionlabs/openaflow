@@ -1,7 +1,8 @@
 // The answer and resolve routes, mounted at /api/actions beside the merge routes, behind the action
 // guard: `answer` appends your answer to a queue entry waiting on you; `resolve` (Close and Keep)
 // rewrites its pending Resolution with the reason or the value the board reads itself. The repo comes
-// from the current Board by id, and the entry by its whole line. The rules and why are in
+// from the current Board by id, and the entry by its whole line; the write goes to that entry's state
+// folder. The rules and why are in
 // pod-docs/feature-details/actions.md.
 
 import {
@@ -18,7 +19,7 @@ import {
   type ResolveResult,
 } from '@openaflow/model'
 import { Hono } from 'hono'
-import { nodeQueueFs, writeAnswer, writeResolution, type QueueFs } from './queue-writer.ts'
+import { nodeQueueFs, writeAnswer, writeResolution, type QueueFs, type WriteAnswer } from './queue-writer.ts'
 
 export type AnswerRouteDeps = {
   /** The current Board. */
@@ -44,6 +45,17 @@ export function localDate(at: Date = new Date()): string {
 export const answerTarget = (item: Pick<QueueItem, 'date' | 'type' | 'route'>) =>
   [item.date, item.type, item.route.trim()].filter((part) => part !== undefined && part !== '').join(' · ')
 
+const TWICE = { outcome: 'changed', message: 'Two entries read the same. Answer it in the chat.' } as const
+
+/**
+ * The answerable entries whose line is `line`. More than one (the same line in two state folders, or twice
+ * in one) can't be told apart, so the routes write none of them.
+ */
+const answerable = (queue: QueueItem[], line: string) => queue.filter((e) => e.line === line && isAnswerable(e))
+
+/** The entry's own state folder, from the Board; never from the request. */
+const stateOf = (item: QueueItem) => item.stateDir ?? 'pod-docs'
+
 export function createAnswerRoutes(deps: AnswerRouteDeps): Hono {
   const fs = deps.fs ?? nodeQueueFs
   // Repo ids with an answer writing now.
@@ -58,13 +70,15 @@ export function createAnswerRoutes(deps: AnswerRouteDeps): Hono {
     if (!clean.ok) return c.json({ error: clean.error }, 400)
 
     const repo = deps.board().repos.find((r) => r.id === repoId)
-    const item = repo?.model.queue.find((e) => e.line === line && isAnswerable(e))
+    const items = repo ? answerable(repo.model.queue, line) : []
+    const item = items[0]
     if (!repo || !item) return c.json({ error: 'not waiting on you' }, 404)
     if (inFlight.has(repoId)) return c.json({ error: 'answer in progress' }, 409)
 
     inFlight.add(repoId)
     try {
-      const result = await settle(() => writeAnswer({ repoPath: repo.path, line, text: clean.text }, fs))
+      const result: WriteAnswer | undefined =
+        items.length > 1 ? TWICE : await settle(() => writeAnswer({ repoPath: repo.path, stateDir: stateOf(item), line, text: clean.text }, fs))
       const { outcome, message } = result ?? { outcome: 'failed' as const, message: "Couldn't write the queue (unknown)." }
       const entry: NewActionEntry = { action: 'answer', repoId, repo: repo.name, target: answerTarget(item), result: outcome }
       if (message !== undefined) entry.message = message
@@ -87,18 +101,24 @@ export function createAnswerRoutes(deps: AnswerRouteDeps): Hono {
     if (typeof repoId !== 'string' || typeof line !== 'string' || (kind !== 'close' && kind !== 'keep')) return c.json({ error: 'bad request' }, 400)
 
     const repo = deps.board().repos.find((r) => r.id === repoId)
-    const item = repo?.model.queue.find((e) => e.line === line && isAnswerable(e))
+    const items = repo ? answerable(repo.model.queue, line) : []
+    const item = items[0]
     if (!repo || !item) return c.json({ error: 'not waiting on you' }, 404)
-    const t = triage(repo, item)
-    if (kind === 'close' && t.done === undefined) return c.json({ error: NOT_DONE }, 409)
-    if (kind === 'keep' && t.keep === undefined) return c.json({ error: NO_VALUE }, 409)
+    // Two entries with this line: no triage of either, the write below is refused.
+    const twice = items.length > 1
+    const t = twice ? undefined : triage(repo, item)
+    if (t && kind === 'close' && t.done === undefined) return c.json({ error: NOT_DONE }, 409)
+    if (t && kind === 'keep' && t.keep === undefined) return c.json({ error: NO_VALUE }, 409)
     if (inFlight.has(repoId)) return c.json({ error: 'answer in progress' }, 409)
 
     const date = (deps.today ?? localDate)()
-    const text = kind === 'close' ? closeText(date, t.done!) : keepText(date, t.keep!)
     inFlight.add(repoId)
     try {
-      const written = await settle(() => writeResolution({ repoPath: repo.path, line, text }, fs))
+      const written = !t
+        ? TWICE
+        : await settle(() =>
+            writeResolution({ repoPath: repo.path, stateDir: stateOf(item), line, text: kind === 'close' ? closeText(date, t.done!) : keepText(date, t.keep!) }, fs),
+          )
       const { outcome: raw, message } = written ?? { outcome: 'failed' as const, message: "Couldn't write the queue (unknown)." }
       const outcome: ResolveOutcome = raw === 'resolved' ? (kind === 'close' ? 'closed' : 'kept') : raw
       const entry: NewActionEntry = { action: 'resolve', repoId, repo: repo.name, target: answerTarget(item), result: outcome }

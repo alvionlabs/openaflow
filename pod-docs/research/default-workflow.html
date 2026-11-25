@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Research: Default workflow for OpenAFlow</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#222}
+h1{font-size:22px}h2{margin-top:32px;border-bottom:2px solid #ddd;padding-bottom:4px}
+.meta{color:#666;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px}
+.card{border:1px solid #ccc;border-radius:6px;padding:10px;background:#fafafa}
+.card h3{margin:0 0 4px;font-size:15px}
+.card p{margin:4px 0;font-size:13px}
+.bar{display:flex;gap:3px;align-items:center;font-size:12px;margin:4px 0}
+.bar svg{display:block}
+.q{border:1px solid #bbb;border-radius:6px;padding:10px;margin:12px 0}
+.q h3{margin:0 0 4px;font-size:15px}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:8px}
+.opt{background:#eef3fb;border:1px solid #b9c9e6;border-radius:4px;padding:6px;font-size:13px}
+.own{color:#8a5a00;font-weight:600}
+.note{background:#fff7e0;border:1px solid #e6cf8a;padding:8px;border-radius:4px}
+li{margin:3px 0}a{color:#1a56b0}
+</style></head><body>
+<h1>Research: Default workflow for OpenAFlow</h1>
+<p class="meta">Generated 2026-11-22 · Depth: standard · Researchers: 3 · Searches: 15 · Pages read: 32. Full report with all sources: <code>default-workflow.md</code>.</p>
+<p class="note"><b>Assumptions.</b> claude-pod is a normal Claude Code plugin. OpenAFlow starts <code>claude</code> in a pty and sets flags and env vars per session. Angles run: existing, gaps, building. No conflicts between angles. "Not verified" means no page confirmed it.</p>
+
+<h2>What exists</h2>
+<p class="meta">Closeness bar: filled = close to the idea. Alive: all are current docs or mature tools unless noted.</p>
+<div class="grid">
+
+<div class="card"><h3><a href="https://code.claude.com/docs/en/plugins/cli-reference.md">--plugin-dir / CLAUDE_CODE_PLUGIN_DIRS / --plugin-url</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="95" height="10" fill="#2a8a3a"/></svg> very close</div>
+<p>Loads a plugin from a dir or zip for one session, in place. Id <code>name@inline</code>. Replaces a same-named installed plugin.</p>
+<p>Alive: official docs, current. License: no evidence found.</p></div>
+
+<div class="card"><h3><a href="https://code.claude.com/docs/en/plugins/marketplace-reference.md">Marketplace plugins (ref / sha / sha256)</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="70" height="10" fill="#2a8a3a"/></svg> close</div>
+<p>Installs to a versioned cache. Sources take <code>ref</code> plus 40-char <code>sha</code>; archives take <code>sha256</code>.</p>
+<p>Alive: official docs. License: no evidence found.</p></div>
+
+<div class="card"><h3><a href="https://code.claude.com/docs/en/plugins-reference">Plugin manifest (userConfig, CLAUDE_PLUGIN_DATA, engines)</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="65" height="10" fill="#2a8a3a"/></svg> close</div>
+<p>Plugin settings, a data dir kept across updates, a Claude Code version range, <code>validate</code>.</p>
+<p>Alive: official docs. License field takes SPDX id.</p></div>
+
+<div class="card"><h3><a href="https://www.electron.build/docs/contents">electron-builder extraResources</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="80" height="10" fill="#2a8a3a"/></svg> the bundling mechanism</div>
+<p>Copies a folder to <code>resources/</code>, outside asar. Read via <code>process.resourcesPath</code>.</p>
+<p>Alive: docs current. License: not verified.</p></div>
+
+<div class="card"><h3><a href="https://git-scm.com/book/en/v2/Git-Tools-Submodules">Git submodule</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="60" height="10" fill="#c98a00"/></svg> close, extra clone step</div>
+<p>Pins one commit SHA. Plain clone leaves it empty.</p>
+<p>Alive: mature. License: not verified.</p></div>
+
+<div class="card"><h3><a href="https://docs.npmjs.com/cli/v10/configuring-npm/package-json#git-urls-as-dependencies">npm git dependency</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="50" height="10" fill="#c98a00"/></svg> works, runs scripts</div>
+<p><code>git+https://...#commit-ish</code> or <code>#semver:range</code>. Runs build/prepare/install scripts.</p>
+<p>Alive: mature. License: not verified.</p></div>
+
+<div class="card"><h3><a href="https://github.blog/changelog/2025-06-03-releases-now-expose-digests-for-release-assets/">GitHub release asset digests</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="55" height="10" fill="#c98a00"/></svg> makes download + verify cheap</div>
+<p>SHA-256 per release asset in UI, REST, GraphQL, <code>gh</code>. Not stated for old assets.</p>
+<p>Alive: current (2025-06-03).</p></div>
+
+<div class="card"><h3><a href="https://copier.readthedocs.io/en/latest/updating/">Copier update</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="40" height="10" fill="#b84a3a"/></svg> partial: update-after-edit model</div>
+<p>Regenerates old and new, merges local edits. Needs git tags and an answers file. <code>_migrations</code> on update.</p>
+<p>Alive: docs current. License: not verified.</p></div>
+
+<div class="card"><h3><a href="https://developer.hashicorp.com/terraform/cli/config/environment-variables">Terraform TF_DATA_DIR</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="40" height="10" fill="#b84a3a"/></svg> partial: rename model</div>
+<p>Env var replaces the data folder (default <code>.terraform</code>). Must be set the same on every command.</p>
+<p>Alive: official docs.</p></div>
+
+<div class="card"><h3><a href="https://code.claude.com/docs/en/claude-directory">CLAUDE_CONFIG_DIR</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="25" height="10" fill="#b84a3a"/></svg> user folder only</div>
+<p>Moves <code>~/.claude</code> and <code>.claude.json</code>. Not shown to move the project folder.</p>
+<p>Alive: official docs.</p></div>
+
+<div class="card"><h3><a href="https://git-scm.com/docs/git#_git_commits">GIT_DIR</a> and <a href="https://doc.rust-lang.org/cargo/reference/environment-variables.html">CARGO_HOME</a></h3>
+<div class="bar"><svg width="100" height="10"><rect width="100" height="10" fill="#ddd"/><rect width="35" height="10" fill="#b84a3a"/></svg> partial: env-var models</div>
+<p><code>GIT_DIR</code> replaces <code>.git</code>. <code>CARGO_HOME</code> overrides <code>~/.cargo</code>.</p></div>
+</div>
+
+<h2>Gaps and angles</h2>
+<h3>Q1 Pin and bundle</h3>
+<ul>
+<li>Submodule pins a SHA, not a tag; needs <code>--recurse-submodules</code>; no auto-update. <a href="https://t4d-gmbh.github.io/git-and-science/slides/content/submodules/gotchas.html">gotchas</a>. Empty-clone risk is an inference.</li>
+<li>npm git URLs run install scripts. Claude Code's own npm source forbids git addresses (its fetch only). <a href="https://docs.npmjs.com/cli/v10/configuring-npm/package-json#git-urls-as-dependencies">npm</a>, <a href="https://code.claude.com/docs/en/plugins/marketplace-reference.md">marketplace-reference</a></li>
+<li>No published reference script for "download tag, verify hash, bundle". Old-asset digests not confirmed. <a href="https://github.blog/changelog/2025-06-03-releases-now-expose-digests-for-release-assets/">GitHub</a></li>
+<li><code>--plugin-dir</code> rejects paths that escape the plugin root, so asar or outside symlinks break. <a href="https://code.claude.com/docs/en/plugins/loading">loading</a></li>
+<li>Auto-install: npm lockfile registry packages only; for <code>--plugin-dir</code> no evidence found. <a href="https://code.claude.com/docs/en/plugins/loading">loading</a></li>
+<li>Marketplace cache keyed by version: same version, changed content, no update (#32983, no fix shown). <a href="https://github.com/anthropics/claude-code/issues/32983">#32983</a></li>
+</ul>
+<h3>Name and collisions</h3>
+<ul>
+<li>Names starting <code>claude-</code> fail <code>validate</code> and <code>init</code>/<code>tag</code>; Claude Code still loads them. <a href="https://code.claude.com/docs/en/plugins-reference">plugins-reference</a></li>
+<li>Same-name <code>--plugin-dir</code> silently replaces the installed plugin; only <code>--debug</code> logs it. <a href="https://code.claude.com/docs/en/plugins/loading">loading</a>. Issue #35423 unresolved: <a href="https://github.com/anthropics/claude-code/issues/35423">link</a>.</li>
+<li><code>disableSideloadFlags</code> makes Claude Code exit 1. <a href="https://code.claude.com/docs/en/plugins/cli-reference.md">cli-reference</a></li>
+<li>Plugin root <code>CLAUDE.md</code> is not loaded. <a href="https://code.claude.com/docs/en/plugins-reference">plugins-reference</a></li>
+</ul>
+<h3>Q2 Editable default</h3>
+<ul>
+<li>No per-file override layer; a same-named plugin replaces the whole plugin. <a href="https://code.claude.com/docs/en/plugins/loading.md">loading</a></li>
+<li>Notepad++ lost user themes when shipped and user files shared a folder. <a href="https://community.notepad-plus-plus.org/post/87779">thread</a></li>
+<li>Read-only bundle plus user layer avoids overwrite, but copied-and-edited files never get updates. No failure story fetched.</li>
+<li>Env vars like <code>CLAUDE_PLUGIN_ROOT</code> reach hooks and MCP/LSP only, not the Bash tool or subagents. <a href="https://code.claude.com/docs/en/plugins-reference">plugins-reference</a></li>
+</ul>
+<h3>Q3 Rename the state folder</h3>
+<ul>
+<li>No Claude Code way to rename a project state folder was found. <a href="https://code.claude.com/docs/en/claude-directory">claude-directory</a></li>
+<li>devsy moved only one of four folders; every workspace broke; reverted. <a href="https://github.com/devsy-org/devsy/pull/598">PR #598</a></li>
+<li><code>userConfig</code> under <code>--plugin-dir</code>, or host-preset: no evidence found.</li>
+<li>No CLI tool found that documents old-name handling.</li>
+</ul>
+
+<h2>Best practices</h2>
+<ul>
+<li>Bundle a plain folder via <code>extraResources</code>; resolve with <code>process.resourcesPath</code>; pass <code>--plugin-dir</code>. <a href="https://www.electron.build/docs/contents">electron-builder</a></li>
+<li>Prefer per-session <code>--plugin-dir</code> to a marketplace install. <a href="https://code.claude.com/docs/en/plugins/loading.md">loading</a></li>
+<li>Pin by tag and content hash; keep <code>{repo, tag, sha256}</code> in one committed file. <a href="https://code.claude.com/docs/en/plugins/marketplace-reference.md">marketplace-reference</a></li>
+<li>Set manifest <code>version</code> each release. Run <code>claude plugin validate --strict</code> in CI. <a href="https://code.claude.com/docs/en/plugins-reference">plugins-reference</a></li>
+<li>Never write into <code>${CLAUDE_PLUGIN_ROOT}</code>. Use <code>${CLAUDE_PLUGIN_DATA}</code> or the project.</li>
+<li>Keep bundle and user edits in separate folders. <a href="https://community.notepad-plus-plus.org/post/87779">Notepad++</a></li>
+<li>Rename with one host-set env var over a default, plus explicit override. <a href="https://developer.hashicorp.com/terraform/cli/config/environment-variables">Terraform</a>, <a href="https://git-scm.com/docs/git#_git_commits">git</a>, <a href="https://doc.rust-lang.org/cargo/reference/environment-variables.html">Cargo</a></li>
+<li>Move a renamed folder whole; read the old one when the new is empty. <a href="https://github.com/devsy-org/devsy/pull/598">devsy</a></li>
+<li>Copier model: tags, stored base, merge, <code>_migrations</code> for one-time moves. <a href="https://copier.readthedocs.io/en/stable/configuring/">configuring</a></li>
+</ul>
+
+<h2>Ideas to consider</h2>
+<p class="meta">Proposals, not facts. <span class="own">(own idea)</span> means the researchers' invention.</p>
+<ul>
+<li>One resolver function for the plugin path: the seam for a later user workflow. <span class="own">(own idea)</span>, grows from <a href="https://www.electron.build/docs/contents">electron-builder</a></li>
+<li>Seam as an ordered list of plugin dirs; "replace" = same manifest name. grows from <a href="https://code.claude.com/docs/en/plugins/loading.md">loading</a></li>
+<li>Read-only bundle plus override plugin; reset = stop passing the user folder. <span class="own">(own idea)</span></li>
+<li><code>workflow.lock.json</code> (repo, tag, sha, sha256) and a <code>bump-workflow &lt;tag&gt;</code> script. <span class="own">(own idea)</span></li>
+<li>Build fails if the bundled dir is empty; CI validates it and checks the packaged app. <span class="own">(own idea)</span></li>
+<li>If copying later: store <code>{base, files:{path:hash}}</code>; silent update for unchanged, a choice for changed. <span class="own">(own simplification)</span> of <a href="https://copier.readthedocs.io/en/stable/updating/">Copier</a></li>
+<li>One host-set env var for the state folder (default <code>pod-docs</code>); <code>${user_config.KEY}</code> for skill text, unverified. <span class="own">(own design)</span></li>
+<li>Rename on first run: ask once, then move; test with old-name and empty-new fixtures. <span class="own">(own adaptation)</span></li>
+<li>Warn at session start if the plugin is also installed, or <code>disableSideloadFlags</code> blocks the flag. <span class="own">(own idea)</span></li>
+<li>Use a unique manifest name, or set <code>@inline</code> handling on purpose.</li>
+</ul>
+
+<h2>Questions for the plan</h2>
+
+<div class="q"><h3>1. Manifest name and the <code>claude-</code> prefix</h3>
+<p>Validate errors on it; Claude Code still loads it. A rename changes skill ids to <code>&lt;new&gt;:&lt;skill&gt;</code>.</p>
+<div class="opts"><div class="opt"><b>Keep, skip validate</b></div><div class="opt"><b>Rename</b></div><div class="opt"><b>Manifest name differs from repo name</b></div></div></div>
+
+<div class="q"><h3>2. How to pin and bundle (Q1)</h3>
+<p>All end as a folder for <code>extraResources</code>.</p>
+<div class="opts">
+<div class="opt"><b>A. Submodule</b><br>Pins SHA, needs recurse on clone.</div>
+<div class="opt"><b>B. Tag tarball + committed SHA-256</b><br>No reference script exists.</div>
+<div class="opt"><b>C. npm github: dep</b><br>Runs install scripts.</div></div></div>
+
+<div class="q"><h3>3. Which copy wins when the user also installed the plugin?</h3>
+<p>Session plugin silently replaces; issue #35423 open.</p>
+<div class="opts"><div class="opt">Accept</div><div class="opt">Detect and warn</div><div class="opt">Different manifest name</div><div class="opt">Set <code>@inline</code> rule</div></div></div>
+
+<div class="q"><h3>4. Organization sets <code>disableSideloadFlags</code></h3>
+<p>Claude Code exits 1.</p>
+<div class="opts"><div class="opt">Clear error</div><div class="opt">Project <code>.claude/</code> plugin location (untested)</div><div class="opt">Unsupported</div></div></div>
+
+<div class="q"><h3>5. Does claude-pod need <code>node_modules</code> or files outside its root?</h3>
+<p>Auto-install: npm lockfile only; <code>--plugin-dir</code> no evidence.</p>
+<div class="opts"><div class="opt">Self-contained</div><div class="opt">Pre-installed deps</div><div class="opt">Install from a hook into <code>CLAUDE_PLUGIN_DATA</code></div></div></div>
+
+<div class="q"><h3>6. Where do user edits live later (Q2)?</h3>
+<p>No per-file override exists. A copy gets no updates unless merged.</p>
+<div class="opts"><div class="opt">Replace whole plugin; bundle read-only</div><div class="opt">Copy on first run with base hashes</div><div class="opt">Per-file override layer</div><div class="opt">Folder under <code>.openaflow/</code></div></div></div>
+
+<div class="q"><h3>7. Is the bundled folder writable on all targets?</h3>
+<p>AppImage mount not verified.</p>
+<div class="opts"><div class="opt">Forbid plugin writes outside project and <code>CLAUDE_PLUGIN_DATA</code></div><div class="opt">Copy to a user data dir on version change</div></div></div>
+
+<div class="q"><h3>8. How does the plugin learn the state folder name (Q3)?</h3>
+<p>Skills cannot read env vars. <code>userConfig</code> under <code>--plugin-dir</code> unverified.</p>
+<div class="opts"><div class="opt">Host env var for hooks + <code>userConfig</code> for skills</div><div class="opt">Marker or config file in project</div><div class="opt">Hard-code <code>.openaflow/</code> in a new claude-pod release</div></div></div>
+
+<div class="q"><h3>9. Existing <code>pod-docs/</code> folders</h3>
+<p>devsy broke on a partial move.</p>
+<div class="opts"><div class="opt">Detect, offer one-time move</div><div class="opt">Read both, write new</div><div class="opt">Leave old name, opt in</div><div class="opt">Hard rename</div></div></div>
+
+<div class="q"><h3>10. Minimum Claude Code version</h3>
+<p>No evidence found; the manifest has an <code>engines</code> field.</p>
+<div class="opts"><div class="opt">Test the oldest build</div><div class="opt">Read the changelog</div></div></div>
+
+<h2>Suspect pages</h2>
+<p>none</p>
+</body></html>

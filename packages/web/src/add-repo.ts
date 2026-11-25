@@ -4,7 +4,11 @@
 import { NEED_RELOAD, pageToken, RELOAD, RESTARTED, type ActionDeps } from './actions-client.ts'
 import { noToken, staleToken } from './reload-flag.ts'
 
-export type AddResult = { status: number; error?: string }
+/**
+ * `openaflow` and `podDocs`: the 201's fields, each set only when the server sent a boolean (false: the repo has no
+ * `.openaflow/`, or no `pod-docs/`).
+ */
+export type AddResult = { status: number; error?: string; openaflow?: boolean; podDocs?: boolean }
 
 export type PostRepoDeps = ActionDeps
 
@@ -26,13 +30,22 @@ export async function postRepo(path: string, deps: PostRepoDeps = {}): Promise<A
     body: JSON.stringify({ path }),
   })
   let error: unknown
+  let openaflow: unknown
+  let podDocs: unknown
   try {
-    error = ((await res.json()) as { error?: unknown } | null)?.error
+    const body = (await res.json()) as { error?: unknown; openaflow?: unknown; podDocs?: unknown } | null
+    error = body?.error
+    openaflow = body?.openaflow
+    podDocs = body?.podDocs
   } catch {
     error = undefined
   }
   if (staleToken(res.status, error, deps.flag)) return { status: 403, error: RESTARTED }
-  return typeof error === 'string' && error.length > 0 ? { status: res.status, error } : { status: res.status }
+  if (typeof error === 'string' && error.length > 0) return { status: res.status, error }
+  const result: AddResult = { status: res.status }
+  if (typeof openaflow === 'boolean') result.openaflow = openaflow
+  if (typeof podDocs === 'boolean') result.podDocs = podDocs
+  return result
 }
 
 // Short and warm, with no period at the end (DESIGN.md, "Forms and errors"). Remove repo and Forget use the last two too.
@@ -58,4 +71,32 @@ export function addError(r: AddResult): AddError {
   if (word === RESTARTED || word === NEED_RELOAD) return { message: RELOAD, pathError: false }
   console.warn(`openaflow: add repo failed (HTTP ${r.status}${word ? `: ${word}` : ''})`)
   return { message: TRY_AGAIN, pathError: false }
+}
+
+// The setup step's lines (the server's words are in routes: `setup-workflow`). Same style as above.
+export const SETUP_ALREADY = 'This repo already has a .openaflow file or folder'
+export const SETUP_MISSING = "The app has no workflow to set up. Please reinstall it"
+export const SETUP_BUSY = 'Setup is already running. Please wait'
+export const SETUP_FAILED = 'Setup failed. Please try again'
+/** After Add repo set a repo up with no question. */
+export const CREATED_LINE = 'Created .openaflow/workflows/claude-pod/'
+/** Under a setup question for a repo with `pod-docs/` (Add repo's confirm, New session's offer): setup hides those runs. */
+export const PODDOCS_WARNING = 'Its pod-docs/ runs will no longer show on the board.'
+
+/**
+ * The line for a failed `setup-workflow` (the action client's message): the server's word, in plain words. A stale
+ * token keeps the reload line; anything else reads as try again. The exact cause goes to the console.
+ */
+export function setupError(message: string): string {
+  const word = message.trim()
+  if (word === 'already set up') return SETUP_ALREADY
+  if (word === 'workflow missing') return SETUP_MISSING
+  if (word === 'setup in progress') return SETUP_BUSY
+  if (word.startsWith('setup failed')) {
+    console.warn(`openaflow: setup failed (${word})`)
+    return SETUP_FAILED
+  }
+  if (word === RELOAD) return RELOAD
+  console.warn(`openaflow: setup failed (${word})`)
+  return TRY_AGAIN
 }

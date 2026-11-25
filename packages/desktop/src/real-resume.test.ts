@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Page } from 'playwright-core'
 import { describe, expect, test } from 'vitest'
@@ -20,7 +20,7 @@ import {
   type Harness,
   type LifeWorld,
 } from '../test/electron-harness.ts'
-import { hooksPluginDir } from './pty-host-launch.ts'
+import { hooksPluginDir, workflowsRoot } from './pty-host-launch.ts'
 
 // Resume in the real Electron app (sprint session-life §4, §5, §9, §10): the route, the Terminal tab's stop bar over
 // the saved screen, `can't resume`, and the host banner. `claude` is test/fixtures/life-claude.mjs; the test writes
@@ -36,6 +36,14 @@ const RUN_MS = 240_000
 async function pluginDir(h: Harness): Promise<string> {
   const place = await h.app.evaluate(({ app }) => ({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }))
   return hooksPluginDir({ ...place, appPath: DESKTOP })
+}
+
+/** The bundled workflow folder main names in OPENAFLOW_WORKFLOWS_DIR, for this build (`pnpm build` makes it). */
+async function workflowDir(h: Harness): Promise<string> {
+  const place = await h.app.evaluate(({ app }) => ({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }))
+  const dir = join(workflowsRoot({ ...place, appPath: DESKTOP }), 'claude-pod')
+  expect(existsSync(join(dir, '.claude-plugin', 'plugin.json')), dir).toBe(true)
+  return dir
 }
 
 // --- The page ---
@@ -109,6 +117,29 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (LINUX || WIN))(`r
         expect(await postAction(h, 'resume-session', { repoId, marker })).toEqual({ status: 404, body: { error: 'no session' } })
       }),
     )
+  }, RUN_MS)
+
+  test('resume args', async () => {
+    await inWorld(async (w) => {
+      // A set-up repo: its sessions load the bundled workflow too. The world's own repo (pod-docs/ only) is the hooks-only case above.
+      const folder = join(w.repo, '.openaflow', 'workflows', 'claude-pod')
+      mkdirSync(join(folder, 'state'), { recursive: true })
+      writeFileSync(join(folder, 'workflow.json'), JSON.stringify({ source: 'claude-pod', version: '0.11.10' }, null, 2) + '\n')
+      await withApp(w, async (h) => {
+        const { marker, repoId, sessionId } = await lifeSession(h, w)
+        await lifeUntil('the fake to start', () => lifeStarts(w).length === 1, 15_000, w)
+        expect(lifeStarts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h)])
+        await testHooks(h).kill(marker)
+        await lifeUntil('the session ended', async () => (await hostedOf(h, w, marker))?.state === 'ended', 15_000, w)
+        writeLifeTranscript(w, (await lifeRepo(h, w))!.path, sessionId)
+        await lifeUntil('resume ok on the Board', async () => (await hostedOf(h, w, marker))?.resume === 'ok', 30_000, w)
+        const answer = await postAction(h, 'resume-session', { repoId, marker, cols: 120, rows: 30 })
+        expect(answer, JSON.stringify(answer)).toMatchObject({ status: 200, body: { outcome: 'started', logged: true } })
+        // `--resume <id>`, the hooks plugin, then the workflow, with no prompt.
+        await lifeUntil('the resumed fake', () => lifeStarts(w).length === 2, 15_000, w)
+        expect(lifeStarts(w)[1]!.args).toEqual(['--resume', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h)])
+      })
+    })
   }, RUN_MS)
 
   test('resume from the tab', async () => {

@@ -17,6 +17,7 @@ import { Chip } from './Chip.tsx'
 import { elsewhere } from './elsewhere.ts'
 import { LogTab } from './LogTab.tsx'
 import { NextStepCard } from './NextStepCard.tsx'
+import { WorkflowContext } from './NewSessionForm.tsx'
 import { focusOnArrival } from './open-focus.ts'
 import {
   INITIAL as FORGET_IDLE,
@@ -54,7 +55,7 @@ import { QuitOverlay } from './QuitOverlay.tsx'
 import { focusRun, hasTerminalTab, keepFocusAsk, tabDot } from './terminal-tab.ts'
 import { TerminalNote, TerminalTab } from './TerminalTab.tsx'
 import { WaitingTab } from './WaitingTab.tsx'
-import { banners, connectionStatus, POD_INSTALL, tabPress } from './view.ts'
+import { banners, connectionStatus, tabPress } from './view.ts'
 import './runs.css'
 import type { ReloadFlag } from '../../reload-flag.ts'
 
@@ -189,6 +190,8 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     removeFlow.remove(after)
   }
   const repos = board?.repos ?? []
+  const workflow = board?.workflow
+  const workflowContext = useMemo(() => ({ repos, ...(workflow ? { workflow } : {}) }), [board])
   const toRemove = removeTarget(repo, { repos, runs, returnTo: MENU_TRIGGER_ID })
   const sideTarget = (run: RunSummary) => removeTarget(repoOfRun(repos, run), { repos, runs, returnTo: moreButtonId(run) })
 
@@ -286,7 +289,7 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
     </div>
   )
 
-  return (
+  const screen = (
     <div className="screen">
       <div className="screen-body" style={{ '--side-width': `${sideWidth}px` } as CSSProperties}>
         <aside className="side" id="side">
@@ -363,7 +366,6 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
                   {menu}
                 </div>
                 <p className="muted">Press Add repo in the sidebar and pick a repo's folder to see its pod runs.</p>
-                <p className="muted">Runs come from pod, a Claude Code plugin. {POD_INSTALL}</p>
               </div>
             ) : view === 'board' && pipeline && selected.plan !== undefined ? (
               <>
@@ -436,4 +438,6 @@ export function RunsScreen({ board, stream, runs, selected, view, slice, agent, 
       {picking && <AddRepoDialog repoPaths={board?.repos.map((r) => r.path) ?? []} onClose={closePicker} />}
     </div>
   )
+  // The New session form (card and ⋯ modal) reads the Board's bundle and repos here, for its workflow lines.
+  return <WorkflowContext.Provider value={workflowContext}>{screen}</WorkflowContext.Provider>
 }

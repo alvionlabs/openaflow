@@ -16,6 +16,7 @@
     "desktop": "pnpm --filter @openaflow/desktop start",
     "test:electron": "node packages/desktop/scripts/real-tests.mjs",
     "package": "pnpm --filter @openaflow/desktop package",
+    "bump-workflow": "pnpm --filter @openaflow/workflow bump",
     "test:install": "node packages/desktop/scripts/install-tests.mjs",
     "release:check": "pnpm --filter @openaflow/desktop exec tsx scripts/release-check.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm build"

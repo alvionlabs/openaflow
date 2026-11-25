@@ -1,6 +1,6 @@
 import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { hooksPluginDir, hostLogLine, ptyHostEntry, ptyHostEnv } from './pty-host-launch.ts'
+import { hooksPluginDir, hostLogLine, ptyHostEntry, ptyHostEnv, workflowsRoot } from './pty-host-launch.ts'
 
 const appPath = join('E:', 'repo', 'packages', 'desktop')
 const resourcesPath = join('C:', 'pod', 'resources')
@@ -42,5 +42,16 @@ describe('pty host launch', () => {
     )
     expect(hostLogLine({ type: 'started', id: 'a', pid: 1 })).toBeUndefined()
     expect(hostLogLine(null)).toBeUndefined()
+  })
+})
+
+describe('workflowsRoot', () => {
+  test('is <resources>/workflows packaged and <appPath>/../workflow/dist unpackaged', () => {
+    expect(workflowsRoot({ packaged: false, appPath, resourcesPath })).toBe(join('E:', 'repo', 'packages', 'workflow', 'dist'))
+    const packaged = { packaged: true, appPath: join(resourcesPath, 'app.asar'), resourcesPath }
+    expect(workflowsRoot(packaged)).toBe(join(resourcesPath, 'workflows'))
+    // Outside the asar, and never in resources/app.
+    expect(workflowsRoot(packaged).split(sep)).not.toContain('app.asar')
+    expect(workflowsRoot(packaged).split(sep)).not.toContain('app')
   })
 })

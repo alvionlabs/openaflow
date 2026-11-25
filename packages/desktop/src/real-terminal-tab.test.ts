@@ -149,8 +149,9 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (proc
       await until('Plain session picked', async () => (await box.innerText()).includes('Plain session'), h)
       expect(await box.getAttribute('aria-expanded')).toBe('false')
       expect(await page.locator('section.next-step form.new-session label', { hasText: 'Message (optional)' }).count()).toBe(1)
-      // Back to Plan for the next test.
+      // Back to Plan for the next test: Home opens on init, the first option; ArrowDown moves to Plan.
       await page.keyboard.press('Home')
+      await page.keyboard.press('ArrowDown')
       await page.keyboard.press('Enter')
       await until('Plan picked', async () => (await box.innerText()).includes('Plan'), h)
 

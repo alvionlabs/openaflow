@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AUTO_TICK_MS, createAutoContinue, runResume } from './auto-continue.ts'
 import { createAutoContinueStore, type AutoContinueStore } from './auto-continue-store.ts'
 import type { StartResult } from './claude-runner.ts'
+import type { WorkflowResolver } from './workflow-resolver.ts'
 
 let root: string
 let file: string
@@ -21,7 +22,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-type Start = { session: string; word: string; cwd: string }
+type Start = { session: string; word: string; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 
 /** A fake runner: records each start and answers with `result`. No real claude, ever. */
 function fakeRunner(result: () => Promise<StartResult> | StartResult = () => ({ outcome: 'started' })) {
@@ -39,7 +40,7 @@ function fakeRunner(result: () => Promise<StartResult> | StartResult = () => ({ 
 }
 
 /** The check over a Board you set, with fakes for everything outside the server. */
-function setup(o: { board: Board; store?: AutoContinueStore; runner?: ReturnType<typeof fakeRunner>; idle?: (repo: BoardRepo, session: string) => boolean; inFlight?: Set<string>; onError?: (err: unknown) => void; owner?: () => boolean }) {
+function setup(o: { board: Board; store?: AutoContinueStore; runner?: ReturnType<typeof fakeRunner>; idle?: (repo: BoardRepo, session: string) => boolean; inFlight?: Set<string>; onError?: (err: unknown) => void; owner?: () => boolean; workflows?: Pick<WorkflowResolver, 'forRepo'> }) {
   let board = o.board
   const subscribers = new Set<(b: Board) => void>()
   const logged: NewActionEntry[] = []
@@ -68,6 +69,8 @@ function setup(o: { board: Board; store?: AutoContinueStore; runner?: ReturnType
     store,
     idle: (repo, session) => idle(repo, session),
     inFlight,
+    workflows: o.workflows ?? { forRepo: () => ({ source: 'claude-pod', version: '0.11.10', dir: join(root, 'workflows', 'claude-pod'), template: join(root, 't') }) },
+    pluginDir: join(root, 'hooks-plugin'),
     now: () => NOW,
     onError: o.onError,
     ...(o.owner ? { owner: o.owner } : {}),
@@ -347,6 +350,41 @@ describe('automatic check', () => {
   })
 })
 
+describe('workflow plugin folders', () => {
+  test('an automatic send in a set-up repo carries the hooks plugin and the workflow folder', async () => {
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: true })), store })
+    await s.auto.check()
+    expect(s.runner.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin')], workflowDir: join(root, 'workflows', 'claude-pod') }])
+  })
+
+  test('an automatic send in a repo without .openaflow/ gets no plugin or workflow folder', async () => {
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE)), store })
+    await s.auto.check()
+    expect(s.runner.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r' }])
+  })
+
+  test('an automatic send in a set-up repo with no bundle fails as workflow missing', async () => {
+    const store = createAutoContinueStore({ file })
+    await store.set('/r', 'alpha', true)
+    const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: true })), store, workflows: { forRepo: () => undefined } })
+    await s.auto.check()
+    expect(s.runner.starts).toEqual([])
+    expect(s.logged).toEqual([{ action: 'resume', repoId: 'id-r', repo: 'r', target: 'alpha · continue', result: 'failed', reply: 'continue', auto: true, message: 'workflow missing' }])
+    expect(store.list()).toEqual([{ path: '/r', run: 'alpha', lastKey: 'sprint-done:one', lastFailed: true }])
+  })
+
+  test('runResume with no resolver refuses a set-up repo', async () => {
+    const runner = fakeRunner()
+    const result = await runResume({ runner, log: { append: async () => true } }, { repo: planRepo(SPRINT_DONE, { setUp: true }), run: 'alpha', session: 'sess-1', word: 'go', auto: false })
+    expect(result).toEqual({ outcome: 'failed', message: 'workflow missing', logged: true })
+    expect(runner.starts).toEqual([])
+  })
+})
+
 describe('hosted sessions', () => {
   test('runResume refuses a hosted session', async () => {
     const states: [HostedSession['state'], Partial<HostedSession>][] = [
@@ -488,13 +526,16 @@ function agent(over: Partial<AgentRun>): AgentRun {
 }
 
 /** A repo whose plan `alpha` is at `stop`, with one ended agent in `session` (none when `session` is empty). */
-function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string } = {}): BoardRepo {
+function planRepo(stop: Stop, o: { session?: string; id?: string; path?: string; setUp?: true } = {}): BoardRepo {
+  // A set-up repo keeps the same docs in its workflow's state folder.
+  const dir = o.setUp ? '.openaflow/workflows/claude-pod/state' : 'pod-docs'
   const files: RepoFiles = {
-    'pod-docs/README.md': README,
-    'pod-docs/plans/alpha.md': planDoc('alpha', stop.sprints),
-    'pod-docs/handoff-queue.md': '',
+    [`${dir}/README.md`]: README,
+    [`${dir}/plans/alpha.md`]: planDoc('alpha', stop.sprints),
+    [`${dir}/handoff-queue.md`]: '',
   }
-  for (const [s, rows] of Object.entries(stop.docs ?? {})) files[`pod-docs/sprints/${s}.md`] = sprintDoc(s, 'alpha', rows)
+  for (const [s, rows] of Object.entries(stop.docs ?? {})) files[`${dir}/sprints/${s}.md`] = sprintDoc(s, 'alpha', rows)
+  if (o.setUp) Object.assign(files, { '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' })
   const session = o.session ?? 'sess-1'
   return {
     id: o.id ?? 'id-r',

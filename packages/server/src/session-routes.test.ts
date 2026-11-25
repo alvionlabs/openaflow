@@ -17,6 +17,7 @@ import { createHookReader, createSessionStore, type StoredSession } from './sess
 import { createSessionToken } from './session-token.ts'
 import { createSettingsStore } from './settings-store.ts'
 import { createTerminalChannel, TERMINAL_MESSAGE } from './terminal-channel.ts'
+import { createWorkflowResolver } from './workflow-resolver.ts'
 
 const API = 3070
 const WEB = 3071
@@ -63,7 +64,9 @@ type Main = 'started' | 'start-failed' | 'silent'
  * The routes behind the real app and guard, over a real store, board service, and terminal channel. `main` plays the
  * desktop's main process on the channel's other end.
  */
-async function setup(o: { terminals?: boolean; claude?: string | undefined; main?: Main; seed?: StoredSession[]; answerMs?: number; probe?: ScopeProbe; settings?: Record<string, unknown> } = {}) {
+async function setup(
+  o: { terminals?: boolean; claude?: string | undefined; main?: Main; seed?: StoredSession[]; answerMs?: number; probe?: ScopeProbe; settings?: Record<string, unknown>; bundle?: boolean } = {},
+) {
   if (o.settings) await writeFile(join(cfg, 'settings.json'), JSON.stringify({ v: 1, ...o.settings }))
   else await rm(join(cfg, 'settings.json'), { force: true })
   const lines: string[] = []
@@ -115,6 +118,13 @@ async function setup(o: { terminals?: boolean; claude?: string | undefined; main
   const pluginDir = join(root, 'plugin')
   const env = { PATH: '/usr/bin:/bin', HOME: root }
   const newId = ids()
+  // A real resolver over a temp bundle at <root>/workflows/claude-pod; `bundle: false` gives none.
+  const workflowsRoot = join(root, 'workflows')
+  if (o.bundle !== false) {
+    await mkdir(join(workflowsRoot, 'claude-pod', '.claude-plugin'), { recursive: true })
+    await writeFile(join(workflowsRoot, 'claude-pod', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'pod', version: '0.11.10' }))
+  } else await rm(workflowsRoot, { recursive: true, force: true })
+  const workflowDir = join(workflowsRoot, 'claude-pod')
   const routes = createSessionRoutes({
     board: source.board,
     rebuild: source.rebuild,
@@ -129,6 +139,7 @@ async function setup(o: { terminals?: boolean; claude?: string | undefined; main
     terminals: channel,
     claude: () => claude,
     pluginDir,
+    workflows: createWorkflowResolver({ root: workflowsRoot }),
     configDir: cfg,
     env: () => env,
     platform,
@@ -164,6 +175,7 @@ async function setup(o: { terminals?: boolean; claude?: string | undefined; main
     setMain: (m: Main) => void (main = m),
     claude,
     pluginDir,
+    workflowDir,
     env,
     lines,
     async settle() {
@@ -702,5 +714,133 @@ describe('settings at a start', () => {
     await r.settle()
     expect(r.store.list()[0]!.scrollback).toBe(5000)
     expect(r.lines).toEqual([])
+  })
+})
+
+/** Makes `repo` a set-up repo: `.openaflow/`, and one workflow folder per entry, with its `workflow.json` when given. */
+async function setUp(repo: string, workflows: { name: string; json?: unknown }[]) {
+  await mkdir(join(repo, '.openaflow', 'workflows'), { recursive: true })
+  for (const w of workflows) {
+    await mkdir(join(repo, '.openaflow', 'workflows', w.name, 'state'), { recursive: true })
+    if (w.json !== undefined) await writeFile(join(repo, '.openaflow', 'workflows', w.name, 'workflow.json'), JSON.stringify(w.json))
+  }
+}
+
+describe('the workflow plugin', () => {
+  const M = '00000001-0000-4000-8000-000000000001'
+  const S = '00000002-0000-4000-8000-000000000002'
+  const OLD = marker(1)
+  const LIVE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  const argsOf = (sent: Record<string, unknown>[], i = 0) => (sent.filter((m) => m.op === 'start')[i]!.spec as { args: string[] }).args
+  /** An ended session in `repo` that Resume can start: its live session's hook line and conversation are there. */
+  const resumable = async (repo: string) => {
+    await hookStart(OLD, LIVE)
+    await conversation(repo, LIVE)
+  }
+
+  test('starts with the workflow', async () => {
+    await setUp(repoA, [{ name: 'claude-pod', json: { source: 'claude-pod', version: '0.11.10' } }])
+    const s = await setup()
+    expect(s.board().repos.find((r) => r.path === repoA)!.model.openaflow).toBe(true)
+    const res = await s.post('new-session', { repoId: s.idOf(repoA), skill: 'plan', text: 'x' })
+    expect(res).toEqual({ status: 200, body: { outcome: 'started', marker: M, logged: true } })
+    const cmd = sessionCommand({ claude: s.claude!, repo: repoA, skill: 'plan', text: 'x', sessionId: S, runMarker: M, pluginDir: s.pluginDir, workflowDir: s.workflowDir, configDir: cfg, env: s.env, platform })
+    if (typeof cmd === 'string') throw new Error(cmd)
+    expect(cmd.args).toEqual(['--session-id', S, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--plugin-dir', s.workflowDir, '/pod:plan x'])
+    expect(argsOf(s.sent)).toEqual(cmd.args)
+    await s.settle()
+
+    // `.openaflow/` with no workflow folder, a workflow with no `workflow.json`, an unknown source before a known one,
+    // and a workflow with no source: each uses the bundle.
+    const cases: [string, { name: string; json?: unknown }[]][] = [
+      ['no workflow folders', []],
+      ['no workflow.json', [{ name: 'claude-pod' }]],
+      ['unknown then known', [{ name: 'a-other', json: { source: 'other-flow' } }, { name: 'b-pod', json: { source: 'claude-pod' } }]],
+      ['no source', [{ name: 'mine', json: { version: '0.1.0' } }]],
+      // A source outside the name rule is no source (contract §4), so it uses the default too.
+      ['a source outside the name rule', [{ name: 'mine', json: { source: 'Claude-Pod' } }]],
+    ]
+    for (const [what, workflows] of cases) {
+      await rm(join(repoB, '.openaflow'), { recursive: true, force: true })
+      await setUp(repoB, workflows)
+      const t = await setup()
+      expect((await t.post('new-session', { repoId: t.idOf(repoB), skill: 'plain', text: '' })).status, what).toBe(200)
+      expect(argsOf(t.sent), what).toEqual(['--session-id', S, '--plugin-dir', t.pluginDir, '--add-dir', t.workflowDir, '--plugin-dir', t.workflowDir])
+      await t.settle()
+    }
+  })
+
+  test('resume with the workflow', async () => {
+    await setUp(repoA, [{ name: 'claude-pod', json: { source: 'claude-pod', version: '0.11.10' } }])
+    const s = await setup({ seed: [rec(OLD, repoA, 'ended', { exitCode: 0, endedAt: 5 })] })
+    await resumable(repoA)
+    expect((await s.post('resume-session', { repoId: s.idOf(repoA), marker: OLD })).body).toEqual({ outcome: 'started', marker: M, logged: true })
+    const cmd = resumeCommand({ claude: s.claude!, repo: repoA, sessionId: LIVE, runMarker: M, pluginDir: s.pluginDir, workflowDir: s.workflowDir, configDir: cfg, env: s.env, platform })
+    if (typeof cmd === 'string') throw new Error(cmd)
+    expect(argsOf(s.sent)).toEqual(['--resume', LIVE, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--plugin-dir', s.workflowDir])
+    expect(argsOf(s.sent)).toEqual(cmd.args)
+    await s.settle()
+  })
+
+  test('not set up starts as today', async () => {
+    // A repo with pod-docs/ and one with no docs, with a bundle and with none: the hooks plugin only.
+    await mkdir(join(repoB, 'pod-docs'), { recursive: true })
+    await writeFile(join(repoB, 'pod-docs', 'handoff-queue.md'), '# Handoff Queue\n')
+    for (const bundle of [true, false]) {
+      for (const repo of [repoA, repoB]) {
+        const what = `${repo === repoA ? 'no docs' : 'pod-docs'}, bundle ${bundle}`
+        const s = await setup({ bundle })
+        expect(s.board().repos.find((r) => r.path === repo)!.model.openaflow, what).toBeUndefined()
+        expect((await s.post('new-session', { repoId: s.idOf(repo), skill: 'plan', text: '' })).status, what).toBe(200)
+        expect(argsOf(s.sent), what).toEqual(['--session-id', S, '--plugin-dir', s.pluginDir, '/pod:plan'])
+        await s.settle()
+
+        await rm(join(cfg, 'hooks'), { recursive: true, force: true })
+        const r = await setup({ bundle, seed: [rec(OLD, repo, 'ended', { exitCode: 0, endedAt: 5 })] })
+        await resumable(repo)
+        expect((await r.post('resume-session', { repoId: r.idOf(repo), marker: OLD })).status, what).toBe(200)
+        expect(argsOf(r.sent), what).toEqual(['--resume', LIVE, '--plugin-dir', r.pluginDir])
+        await r.settle()
+      }
+    }
+  })
+
+  test('workflow missing', async () => {
+    const cases: [string, { name: string; json?: unknown }[], boolean][] = [
+      ['no bundle', [{ name: 'claude-pod', json: { source: 'claude-pod' } }], false],
+      ['no bundle, no workflow folders', [], false],
+      ['only unknown sources', [{ name: 'a', json: { source: 'other-flow' } }, { name: 'b', json: { source: 'pod' } }], true],
+    ]
+    for (const [what, workflows, bundle] of cases) {
+      await rm(join(repoA, '.openaflow'), { recursive: true, force: true })
+      await setUp(repoA, workflows)
+      // New session: no record, no start, no log entry.
+      const s = await setup({ bundle })
+      expect(await s.post('new-session', { repoId: s.idOf(repoA), skill: 'plan', text: SECRET }), what).toEqual({ status: 409, body: { error: 'workflow missing' } })
+      expect(s.sent, what).toEqual([])
+      expect(s.store.list(), what).toEqual([])
+      expect(s.logged, what).toEqual([])
+      await s.settle()
+      expect(existsSync(join(cfg, 'sessions.json')), what).toBe(false)
+
+      // Resume: the old record stays as it was, with no new one, no start, and no log entry.
+      const old = rec(OLD, repoA, 'ended', { exitCode: 0, endedAt: 5 })
+      const r = await setup({ bundle, seed: [old] })
+      await resumable(repoA)
+      expect(await r.post('resume-session', { repoId: r.idOf(repoA), marker: OLD }), what).toEqual({ status: 409, body: { error: 'workflow missing' } })
+      expect(r.sent, what).toEqual([])
+      expect(r.store.list(), what).toEqual([old])
+      expect(r.logged, what).toEqual([])
+      expect(existsSync(hookOf(OLD)), what).toBe(true)
+      await r.settle()
+    }
+
+    // Where it sits: after not a repo and claude not found; a set-up repo with a bundle still meets the later checks.
+    await rm(join(repoA, '.openaflow'), { recursive: true, force: true })
+    await setUp(repoA, [])
+    const noClaude = await setup({ bundle: false, claude: undefined })
+    expect((await noClaude.post('new-session', { repoId: noClaude.idOf(repoA), skill: 'plan', text: '' })).body).toEqual({ error: 'claude not found' })
+    const noSession = await setup({ bundle: false, seed: [rec(OLD, repoA, 'ended')] })
+    expect((await noSession.post('resume-session', { repoId: noSession.idOf(repoA), marker: marker(9) })).body).toEqual({ error: 'no session' })
   })
 })

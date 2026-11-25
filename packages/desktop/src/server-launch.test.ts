@@ -1,11 +1,12 @@
 import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { hooksPluginDir } from './pty-host-launch.ts'
+import { hooksPluginDir, workflowsRoot } from './pty-host-launch.ts'
 import { serverEntry, serverEnv } from './server-launch.ts'
 
 const DEV = { packaged: false, appPath: join('E:', 'repo', 'packages', 'desktop'), resourcesPath: join('C:', 'pod', 'resources') }
 const PLUGIN = join('E:', 'repo', 'packages', 'hooks-plugin', 'plugin')
-const TERMINALS = { OPENAFLOW_TERMINALS: '1', OPENAFLOW_HOOKS_PLUGIN: PLUGIN }
+const WORKFLOWS = join('E:', 'repo', 'packages', 'workflow', 'dist')
+const TERMINALS = { OPENAFLOW_TERMINALS: '1', OPENAFLOW_HOOKS_PLUGIN: PLUGIN, OPENAFLOW_WORKFLOWS_DIR: WORKFLOWS }
 
 describe('server launch', () => {
   test('finds the bundle', () => {
@@ -58,5 +59,19 @@ describe('server launch', () => {
     expect(env).toEqual({ OPENAFLOW_PARENT_PID: '7', ...TERMINALS })
     // With no place (a test reporter, not the app's server), no channel is claimed and inherited values still go.
     expect(serverEnv({ OPENAFLOW_TERMINALS: '1', OPENAFLOW_HOOKS_PLUGIN: '/x' }, 7)).toEqual({ OPENAFLOW_PARENT_PID: '7' })
+  })
+})
+
+describe('workflows dir env', () => {
+  test('the server env holds OPENAFLOW_WORKFLOWS_DIR, and an inherited value is replaced', () => {
+    const packaged = { packaged: true, appPath: join(DEV.resourcesPath, 'app.asar'), resourcesPath: DEV.resourcesPath }
+    for (const place of [DEV, packaged]) expect(serverEnv({}, 7, place).OPENAFLOW_WORKFLOWS_DIR).toBe(workflowsRoot(place))
+    expect(serverEnv({}, 7, packaged).OPENAFLOW_WORKFLOWS_DIR).toBe(join(DEV.resourcesPath, 'workflows'))
+    // An inherited value, in any case, never wins.
+    const env = serverEnv({ OPENAFLOW_WORKFLOWS_DIR: '/elsewhere', openaflow_workflows_dir: '/other' }, 7, DEV)
+    expect(env.OPENAFLOW_WORKFLOWS_DIR).toBe(WORKFLOWS)
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === 'OPENAFLOW_WORKFLOWS_DIR')).toEqual(['OPENAFLOW_WORKFLOWS_DIR'])
+    // With no place, no bundle is claimed and an inherited value still goes.
+    expect(serverEnv({ OPENAFLOW_WORKFLOWS_DIR: '/x' }, 7)).toEqual({ OPENAFLOW_PARENT_PID: '7' })
   })
 })

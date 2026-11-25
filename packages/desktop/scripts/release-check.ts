@@ -12,6 +12,8 @@ import { extractFile } from '@electron/asar'
 import { LINUX_UPDATE_FILE } from '../src/build-config.ts'
 import {
   appImagePlace,
+  checkNoPodDocs,
+  checkWorkflowCopy,
   endAppImage,
   finishProof,
   launch,
@@ -30,6 +32,8 @@ import {
 import { checkAppImageSize, checkNoTestFeed, checkNoTestHooks, checkSize, checkUpdateFile, pickAppImage, pickInstaller, tagVersion } from '../src/release-rules.ts'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
+/** The built workflow the packaged copy must match, `.gitkeep` files and empty folders included. */
+const WORKFLOW_DIST = join(pkg, '..', 'workflow', 'dist', 'claude-pod')
 /** Above the shared default: a runner's first start of an unsigned exe can be slow. */
 const HEALTH_MS = 120_000
 
@@ -69,6 +73,7 @@ async function installAndStart(installer: string): Promise<void> {
     const mainCjs = () => extractFile(join(place.installDir, 'resources', 'app.asar'), join('dist', 'main.cjs')).toString('utf8')
     await step('test feed', () => checkNoTestFeed(mainCjs()))
     await step('test hooks', () => checkNoTestHooks(mainCjs()))
+    await step('workflow copy', () => checkWorkflowCopy(join(place.installDir, 'resources'), WORKFLOW_DIST))
     await step('launch', () => launch(place))
     await step('health', () => waitForHealth(place, HEALTH_MS))
   } catch (err) {
@@ -101,6 +106,8 @@ async function startAppImage(file: string): Promise<void> {
       const missing = missingParts(resources)
       if (missing.length > 0) throw new Error(`the AppImage lacks ${missing.join(', ')}`)
     })
+    await step('pod-docs', () => checkNoPodDocs(resources))
+    await step('workflow copy', () => checkWorkflowCopy(resources, WORKFLOW_DIST))
     pid = (await step('launch', () => launchAppImage(file, place))).pid
     await step('health', () => waitForHealth(place, HEALTH_MS))
   } catch (err) {
