@@ -197,7 +197,7 @@ describe('listRuns', () => {
     // A repo with no plans at all.
     expect(runsOf(repo('empty', { 'pod-docs/README.md': README }))).toEqual([{ repoId: 'id-empty', repo: 'empty', where: 'no active plan', state: 'idle' }])
     // Unsupported docs → one run; an error → one run, even with an unsupported model.
-    expect(runsOf(repo('old', { 'pod-docs/README.md': 'pod docs: 1\n' }))).toEqual([{ repoId: 'id-old', repo: 'old', where: 'update pod', state: 'unsupported' }])
+    expect(runsOf(repo('old', { 'pod-docs/README.md': 'pod docs: 1\n' }))).toEqual([{ repoId: 'id-old', repo: 'old', where: 'update pod', state: 'unsupported', unsupported: 'old-pod' }])
     expect(runsOf(repo('gone', {}, { error: 'folder not found' }))).toEqual([{ repoId: 'id-gone', repo: 'gone', where: 'folder not found', state: 'error' }])
 
     // An active plan: its slug, title, and port base (a claim's wins over the plan's).
@@ -206,6 +206,32 @@ describe('listRuns', () => {
     const claims = [{ portBase: 3200, repoPath: '/r/r', plan: 'alpha' }, { portBase: 3300, repoPath: '/r/r', plan: 'beta' }]
     expect(runsOf(repo('r', withPort, { claims }))[0]?.portBase).toBe(3200)
     expect(runsOf(repo('r', planFiles(), { claims: [claims[1]!] }))[0]).not.toHaveProperty('portBase')
+  })
+
+  it('an unsupported repo says why, so its chip can name the fix', () => {
+    const setUp = { '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }
+    const state = (readme: string) => ({ ...setUp, '.openaflow/workflows/claude-pod/state/README.md': readme })
+    const cases: [string, RepoFiles, string][] = [
+      // A set-up repo: no readable docs, older docs (init writes or updates them), or newer docs (only a newer app reads them).
+      ['bare .openaflow/', { '.openaflow/': '' }, 'no-state'],
+      ['workflow.json only', { ...setUp, '.openaflow/workflows/claude-pod/workflow.json': '{"source":"claude-pod","version":"0.11.10"}' }, 'no-state'],
+      ['state with no version', state('# pod docs\n'), 'no-state'],
+      ['older docs', state('# pod docs\n\npod docs: 1\n'), 'old-state'],
+      ['newer docs', state('# pod docs\n\npod docs: 3\n'), 'newer-state'],
+      // No .openaflow/: no docs (or no version line) has no workflow yet; pod-docs of another version need pod.
+      ['no docs', {}, 'no-workflow'],
+      ['pod-docs with no version', { 'pod-docs/README.md': '# pod docs\n' }, 'no-workflow'],
+      ['older pod-docs', { 'pod-docs/README.md': 'pod docs: 1\n' }, 'old-pod'],
+      ['newer pod-docs', { 'pod-docs/README.md': 'pod docs: 3\n' }, 'old-pod'],
+    ]
+    for (const [name, files, why] of cases) {
+      const r = repo('r', files)
+      expect(runsOf(r), name).toEqual([{ repoId: 'id-r', repo: 'r', where: 'update pod', state: 'unsupported', unsupported: why }])
+      expect(model.unsupportedCase(r), name).toBe(why)
+    }
+    // A supported repo and an error row carry none.
+    expect(runsOf(repo('r', { 'pod-docs/README.md': README }))[0]).not.toHaveProperty('unsupported')
+    expect(runsOf(repo('r', {}, { error: 'folder not found' }))[0]).not.toHaveProperty('unsupported')
   })
 
   it('a live claim keeps its plan listed through the close-out', () => {
@@ -455,7 +481,7 @@ describe('hosted sessions on the runs list', () => {
 
     // An error or update-pod repo keeps its one row and its state.
     expect(runsOf(repo('r', {}, { error: 'folder not found', hosted: [unhooked()] }))).toEqual([rowOf('error', 'folder not found')])
-    expect(runsOf(repo('r', { 'pod-docs/README.md': 'pod docs: 1\n' }, { hosted: [unhooked()] }))).toEqual([rowOf('unsupported', 'update pod')])
+    expect(runsOf(repo('r', { 'pod-docs/README.md': 'pod docs: 1\n' }, { hosted: [unhooked()] }))).toEqual([{ ...rowOf('unsupported', 'update pod'), unsupported: 'old-pod' }])
 
     // Each session sits on exactly one listed row.
     const mixed = repo('r', planFiles(), {

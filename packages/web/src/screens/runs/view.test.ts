@@ -1,6 +1,9 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { buildRepoModel, type Board, type BoardRepo, type RunSummary } from '@openaflow/model'
+import { buildRepoModel, listRuns, type Board, type BoardRepo, type RunSummary } from '@openaflow/model'
 import { agentChip, agentLogRows, banners, confidenceTag, connectionStatus, emptyMessage, groupChip, logBlocks, logRunChip, nextStatus, NO_STATE, otherRows, rowFigures, runCard, runChip, tabPress, titleParts } from './view.ts'
+import { RunsList } from './RunsList.tsx'
 
 const run = (over: Partial<RunSummary>): RunSummary => ({ repoId: 'r', repo: 'chess-web', where: 'x', state: 'idle', ...over })
 
@@ -222,6 +225,43 @@ describe('empty messages', () => {
     const newer = buildRepoModel({ '.openaflow/': '', '.openaflow/workflows/claude-pod/': '', '.openaflow/workflows/claude-pod/state/README.md': '# pod docs\n\npod docs: 3\n' })
     expect(emptyMessage(unsupported, { ...repoWith(undefined), model: newer })).toBe("This repo's workflow docs are version 3; OpenAFlow reads version 2. Update OpenAFlow to read them.")
     for (const files of setUps) expect(emptyMessage(unsupported, { ...repoWith(undefined), model: buildRepoModel(files) })).not.toMatch(/update pod/i)
+  })
+
+  it('the unsupported chip names the fix its card gives', () => {
+    const withFiles = (files: Record<string, string>): BoardRepo => ({ ...repoWith(undefined), model: buildRepoModel(files) })
+    const setUp = { '.openaflow/': '', '.openaflow/workflows/claude-pod/': '' }
+    const state = (readme: string) => withFiles({ ...setUp, '.openaflow/workflows/claude-pod/state/README.md': readme })
+    const cases: [string, BoardRepo, string, RegExp][] = [
+      // A set-up repo: the card says init, or a newer app for newer docs. Never `update pod`.
+      ['bare .openaflow/', withFiles({ '.openaflow/': '' }), 'needs init', /`init` to create/],
+      ['workflow.json only', withFiles({ ...setUp, '.openaflow/workflows/claude-pod/workflow.json': '{"source":"claude-pod","version":"0.11.10"}' }), 'needs init', /`init` to create/],
+      ['state with no version', state('# pod docs\n'), 'needs init', /`init` to create/],
+      ['older docs', state('# pod docs\n\npod docs: 1\n'), 'needs init', /`init` to update/],
+      ['newer docs', state('# pod docs\n\npod docs: 3\n'), 'update app', /Update OpenAFlow/],
+      // No .openaflow/: no docs is the set-up line; pod-docs of another version still say Update pod.
+      ['no docs', repoWith(undefined), 'set up', /no workflow yet\. Set it up/],
+      ['pod-docs with no version', repoWith('# pod docs\n'), 'set up', /no workflow yet\. Set it up/],
+      ['older pod-docs', repoWith('# pod docs\n\npod docs: 1\n'), 'update pod', /Update pod in this repo/],
+      ['newer pod-docs', repoWith('# pod docs\n\npod docs: 3\n'), 'update pod', /Update pod in this repo/],
+    ]
+    for (const [name, repo, label, card] of cases) {
+      // The run as the runs list gets it, from the Board.
+      const [r] = listRuns({ generatedAt: 0, gh: 'ok', repos: [repo] }, 0)
+      expect(r!.state, name).toBe('unsupported')
+      expect(runChip(r!.state, r!.unsupported), name).toEqual({ cls: 's-you', label })
+      expect(emptyMessage(r!, repo), name).toMatch(card)
+    }
+    // The runs list's card shows the same chip, and says it in its link's name.
+    const bare = withFiles({ '.openaflow/': '' })
+    const listed = listRuns({ generatedAt: 0, gh: 'ok', repos: [bare] }, 0)
+    const html = renderToStaticMarkup(createElement(RunsList, { runs: listed, selected: undefined, repos: [bare] }))
+    expect(html).toContain('<span class="status s-you">needs init</span>')
+    expect(html).toContain('aria-label="chess-web needs init"')
+    // A run with no reason (its repo not read yet): today's chip and card.
+    expect(runChip('unsupported')).toEqual({ cls: 's-you', label: 'update pod' })
+    expect(emptyMessage(run({ state: 'unsupported' }))).toMatch(/Update pod in this repo/)
+    // Every other state keeps its chip.
+    expect(runChip('idle', 'no-state')).toEqual({ cls: 's-idle', label: 'idle' })
   })
 
   it('without the repo, an unsupported run still says to update pod', () => {
