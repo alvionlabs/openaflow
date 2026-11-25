@@ -35,7 +35,7 @@ const wordsOf = (text: string) => {
 
 /**
  * The view of `settings`: the wrapper section on Linux and macOS only, with the preview of a new session's command.
- * With a workflow folder, the preview is a set-up repo's command, with both `--plugin-dir` flags.
+ * With a workflow folder, the preview is a set-up repo's command: both `--plugin-dir` flags and the workflow's `--add-dir`.
  */
 export function settingsView(
   settings: Settings,
@@ -54,7 +54,7 @@ export function settingsView(
     '--plugin-dir',
     o.pluginDir ?? '<plugin dir>',
     // A set-up repo's session; with no bundle, every session starts with the hooks plugin only.
-    ...(o.workflowDir === undefined ? [] : ['--plugin-dir', o.workflowDir]),
+    ...(o.workflowDir === undefined ? [] : ['--add-dir', o.workflowDir, '--plugin-dir', o.workflowDir]),
     '/pod:plan <your text>',
   ]
   // The default stop runs only with the default wrapper in force.

@@ -408,26 +408,52 @@ describe('the workflow plugin', () => {
     return resumeCommand(rest)
   }
 
-  test('two plugin dirs', () => {
+  test('two plugin dirs and the workflow add-dir', () => {
     const r = ok(sessionCommand(linux({ workflowDir: WORKFLOW })))
-    expect(r.args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW, '/pod:plan add tags'])
+    expect(r.args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW, '/pod:plan add tags'])
     // No prompt: the workflow folder is last.
-    expect(ok(sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: '' }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW])
+    expect(ok(sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: '' }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW])
     // Through an npm shim: node plus its script first.
     const shim = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW })))
-    expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
+    expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
+    // Through cmd.exe: a folder with a space stays one arg, quoted by node-pty, and the prompt waits for the user.
+    const cmd = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))))
+    expect(cmd.args.slice(4)).toEqual(['--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW])
+    expect(cmd.typeYourself).toBe('/pod:plan add tags')
     // Left out, or undefined: the hooks plugin only, as before.
     expect(ok(sessionCommand(linux({ workflowDir: undefined }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '/pod:plan add tags'])
   })
 
-  test('resume two plugin dirs', () => {
+  test('resume two plugin dirs and the workflow add-dir', () => {
     const r = ok(resume({ workflowDir: WORKFLOW }))
-    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--plugin-dir', WORKFLOW])
+    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW])
     expect(r.typeYourself).toBeUndefined()
-    // Through cmd.exe: both folders, still no prompt.
+    // Through cmd.exe: both folders and the add-dir, still no prompt.
     const { skill: _skill, text: _text, ...rest } = win({ claude: 'C:\\pnpm\\claude.bat', workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))
-    expect(ok(resumeCommand(rest)).args).toEqual(['/d', '/c', 'call', 'C:\\pnpm\\claude.bat', '--resume', SESSION, '--plugin-dir', WIN_PLUGIN, '--plugin-dir', WIN_WORKFLOW])
+    expect(ok(resumeCommand(rest)).args).toEqual(['/d', '/c', 'call', 'C:\\pnpm\\claude.bat', '--resume', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW])
     expect(ok(resume({ workflowDir: undefined })).args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS])
+  })
+
+  test('no workflow, no add-dir', () => {
+    for (const r of [sessionCommand(linux()), sessionCommand(linux({ skill: 'plain', text: '' })), resume(), sessionCommand(win({}))]) {
+      expect(ok(r).args).not.toContain('--add-dir')
+    }
+  })
+
+  test('the add-dir value is always followed by a flag, never the prompt', () => {
+    // `--add-dir <directories...>` takes every word up to the next flag: a prompt right after it would be read as a folder.
+    const all = [
+      sessionCommand(linux({ workflowDir: WORKFLOW })),
+      sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: 'hello there' })),
+      resume({ workflowDir: WORKFLOW }),
+      sessionCommand(win({ workflowDir: WIN_WORKFLOW })),
+    ]
+    for (const r of all) {
+      const args = ok(r).args
+      const at = args.indexOf('--add-dir')
+      expect(at, args.join(' ')).toBeGreaterThan(-1)
+      expect(args[at + 2], args.join(' ')).toMatch(/^--/)
+    }
   })
 
   test('workflow dir rules', () => {

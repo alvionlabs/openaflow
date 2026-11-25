@@ -29,7 +29,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-type Start = { session: string; word: string; cwd: string; plugins?: readonly string[] }
+type Start = { session: string; word: string; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 
 type SetupOpts = {
   board: Board
@@ -208,7 +208,7 @@ describe('resume route', () => {
     expect(s.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r' }])
   })
 
-  test('a set-up repo resumes with the hooks and workflow plugin folders', async () => {
+  test('a set-up repo resumes with the hooks plugin and the workflow folder', async () => {
     const asked: unknown[] = []
     const flow = join(root, 'workflows', 'claude-pod')
     const workflows = {
@@ -219,14 +219,14 @@ describe('resume route', () => {
     }
     const s = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: { json: { source: 'claude-pod', version: '0.11.10' } } })), workflows })
     await expectRes(await s.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
-    expect(s.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin'), flow] }])
+    expect(s.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', plugins: [join(root, 'hooks-plugin')], workflowDir: flow }])
     // The resolver gets the repo's own workflows.
     expect(asked).toEqual([[{ name: 'claude-pod', stateDir: '.openaflow/workflows/claude-pod/state', source: 'claude-pod', version: '0.11.10' }]])
 
     // With no hooks plugin (the browser build), the workflow folder alone.
     const bare = setup({ board: boardOf(planRepo(SPRINT_DONE, { setUp: {} })), pluginDir: undefined })
     await expectRes(await bare.resume({ repoId: 'id-r', run: 'alpha', reply: 'continue' }), 200, { outcome: 'started', logged: true })
-    expect(bare.starts.map((x) => x.plugins)).toEqual([[flow]])
+    expect(bare.starts).toStrictEqual([{ session: 'sess-1', word: 'continue', cwd: '/r', workflowDir: flow }])
   })
 
   test('a set-up repo with no bundle fails as workflow missing and starts nothing', async () => {

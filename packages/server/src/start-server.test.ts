@@ -684,13 +684,13 @@ describe('hosted sessions', () => {
     expect(board.repos[0]!.hosted).toEqual([expect.objectContaining({ marker: M, blocked: 'sideload' })])
     // The settings preview: both folders.
     const settings = JSON.parse((await send(started.port, '/api/settings', { headers: { 'X-OpenAFlow-Token': token } })).text) as { wrapper?: { preview: string } }
-    if (process.platform !== 'win32') expect(settings.wrapper!.preview).toContain(`--plugin-dir ${hooksPlugin} --plugin-dir ${join(workflows, 'claude-pod')} `)
+    if (process.platform !== 'win32') expect(settings.wrapper!.preview).toContain(`--plugin-dir ${hooksPlugin} --add-dir ${join(workflows, 'claude-pod')} --plugin-dir ${join(workflows, 'claude-pod')} `)
     // New session: the start main gets loads both plugins.
     const res = send(started.port, '/api/actions/new-session', { method: 'POST', headers, body: JSON.stringify({ repoId: board.repos[0]!.id, skill: 'plan', text: '' }) })
     await until(() => main.sent.some((m) => m.op === 'start'))
     const startMsg = main.sent.find((m) => m.op === 'start')!
     const args = (startMsg.spec as { args: string[] }).args
-    expect(args.slice(-5)).toEqual(['--plugin-dir', hooksPlugin, '--plugin-dir', join(workflows, 'claude-pod'), '/pod:plan'])
+    expect(args.slice(-7)).toEqual(['--plugin-dir', hooksPlugin, '--add-dir', join(workflows, 'claude-pod'), '--plugin-dir', join(workflows, 'claude-pod'), '/pod:plan'])
     main.answer({ op: 'started', req: startMsg.req, id: (startMsg.spec as { id: string }).id, pid: 4321 })
     expect((await res).status).toBe(200)
   })
@@ -791,7 +791,7 @@ describe('hosted sessions', () => {
     })
     expect({ status: res.status, body: JSON.parse(res.text) as unknown }).toEqual({ status: 200, body: expect.objectContaining({ outcome: 'started' }) })
     await until(() => existsSync(record))
-    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(['-p', '--plugin-dir', hooksPlugin, '--plugin-dir', join(workflows, 'claude-pod'), '--resume', session, 'continue'])
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(['-p', '--plugin-dir', hooksPlugin, '--add-dir', join(workflows, 'claude-pod'), '--plugin-dir', join(workflows, 'claude-pod'), '--resume', session, 'continue'])
   })
 
   test('a server with no channel answers no terminal host and writes no store', async () => {
