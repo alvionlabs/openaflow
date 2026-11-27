@@ -24,6 +24,11 @@ describe('editDenyRule', () => {
     expect(editDenyRule('/opt/a[1]*?/wf', 'linux')).toBe('Edit(//opt/a\\[1\\]\\*\\?/wf/**)')
     expect(editDenyRule('C:\\a[b]\\wf', 'win32')).toBe('Edit(//c/a\\[b\\]/wf/**)')
   })
+
+  test('parentheses in a folder name stay as they are', () => {
+    // Not glob characters; whether claude's rule parser reads an inner `)` right is not proved (no real run).
+    expect(editDenyRule('C:\\Program Files (x86)\\OpenAFlow\\wf', 'win32')).toBe('Edit(//c/Program Files (x86)/OpenAFlow/wf/**)')
+  })
 })
 
 describe('workflowFlags', () => {
