@@ -280,6 +280,13 @@ describe('Continue and Go', () => {
     expect((await send(ok({ outcome: 'failed', message: '  ', logged: true }))).result?.words).toBe(RESUME_FAILED)
     expect((await send(ok({ outcome: 'failed', logged: true }))).result?.words).toBe(RESUME_FAILED)
     expect(RESUME_FAILED).toBe("The session didn't start.")
+    // A set-up repo with no bundle: the words New session and Resume show, not the route's word.
+    const missing = "The app doesn't have this repo's workflow. Please reinstall it"
+    expect((await send(ok({ outcome: 'failed', message: 'workflow missing', logged: true }))).result).toEqual({ chip: { cls: 's-bad', label: 'failed' }, words: missing })
+    expect((await send(ok({ outcome: 'failed', message: ' workflow missing\n', logged: true }))).result?.words).toBe(missing)
+    // Any other message stays as it came, so a start's own error still reads in full.
+    expect((await send(ok({ outcome: 'failed', message: 'hosted session', logged: true }))).result?.words).toBe('hosted session')
+    expect((await send(ok({ outcome: 'failed', message: 'workflow missing: x', logged: true }))).result?.words).toBe('workflow missing: x')
 
     // Not logged → a note, whatever the outcome.
     expect((await send(ok(started({ logged: false })))).result?.note).toBe(NOT_LOGGED)
