@@ -3,6 +3,7 @@ import path from 'node:path'
 import { isSkillId, skillCommand, type SkillId } from '@openaflow/model'
 import { isAbsoluteFor, isFile } from './bin-path.ts'
 import { childEnv, cmdPath, shimTarget } from './claude-runner.ts'
+import { workflowFlags } from './workflow-flags.ts'
 
 /** What a Windows `.cmd` shim runs: a file plus the args before claude's own; or why it can't be read that way. */
 export type ShimRead = { file: string; pre: string[] } | 'no node' | 'unreadable'
@@ -19,7 +20,8 @@ export type SessionCommandInput = {
   pluginDir: string
   /**
    * The bundled workflow plugin folder, loaded with a second `--plugin-dir` after the hooks plugin, and also passed as
-   * `--add-dir`, so claude reads the workflow's own files with no prompt. Only a repo with `.openaflow/` gets one; left
+   * `--add-dir` with an Edit deny rule over it (workflow-flags.ts), so claude reads the workflow's own files with no
+   * prompt and edits none of them. Only a repo with `.openaflow/` gets one; left
    * out, the session starts with the hooks plugin only (sprint default-workflow §6).
    */
   workflowDir?: string | undefined
@@ -53,7 +55,7 @@ const CMD_UNSAFE = /["%!^&|<>\r\n,;=]/
 
 /**
  * The program, args, folder, and env that start a hosted `claude` session, or the word for why not.
- * Args: `--session-id <id> --plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when given, then at most one prompt, last. Never `-p`, `--bare`,
+ * Args: `--session-id <id> --plugin-dir <hooks>`, then `--add-dir <workflow> --disallowedTools <rule> --plugin-dir <workflow>` when given, then at most one prompt, last. Never `-p`, `--bare`,
  * a permission flag, or a model flag: the session is the user's own interactive `claude`.
  */
 export function sessionCommand(o: SessionCommandInput): SessionCommand | SessionCommandError {
@@ -63,7 +65,7 @@ export function sessionCommand(o: SessionCommandInput): SessionCommand | Session
   const prompt = startPrompt(o.skill, o.text)
   if (prompt === 'bad text') return prompt
 
-  return build(o, ['--session-id', o.sessionId, ...pluginFlags(o)], prompt)
+  return build(o, ['--session-id', o.sessionId], prompt)
 }
 
 /** What `resumeCommand` takes: `sessionId` is the session to resume, `runMarker` the new record's marker. */
@@ -73,20 +75,21 @@ export type ResumeCommandError = Exclude<SessionCommandError, 'bad skill' | 'bad
 
 /**
  * The command that resumes `sessionId` in a hosted `claude`: as `sessionCommand`, with the args
- * `--resume <id> --plugin-dir <hooks>` (and `--add-dir <workflow> --plugin-dir <workflow>` when given) and no prompt, so a Windows shim never needs `typeYourself`.
+ * `--resume <id> --plugin-dir <hooks>` (and the workflow's flags when given) and no prompt, so a Windows shim never needs `typeYourself`.
  */
 export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCommandError {
   const bad = badInput(o)
   if (bad !== undefined) return bad
-  return build(o, ['--resume', o.sessionId, ...pluginFlags(o)], undefined)
+  return build(o, ['--resume', o.sessionId], undefined)
 }
 
 /**
- * `--plugin-dir <hooks>`, then `--add-dir <workflow> --plugin-dir <workflow>` when there is one. `claude --help` lists
- * `--add-dir <directories...>`, which takes every word up to the next flag, so it goes before the workflow's `--plugin-dir`:
- * a prompt right after it would be read as a folder.
+ * `--plugin-dir <hooks>`, then the workflow's `--add-dir`, Edit deny rule, and `--plugin-dir` when there is one
+ * (workflow-flags.ts: each variadic flag is followed by a flag, so a prompt is never read as a folder or a rule).
+ * `deny: false` on the cmd.exe path, which node-pty quotes only for a space: a shim that runs `%*` inside a ( ) block
+ * would end the block at the rule's `)`, and the session would not start.
  */
-const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : ['--add-dir', o.workflowDir, '--plugin-dir', o.workflowDir])]
+const pluginFlags = (o: CommandBase, deny: boolean) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : workflowFlags(o.workflowDir, { platform: o.platform, deny }))]
 
 /**
  * The command for `flags` and an optional prompt, last. A Windows shim only cmd.exe can read gets no prompt:
@@ -95,7 +98,8 @@ const pluginFlags = (o: CommandBase) => ['--plugin-dir', o.pluginDir, ...(o.work
 function build(o: CommandBase, flags: string[], prompt: string | undefined): SessionCommand | ResumeCommandError {
   const win = o.platform === 'win32'
   const env = sessionEnv(o)
-  const withPrompt = prompt === undefined ? flags : [...flags, prompt]
+  const all = [...flags, ...pluginFlags(o, true)]
+  const withPrompt = prompt === undefined ? all : [...all, prompt]
   const base = { cwd: o.repo, env }
   if (!win || !/\.(cmd|bat)$/i.test(o.claude)) return { ...base, program: o.claude, args: withPrompt }
 
@@ -110,7 +114,7 @@ function build(o: CommandBase, flags: string[], prompt: string | undefined): Ses
   const cmd = windows.cmdPath(o.env)
   if (cmd === undefined) return 'cmd.exe not found'
   // `call` first: cmd.exe strips the quotes of the line after /c only when it starts with a quote.
-  const args = ['/d', '/c', 'call', o.claude, ...flags]
+  const args = ['/d', '/c', 'call', o.claude, ...flags, ...pluginFlags(o, false)]
   return prompt === undefined ? { ...base, program: cmd, args } : { ...base, program: cmd, args, typeYourself: prompt }
 }
 

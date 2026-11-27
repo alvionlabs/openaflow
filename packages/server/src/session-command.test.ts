@@ -403,6 +403,8 @@ describe('the workflow plugin', () => {
   const HOOKS = '/opt/openaflow/resources/hooks-plugin'
   const WORKFLOW = '/opt/openaflow/resources/workflows/claude-pod'
   const WIN_WORKFLOW = 'C:\\Program Files\\OpenAFlow\\resources\\workflows\\claude-pod'
+  const DENY = 'Edit(//opt/openaflow/resources/workflows/claude-pod/**)'
+  const WIN_DENY = 'Edit(//c/Program Files/OpenAFlow/resources/workflows/claude-pod/**)'
   const resume = (over: Partial<SessionCommandInput> = {}) => {
     const { skill: _skill, text: _text, ...rest } = linux(over)
     return resumeCommand(rest)
@@ -410,13 +412,15 @@ describe('the workflow plugin', () => {
 
   test('two plugin dirs and the workflow add-dir', () => {
     const r = ok(sessionCommand(linux({ workflowDir: WORKFLOW })))
-    expect(r.args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW, '/pod:plan add tags'])
+    expect(r.args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--disallowedTools', DENY, '--plugin-dir', WORKFLOW, '/pod:plan add tags'])
     // No prompt: the workflow folder is last.
-    expect(ok(sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: '' }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW])
+    expect(ok(sessionCommand(linux({ workflowDir: WORKFLOW, skill: 'plain', text: '' }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--disallowedTools', DENY, '--plugin-dir', WORKFLOW])
     // Through an npm shim: node plus its script first.
     const shim = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW })))
-    expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
-    // Through cmd.exe: a folder with a space stays one arg, quoted by node-pty, and the prompt waits for the user.
+    expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--disallowedTools', WIN_DENY, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
+    // Through cmd.exe: a folder with a space stays one arg, quoted by node-pty, and the prompt waits for the user. No
+    // deny rule: node-pty quotes only an arg with a space, and a shim that expands %* inside a ( ) block ends early at
+    // the rule's unquoted `)`.
     const cmd = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))))
     expect(cmd.args.slice(4)).toEqual(['--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW])
     expect(cmd.typeYourself).toBe('/pod:plan add tags')
@@ -426,7 +430,7 @@ describe('the workflow plugin', () => {
 
   test('resume two plugin dirs and the workflow add-dir', () => {
     const r = ok(resume({ workflowDir: WORKFLOW }))
-    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--plugin-dir', WORKFLOW])
+    expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--disallowedTools', DENY, '--plugin-dir', WORKFLOW])
     expect(r.typeYourself).toBeUndefined()
     // Through cmd.exe: both folders and the add-dir, still no prompt.
     const { skill: _skill, text: _text, ...rest } = win({ claude: 'C:\\pnpm\\claude.bat', workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))
@@ -437,6 +441,7 @@ describe('the workflow plugin', () => {
   test('no workflow, no add-dir', () => {
     for (const r of [sessionCommand(linux()), sessionCommand(linux({ skill: 'plain', text: '' })), resume(), sessionCommand(win({}))]) {
       expect(ok(r).args).not.toContain('--add-dir')
+      expect(ok(r).args).not.toContain('--disallowedTools')
     }
   })
 
@@ -453,6 +458,10 @@ describe('the workflow plugin', () => {
       const at = args.indexOf('--add-dir')
       expect(at, args.join(' ')).toBeGreaterThan(-1)
       expect(args[at + 2], args.join(' ')).toMatch(/^--/)
+      // `--disallowedTools <tools...>` is variadic too.
+      const deny = args.indexOf('--disallowedTools')
+      expect(deny, args.join(' ')).toBeGreaterThan(-1)
+      expect(args[deny + 2], args.join(' ')).toMatch(/^--/)
     }
   })
 
