@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test, type TestContext } from 'vitest'
@@ -55,6 +56,22 @@ const procStat = (pid: number) => {
   const text = readFileSync(`/proc/${pid}/stat`, 'utf8')
   const rest = text.slice(text.lastIndexOf(')') + 2).split(' ')
   return { ppid: Number(rest[1]), pgid: Number(rest[2]) }
+}
+
+/**
+ * Windows: waits until the session joined its job, so children start inside it. A child chain that ends before the
+ * job's first walk can't be found by parent pid (pod-docs/handoff-queue.md, 2026-11-15, W1-fix); these cases test the
+ * steady state.
+ */
+const sessionInJob = async (w: LifeWorld) => {
+  if (WIN) await lifeUntil('the session in its job', async () => /session \S+ in a job after/.test(desktopLog(w)), 15_000, w)
+}
+
+/** Windows: how many conhost.exe processes `pid` owns, so how many consoles of its own it has. */
+const ownConsoles = (pid: number) => {
+  const query = `@(Get-CimInstance Win32_Process -Filter 'ParentProcessId=${pid} and Name="conhost.exe"').Count`
+  const out = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', query], { encoding: 'utf8', windowsHide: true })
+  return Number(out.stdout.trim())
 }
 
 /**
@@ -144,6 +161,54 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && !PACKAGED && (LINU
         const screen = join(w.cfg, 'screens', `${marker}.txt`)
         await lifeUntil('the screen file', () => existsSync(screen), 15_000, w)
         expect(readFileSync(screen, 'utf8')).toContain('life-claude args:')
+      }),
+    )
+  }, RUN_MS)
+
+  test('quit ends an orphan', async (ctx) => {
+    await inWorld(ctx, (w) =>
+      withApp(w, async (h) => {
+        await lifeSession(h, w)
+        await sessionInJob(w)
+        // The fake's child starts a grandchild, then ends: the grandchild runs on with no parent.
+        const [orphan] = await lifeChildrenUp(w, ['orphan'])
+        const middle = orphan!.ppid!
+        expect(middle, JSON.stringify(orphan)).toBeGreaterThan(0)
+        await lifeUntil('the middle child ended', async () => !alive(middle), 15_000, w)
+        const fake = lifeStarts(w)[0]!.pid
+        const pids = [fake, orphan!.pid]
+        expect(alive(orphan!.pid) && (await portOpen(orphan!.port)), `the orphan before the quit\n${await leftovers(pids, [orphan!])}`).toBe(true)
+        const at = Date.now()
+        await testHooks(h).quit()
+        await lifeUntil('the quit answered end', () => desktopLog(w).includes('quit asked about 1 sessions: end'), GONE_MS, w)
+        await lifeUntil('no fake, no orphan, no open port', () => allGone(pids, [orphan!]), Math.max(0, at + GONE_MS - Date.now()), w).catch(async (err: Error) => {
+          throw new Error(`${err.message}\nleft: ${await leftovers(pids, [orphan!])}`)
+        })
+      }),
+    )
+  }, RUN_MS)
+
+  test('quit ends a child with its own console', async (ctx) => {
+    if (!WIN) {
+      process.stderr.write(`real-quit › own console: skipped, a new console window is Windows only (${process.platform})\n`)
+      ctx.skip()
+      return
+    }
+    await inWorld(ctx, (w) =>
+      withApp(w, async (h) => {
+        await lifeSession(h, w)
+        await sessionInJob(w)
+        const [child] = await lifeChildrenUp(w, ['console'])
+        // Its own console: a conhost.exe whose parent is the child. A `detached` child has none.
+        expect(ownConsoles(child!.pid), JSON.stringify(child)).toBeGreaterThan(0)
+        const fake = lifeStarts(w)[0]!.pid
+        const pids = [fake, child!.pid]
+        const at = Date.now()
+        await testHooks(h).quit()
+        await lifeUntil('the quit answered end', () => desktopLog(w).includes('quit asked about 1 sessions: end'), GONE_MS, w)
+        await lifeUntil('no fake, no console child, no open port', () => allGone(pids, [child!]), Math.max(0, at + GONE_MS - Date.now()), w).catch(async (err: Error) => {
+          throw new Error(`${err.message}\nleft: ${await leftovers(pids, [child!])}`)
+        })
       }),
     )
   }, RUN_MS)
