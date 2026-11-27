@@ -225,7 +225,11 @@ describe('setup-workflow route', () => {
 
   test("the list covers every empty folder in the built workflow's template", async (ctx) => {
     const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'workflow', 'dist', 'claude-pod', 'skills', 'init', 'scaffold', '.openaflow', 'workflows', 'claude-pod', 'state')
-    if (!existsSync(dist)) return ctx.skip()
+    // Locally the guard skips until the workflow is built; on CI, `pnpm verify` builds it first, so a missing one fails.
+    if (!existsSync(dist)) {
+      if (process.env.CI) throw new Error(`no built workflow at ${dist}: CI must build it before the tests`)
+      return ctx.skip()
+    }
     const keeps = (await readdir(dist, { recursive: true, withFileTypes: true }))
       .filter((d) => d.name === '.gitkeep')
       .map((d) => d.parentPath.slice(dist.length + 1).replaceAll('\\', '/'))

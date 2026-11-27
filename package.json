@@ -19,7 +19,7 @@
     "bump-workflow": "pnpm --filter @openaflow/workflow bump",
     "test:install": "node packages/desktop/scripts/install-tests.mjs",
     "release:check": "pnpm --filter @openaflow/desktop exec tsx scripts/release-check.ts",
-    "verify": "pnpm typecheck && pnpm test && pnpm build"
+    "verify": "pnpm typecheck && pnpm --filter @openaflow/workflow build && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

@@ -37,6 +37,15 @@ describe('pod-ci.yml', () => {
     expect(scripts.verify).not.toMatch(/package|test:install|release:check/)
   })
 
+  test('verify builds the workflow before the tests', () => {
+    // setup-routes.test.ts checks TEMPLATE_FOLDERS against the built workflow, and fails on CI without it.
+    const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts
+    const steps = scripts.verify!.split('&&').map((s) => s.trim())
+    const build = steps.indexOf('pnpm --filter @openaflow/workflow build')
+    expect(build, scripts.verify).toBeGreaterThanOrEqual(0)
+    expect(build, scripts.verify).toBeLessThan(steps.indexOf('pnpm test'))
+  })
+
   test('unit on both systems', () => {
     const flow = ci()
     expectTriggers(flow)
