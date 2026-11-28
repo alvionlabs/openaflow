@@ -22,6 +22,7 @@ import { requestTab } from '../../open-tab.ts'
 import { hashFor } from '../../selection.ts'
 import { canOpenNewSession } from './next-step.ts'
 import { refusalText, warnUnknown, type Post } from './remove-flow.ts'
+import { WORKFLOW_MISSING, WORKFLOW_MISSING_TEXT } from './workflow-missing.ts'
 
 /** How long a started session may take to show on the Board before the form stops waiting. */
 export const MARKER_WAIT_MS = 10_000
@@ -45,7 +46,7 @@ export const START_ERRORS: ReadonlyMap<string, string> = new Map([
   ['session starting', 'A session is already starting in this repo'],
   ['too many sessions', 'Ten sessions are open. End one, then try again'],
   ['terminals unavailable', "The terminals didn't answer. Please try again"],
-  ['workflow missing', "The app doesn't have this repo's workflow. Please reinstall it"],
+  [WORKFLOW_MISSING, WORKFLOW_MISSING_TEXT],
   [UNREACHABLE, "Can't reach the board. Please try again"],
 ])
 

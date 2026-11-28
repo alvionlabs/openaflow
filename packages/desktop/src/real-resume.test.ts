@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { editDenyRule } from '../../server/src/workflow-flags.ts'
 import type { Page } from 'playwright-core'
 import { describe, expect, test } from 'vitest'
 import {
@@ -128,7 +129,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (LINUX || WIN))(`r
       await withApp(w, async (h) => {
         const { marker, repoId, sessionId } = await lifeSession(h, w)
         await lifeUntil('the fake to start', () => lifeStarts(w).length === 1, 15_000, w)
-        expect(lifeStarts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h)])
+        expect(lifeStarts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--disallowedTools', editDenyRule(await workflowDir(h), process.platform), '--plugin-dir', await workflowDir(h)])
         await testHooks(h).kill(marker)
         await lifeUntil('the session ended', async () => (await hostedOf(h, w, marker))?.state === 'ended', 15_000, w)
         writeLifeTranscript(w, (await lifeRepo(h, w))!.path, sessionId)
@@ -137,7 +138,7 @@ describe.runIf(process.env.OPENAFLOW_REAL_ELECTRON === '1' && (LINUX || WIN))(`r
         expect(answer, JSON.stringify(answer)).toMatchObject({ status: 200, body: { outcome: 'started', logged: true } })
         // `--resume <id>`, the hooks plugin, then the workflow, with no prompt.
         await lifeUntil('the resumed fake', () => lifeStarts(w).length === 2, 15_000, w)
-        expect(lifeStarts(w)[1]!.args).toEqual(['--resume', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h)])
+        expect(lifeStarts(w)[1]!.args).toEqual(['--resume', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--disallowedTools', editDenyRule(await workflowDir(h), process.platform), '--plugin-dir', await workflowDir(h)])
       })
     })
   }, RUN_MS)

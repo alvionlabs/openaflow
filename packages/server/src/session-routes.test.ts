@@ -12,6 +12,7 @@ import type { GhReader } from './gh.ts'
 import type { ParentChannel } from './parent-link.ts'
 import type { ScopeProbe } from './run-wrapper.ts'
 import { resumeCommand, sessionCommand } from './session-command.ts'
+import { editDenyRule } from './workflow-flags.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createHookReader, createSessionStore, type StoredSession } from './session-store.ts'
 import { createSessionToken } from './session-token.ts'
@@ -746,7 +747,7 @@ describe('the workflow plugin', () => {
     expect(res).toEqual({ status: 200, body: { outcome: 'started', marker: M, logged: true } })
     const cmd = sessionCommand({ claude: s.claude!, repo: repoA, skill: 'plan', text: 'x', sessionId: S, runMarker: M, pluginDir: s.pluginDir, workflowDir: s.workflowDir, configDir: cfg, env: s.env, platform })
     if (typeof cmd === 'string') throw new Error(cmd)
-    expect(cmd.args).toEqual(['--session-id', S, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--plugin-dir', s.workflowDir, '/pod:plan x'])
+    expect(cmd.args).toEqual(['--session-id', S, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--disallowedTools', editDenyRule(s.workflowDir, platform), '--plugin-dir', s.workflowDir, '/pod:plan x'])
     expect(argsOf(s.sent)).toEqual(cmd.args)
     await s.settle()
 
@@ -765,7 +766,7 @@ describe('the workflow plugin', () => {
       await setUp(repoB, workflows)
       const t = await setup()
       expect((await t.post('new-session', { repoId: t.idOf(repoB), skill: 'plain', text: '' })).status, what).toBe(200)
-      expect(argsOf(t.sent), what).toEqual(['--session-id', S, '--plugin-dir', t.pluginDir, '--add-dir', t.workflowDir, '--plugin-dir', t.workflowDir])
+      expect(argsOf(t.sent), what).toEqual(['--session-id', S, '--plugin-dir', t.pluginDir, '--add-dir', t.workflowDir, '--disallowedTools', editDenyRule(t.workflowDir, platform), '--plugin-dir', t.workflowDir])
       await t.settle()
     }
   })
@@ -777,7 +778,7 @@ describe('the workflow plugin', () => {
     expect((await s.post('resume-session', { repoId: s.idOf(repoA), marker: OLD })).body).toEqual({ outcome: 'started', marker: M, logged: true })
     const cmd = resumeCommand({ claude: s.claude!, repo: repoA, sessionId: LIVE, runMarker: M, pluginDir: s.pluginDir, workflowDir: s.workflowDir, configDir: cfg, env: s.env, platform })
     if (typeof cmd === 'string') throw new Error(cmd)
-    expect(argsOf(s.sent)).toEqual(['--resume', LIVE, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--plugin-dir', s.workflowDir])
+    expect(argsOf(s.sent)).toEqual(['--resume', LIVE, '--plugin-dir', s.pluginDir, '--add-dir', s.workflowDir, '--disallowedTools', editDenyRule(s.workflowDir, platform), '--plugin-dir', s.workflowDir])
     expect(argsOf(s.sent)).toEqual(cmd.args)
     await s.settle()
   })

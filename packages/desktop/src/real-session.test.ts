@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { Board, HostedSession } from '@openaflow/model'
 import { describe, expect, test } from 'vitest'
 import { projectDirName } from '../../server/src/transcript-files.ts'
+import { editDenyRule } from '../../server/src/workflow-flags.ts'
 import { DESKTOP, harnessDir, launchHarness, packagedApp, removeWithRetry, type Harness } from '../test/electron-harness.ts'
 import { hooksPluginDir, workflowsRoot } from './pty-host-launch.ts'
 import type { TestQuit, TestTerminals } from './test-hooks-main.ts'
@@ -294,7 +295,7 @@ async function twoPluginDirsCheck(h: Harness, w: World): Promise<void> {
   const marker = answer.body.marker as string
   const sessionId = (await hosted(h, w, marker))!.sessionId
   await until('the fake to start', () => starts(w).length > 0, 15_000, h, w)
-  expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--plugin-dir', await workflowDir(h), PROMPT])
+  expect(starts(w)[0]!.args).toEqual(['--session-id', sessionId, '--plugin-dir', await pluginDir(h), '--add-dir', await workflowDir(h), '--disallowedTools', editDenyRule(await workflowDir(h), process.platform), '--plugin-dir', await workflowDir(h), PROMPT])
   // The Board names the bundle's version, read from its plugin.json.
   const version = (JSON.parse(readFileSync(join(await workflowDir(h), '.claude-plugin', 'plugin.json'), 'utf8')) as { version: string }).version
   expect((await board(h)).workflow).toEqual({ source: 'claude-pod', version })

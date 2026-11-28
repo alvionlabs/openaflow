@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { ReplyWord } from '@openaflow/model'
 import { envKey, isAbsoluteFor, isFile, resolveBin, safeChildEnv } from './bin-path.ts'
 import { envValue, type Env } from './config.ts'
+import { workflowFlags } from './workflow-flags.ts'
 
 export { resolveBin }
 
@@ -11,13 +12,13 @@ export type ResumeWord = Exclude<ReplyWord, 'try'>
 export type StartResult = { outcome: 'started' | 'failed'; message?: string }
 /**
  * `plugins`: absolute plugin folders, each passed as `--plugin-dir <folder>` after `-p`. `workflowDir`: the absolute
- * bundled workflow folder, passed after them as `--add-dir <folder> --plugin-dir <folder>`, so claude reads the
- * workflow's own files with no prompt. A set-up repo's run gets the hooks plugin and its bundled workflow (sprint
+ * bundled workflow folder, passed after them as `--add-dir <folder> --disallowedTools Edit(<folder>/**) --plugin-dir <folder>`
+ * (workflow-flags.ts), so claude reads the workflow's own files with no prompt and edits none of them. A set-up repo's run gets the hooks plugin and its bundled workflow (sprint
  * default-workflow §6); with both left out, the args are today's.
  */
 export type StartRequest = { session: string; word: ResumeWord; cwd: string; plugins?: readonly string[]; workflowDir?: string | undefined }
 export type ClaudeRunner = {
-  /** Starts `claude -p [--plugin-dir <folder>]… [--add-dir <workflow> --plugin-dir <workflow>] --resume <session> <word>` in `cwd` and reports how its first `windowMs` went. */
+  /** Starts `claude -p [--plugin-dir <folder>]… [--add-dir <workflow> --disallowedTools <rule> --plugin-dir <workflow>] --resume <session> <word>` in `cwd` and reports how its first `windowMs` went. */
   start(r: StartRequest): Promise<StartResult>
   /** A child this runner started for `session` is still alive. */
   isRunning(session: string): boolean
@@ -216,10 +217,10 @@ export function createClaudeRunner(o: {
     } catch {}
     if (!isDir) return failed('repo folder not found')
 
-    // `--add-dir` takes every word up to the next flag, so the workflow's `--plugin-dir` follows it.
+    // The workflow's flags, its Edit deny rule too, from the shared builder (workflow-flags.ts).
     const folderArgs = (q: (p: string) => string) => [
       ...plugins.flatMap((p) => ['--plugin-dir', q(p)]),
-      ...(r.workflowDir === undefined ? [] : ['--add-dir', q(r.workflowDir), '--plugin-dir', q(r.workflowDir)]),
+      ...(r.workflowDir === undefined ? [] : workflowFlags(r.workflowDir, { platform: process.platform, quote: q })),
     ]
     const args = ['-p', ...folderArgs((p) => p), '--resume', r.session, r.word]
     const isShim = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file)
@@ -251,7 +252,8 @@ export function createClaudeRunner(o: {
         // cmd.exe doesn't hand its std handles on, so the line redirects them itself, and
         // the board must not hold the log open.
         closeSync(fd)
-        // Each plugin folder is quoted: an install path may hold a space.
+        // Each plugin folder is quoted: an install path may hold a space. The deny rule too: a shim that runs `%*`
+        // inside a ( ) block would end the block at its unquoted `)`.
         const quoted = ['-p', ...folderArgs((p) => `"${p}"`), '--resume', r.session, r.word]
         const line = `""${file}" ${quoted.join(' ')} <NUL >NUL 2>>"${logPath}""`
         child = spawn(cmd!, ['/d', '/s', '/c', line], {

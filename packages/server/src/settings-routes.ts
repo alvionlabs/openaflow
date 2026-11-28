@@ -6,6 +6,7 @@ import type { SettingsChange, SettingsView } from '@openaflow/model'
 import { Hono, type Context } from 'hono'
 import { commandTextError, defaultTexts, fillWords, splitCommand, type ScopeProbe } from './run-wrapper.ts'
 import { isScrollback, type Settings, type SettingsStore } from './settings-store.ts'
+import { workflowFlags } from './workflow-flags.ts'
 
 export type SettingsRouteDeps = {
   store: Pick<SettingsStore, 'read' | 'change'>
@@ -25,7 +26,8 @@ const KNOWN = new Set<string>(['scrollback', ...TEXT_KEYS])
 const ERROR_WORD = { runWrapper: 'run wrapper', stopCommand: 'stop command' } as const
 
 /** A preview word: as it is, or in double quotes (with `"` as `\"`) when it is empty or holds a space or a quote. */
-const quote = (w: string) => (w === '' || /[ "']/.test(w) ? `"${w.replace(/"/g, '\\"')}"` : w)
+// A word a POSIX shell would split or expand (the deny rule's `(`, `)`, and `*`) is quoted.
+const quote = (w: string) => (w === '' || /[ "'()*?[\]]/.test(w) ? `"${w.replace(/"/g, '\\"')}"` : w)
 
 /** The words of a text, or none for a bad one (the store reads only good texts). */
 const wordsOf = (text: string) => {
@@ -35,7 +37,8 @@ const wordsOf = (text: string) => {
 
 /**
  * The view of `settings`: the wrapper section on Linux and macOS only, with the preview of a new session's command.
- * With a workflow folder, the preview is a set-up repo's command: both `--plugin-dir` flags and the workflow's `--add-dir`.
+ * With a workflow folder, the preview is a set-up repo's command: both `--plugin-dir` flags, and the workflow's `--add-dir`
+ * and Edit deny rule.
  */
 export function settingsView(
   settings: Settings,
@@ -54,7 +57,7 @@ export function settingsView(
     '--plugin-dir',
     o.pluginDir ?? '<plugin dir>',
     // A set-up repo's session; with no bundle, every session starts with the hooks plugin only.
-    ...(o.workflowDir === undefined ? [] : ['--add-dir', o.workflowDir, '--plugin-dir', o.workflowDir]),
+    ...(o.workflowDir === undefined ? [] : workflowFlags(o.workflowDir, { platform: o.platform })),
     '/pod:plan <your text>',
   ]
   // The default stop runs only with the default wrapper in force.

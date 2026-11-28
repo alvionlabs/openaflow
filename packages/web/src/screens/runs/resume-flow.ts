@@ -7,6 +7,7 @@ import type { Board, ResumeResult, RunSummary } from '@openaflow/model'
 import { postAction, type ActionReply } from '../../actions-client.ts'
 import { outcomeChip } from './action-log-view.ts'
 import type { Chip } from './view.ts'
+import { WORKFLOW_MISSING, WORKFLOW_MISSING_TEXT } from './workflow-missing.ts'
 
 /** The run a request is for: its repo and its run (a plan slug, or a one-off run's `task-<slug>` or `fix-<slug>`). */
 export type RunTarget = { repoId: string; run: string }
@@ -194,6 +195,16 @@ export function startedText(resume: string | undefined): string {
   return resume ? `${base}: run ${resume} to see it.` : `${base}.`
 }
 
+/**
+ * A failed send's words: `workflow missing` as New session and Resume say it; any other message as it came (a start's
+ * own error, such as the tail of claude's stderr); none, the plain line.
+ */
+function failedText(message: string | undefined): string {
+  const m = message?.trim()
+  if (m === WORKFLOW_MISSING) return WORKFLOW_MISSING_TEXT
+  return m || RESUME_FAILED
+}
+
 export const SEND_LABEL: Record<ResumeWord, string> = { continue: 'Continue', go: 'Go' }
 
 /** A send button's words: `Sending…` on the one in flight, else its word. Every button is off while `busy`. */
@@ -223,7 +234,7 @@ export function resumeView(s: ResumeState, resume: string | undefined): ResumeVi
       return { busy: false, word: s.word, error: s.message }
     case 'result': {
       const r = s.result
-      const words = r.outcome === 'started' ? startedText(resume) : r.message?.trim() || RESUME_FAILED
+      const words = r.outcome === 'started' ? startedText(resume) : failedText(r.message)
       const result: NonNullable<ResumeView['result']> = { chip: outcomeChip(r.outcome), words }
       if (!r.logged) result.note = NOT_LOGGED
       return { busy: false, word: s.word, result }

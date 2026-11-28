@@ -11,6 +11,10 @@
 //   with an empty env, so it has its own session, is no child of the fake, and holds no OPENAFLOW_RUN. Each child
 //   listens on 127.0.0.1 and appends `{kind, pid, port, spawnedAt}` to `children.jsonl` (`spawnedAt`: the fake's
 //   clock at the spawn call, so a test can compare it with when the session joined its Windows job).
+//   `orphan` is a plain child that starts a grandchild (kind `orphan`) and ends once the grandchild listens, so the
+//   grandchild runs on with its parent gone. `console` (Windows) starts its child through PowerShell's
+//   `Start-Process -WindowStyle Hidden`, which gives it its own console (its own conhost.exe), unlike `detached`.
+//   Each child's line also holds its `ppid`.
 // - An `early-gate` file in the same form, there before the fake starts: the fake takes it and starts those children
 //   first thing, before the session's Windows job can be made.
 // Everything ends on its own after 5 minutes, so a leftover never runs on. The fake also ends when its input ends.
@@ -25,6 +29,7 @@ const script = process.argv[1]
 const args = process.argv.slice(2)
 
 if (args[0] === '--life-child') child(args[1], args[2], Number(args[3]))
+else if (args[0] === '--life-orphan-parent') orphanParent(args[1], Number(args[2]))
 else fake()
 
 function child(kind, here, spawnedAt) {
@@ -35,8 +40,20 @@ function child(kind, here, spawnedAt) {
     socket.end()
   })
   server.listen(0, '127.0.0.1', () => {
-    appendFileSync(join(here, 'children.jsonl'), JSON.stringify({ kind, pid: process.pid, port: server.address().port, spawnedAt }) + '\n')
+    appendFileSync(join(here, 'children.jsonl'), JSON.stringify({ kind, pid: process.pid, ppid: process.ppid, port: server.address().port, spawnedAt }) + '\n')
   })
+}
+
+/** Starts the `orphan` grandchild and ends once its line names this process as its parent. */
+function orphanParent(here, spawnedAt) {
+  setTimeout(() => process.exit(0), LIFE_MS)
+  // Detached: on Windows libuv ends a plain child when its parent ends, and the grandchild must outlive its parent.
+  spawn(process.execPath, [script, '--life-child', 'orphan', here, String(spawnedAt)], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+  const file = join(here, 'children.jsonl')
+  setInterval(() => {
+    const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : []
+    if (lines.some((l) => JSON.parse(l).ppid === process.pid)) process.exit(0)
+  }, 50)
 }
 
 function fake() {
@@ -97,6 +114,20 @@ function startChild(kind, here) {
     const setsid = ['/usr/bin/setsid', '/bin/setsid'].find((p) => existsSync(p))
     if (!setsid) return process.stdout.write('no setsid\r\n')
     spawn(setsid, ['-f', process.execPath, ...childArgs], { env: {}, stdio: 'ignore' }).unref()
+    return
+  }
+  if (kind === 'orphan') {
+    spawn(process.execPath, [script, '--life-orphan-parent', here, String(Date.now())], { stdio: 'ignore', windowsHide: true }).unref()
+    return
+  }
+  if (kind === 'console') {
+    if (process.platform !== 'win32') return process.stdout.write('no console kind\r\n')
+    // Encoded, so no path needs quoting for powershell.exe; each argument is quoted for the child's command line.
+    const quote = (s) => `'${s.replaceAll("'", "''")}'`
+    const list = childArgs.map((a) => quote(`"${a}"`)).join(',')
+    const command = `Start-Process -WindowStyle Hidden -FilePath ${quote(process.execPath)} -ArgumentList ${list}`
+    const encoded = Buffer.from(command, 'utf16le').toString('base64')
+    spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { stdio: 'ignore', windowsHide: true }).unref()
     return
   }
   spawn(process.execPath, childArgs, { detached: true, stdio: 'ignore', windowsHide: true }).unref()

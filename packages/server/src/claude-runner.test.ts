@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { childEnv, claudeBin, createClaudeRunner, MAX_RESUME_LOGS, pruneLogs, RESUME_WINDOW_MS } from './claude-runner.ts'
 import { createToolFinder } from './tool-finder.ts'
+import { editDenyRule } from './workflow-flags.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FAKE = join(here, '..', 'test', 'fake-claude.mjs')
@@ -58,17 +59,20 @@ const npmShim = (rel: string) =>
 /** A shim the runner can't read, so it goes through cmd.exe. */
 const plainShim = () => `@ECHO off\r\n"${process.execPath}" "${FAKE}" %*\r\n`
 
+/** A pnpm-style shim the runner can't read: `%*` inside a ( ) block, where an unquoted `)` in an arg ends the block. */
+const blockShim = () => ['@SETLOCAL', '@IF EXIST "%~dp0\\no-node.exe" (', `  "%~dp0\\no-node.exe" "${FAKE}" %*`, ') ELSE (', `  "${process.execPath}" "${FAKE}" %*`, ')', ''].join('\r\n')
+
 /**
  * Installs the fake in `dir`: on Windows as `claude.cmd`, an npm-style shim (with the
  * extensionless sh twin npm also writes), on POSIX as an executable `claude`.
  */
-function installFake(dir: string, shim: 'npm' | 'plain' = 'npm'): void {
+function installFake(dir: string, shim: 'npm' | 'plain' | 'block' = 'npm'): void {
   mkdirSync(dir, { recursive: true })
   if (WIN) {
     const pkg = join(dir, 'node_modules', 'fake-claude')
     mkdirSync(pkg, { recursive: true })
     copyFileSync(FAKE, join(pkg, 'cli.mjs'))
-    writeFileSync(join(dir, 'claude.cmd'), shim === 'npm' ? npmShim('node_modules\\fake-claude\\cli.mjs') : plainShim())
+    writeFileSync(join(dir, 'claude.cmd'), shim === 'npm' ? npmShim('node_modules\\fake-claude\\cli.mjs') : shim === 'block' ? blockShim() : plainShim())
     writeFileSync(join(dir, 'claude'), '#!/bin/sh\necho not this one\n')
   } else {
     const file = join(dir, 'claude')
@@ -176,22 +180,23 @@ describe('createClaudeRunner', () => {
     expect((await readRecord()).argv).toEqual(['-p', '--resume', SESSION, 'go'])
   })
 
-  test('passes the workflow folder as --add-dir and --plugin-dir, after the other plugins', async () => {
+  test('passes the workflow folder as --add-dir, its Edit deny rule, and --plugin-dir, after the other plugins', async () => {
     const hooks = join(tmp, 'hooks plugin')
     const workflowDir = join(tmp, 'work flows', 'claude-pod')
     const runner = createClaudeRunner({ bin: 'claude', logDir, env: envWith(), windowMs: 3000 })
     expect(await runner.start({ session: SESSION, word: 'continue', cwd: repo, plugins: [hooks], workflowDir })).toEqual({ outcome: 'started' })
-    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'continue'])
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--disallowedTools', editDenyRule(workflowDir, process.platform), '--plugin-dir', workflowDir, '--resume', SESSION, 'continue'])
 
     // With no hooks plugin, the workflow pair alone.
     rmSync(recordFile)
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, workflowDir })).toEqual({ outcome: 'started' })
-    expect((await readRecord()).argv).toEqual(['-p', '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
+    expect((await readRecord()).argv).toEqual(['-p', '--add-dir', workflowDir, '--disallowedTools', editDenyRule(workflowDir, process.platform), '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
 
-    // No workflow: no --add-dir.
+    // No workflow: no --add-dir and no deny rule.
     rmSync(recordFile)
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [hooks] })).toEqual({ outcome: 'started' })
     expect((await readRecord()).argv).not.toContain('--add-dir')
+    expect((await readRecord()).argv).not.toContain('--disallowedTools')
   })
 
   test('refuses a relative or empty plugin folder', async () => {
@@ -211,11 +216,19 @@ describe('createClaudeRunner', () => {
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins })).toEqual({ outcome: 'started' })
     expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', plugins[0], '--plugin-dir', plugins[1], '--resume', SESSION, 'go'])
 
-    // The workflow folder, with a space, quoted as one arg for both flags.
+    // The workflow folder, with a space, quoted as one arg for both flags, and its deny rule too.
     rmSync(recordFile)
     const [hooks, workflowDir] = [join(tmp, 'hooks plugin'), join(tmp, 'work flows', 'claude-pod')]
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [hooks], workflowDir })).toEqual({ outcome: 'started' })
-    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--disallowedTools', editDenyRule(workflowDir, process.platform), '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
+
+    // A shim that runs `%*` inside a ( ) block: the deny rule's `)` is quoted, so it reaches claude whole.
+    rmSync(recordFile)
+    const block = join(tmp, 'block')
+    installFake(block, 'block')
+    const blockRunner = createClaudeRunner({ bin: join(block, 'claude.cmd'), logDir, env: envWith(), windowMs: 3000 })
+    expect(await blockRunner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [hooks], workflowDir })).toEqual({ outcome: 'started' })
+    expect((await readRecord()).argv).toEqual(['-p', '--plugin-dir', hooks, '--add-dir', workflowDir, '--disallowedTools', editDenyRule(workflowDir, 'win32'), '--plugin-dir', workflowDir, '--resume', SESSION, 'go'])
 
     rmSync(recordFile)
     expect(await runner.start({ session: SESSION, word: 'go', cwd: repo, plugins: [join(tmp, 'a&calc')] })).toEqual({ outcome: 'failed', message: 'unsafe claude path' })
