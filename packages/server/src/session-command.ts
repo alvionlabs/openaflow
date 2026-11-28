@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isSkillId, skillCommand, type SkillId } from '@openaflow/model'
 import { isAbsoluteFor, isFile } from './bin-path.ts'
 import { childEnv, cmdPath, shimTarget } from './claude-runner.ts'
-import { workflowFlags } from './workflow-flags.ts'
+import { editDenyRule, workflowFlags } from './workflow-flags.ts'
 
 /** What a Windows `.cmd` shim runs: a file plus the args before claude's own; or why it can't be read that way. */
 export type ShimRead = { file: string; pre: string[] } | 'no node' | 'unreadable'
@@ -31,7 +32,14 @@ export type SessionCommandInput = {
   env: NodeJS.ProcessEnv
   platform: NodeJS.Platform
   /** Windows file reads, replaceable in tests. Left out: the real ones. */
-  windows?: { readShim(file: string, env: NodeJS.ProcessEnv): ShimRead; cmdPath(env: NodeJS.ProcessEnv): string | undefined } | undefined
+  windows?:
+    | {
+        readShim(file: string, env: NodeJS.ProcessEnv): ShimRead
+        cmdPath(env: NodeJS.ProcessEnv): string | undefined
+        /** Writes the cmd.exe path's settings file (its folder too); false when it couldn't. */
+        writeFile(file: string, text: string): boolean
+      }
+    | undefined
 }
 
 /** What every command needs: all of the input but the skill and its text. */
@@ -40,7 +48,30 @@ type CommandBase = Omit<SessionCommandInput, 'skill' | 'text'>
 /** A pty host `StartSpec` minus its id and size. `typeYourself` is set when the prompt could not go on the command line. */
 export type SessionCommand = { program: string; args: string[]; cwd: string; env: Record<string, string>; typeYourself?: string }
 
-export type SessionCommandError = 'bad skill' | 'bad id' | 'bad path' | 'bad text' | 'node not found' | 'cmd.exe not found' | 'unsafe claude path'
+export type SessionCommandError = 'bad skill' | 'bad id' | 'bad path' | 'bad text' | 'node not found' | 'cmd.exe not found' | 'unsafe claude path' | 'settings not written'
+
+/**
+ * The cmd.exe path's settings file for `workflowDir`: `<configDir>\workflow-deny\<16 hex>.json`, one a workflow
+ * folder (Windows paths ignore case, so the name does too).
+ */
+export function denySettingsFile(configDir: string, workflowDir: string): string {
+  const name = createHash('sha256').update(workflowDir.toLowerCase()).digest('hex').slice(0, 16)
+  return path.win32.join(configDir, 'workflow-deny', `${name}.json`)
+}
+
+/** The settings file's text: the workflow folder's Edit deny rule (workflow-flags.ts), and nothing else. */
+const denySettingsText = (workflowDir: string) => JSON.stringify({ permissions: { deny: [editDenyRule(workflowDir, 'win32')] } })
+
+/** Writes `text` to `file`, private to the user (0700 folder, 0600 file where the system has modes); false on a failure. */
+function writeSettingsFile(file: string, text: string): boolean {
+  try {
+    mkdirSync(path.win32.dirname(file), { recursive: true, mode: 0o700 })
+    writeFileSync(file, text, { mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** A run marker or session id: a lowercase UUID v4 (contract §3), which `record.sh` also requires. */
 export const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -86,8 +117,7 @@ export function resumeCommand(o: ResumeCommandInput): SessionCommand | ResumeCom
 /**
  * `--plugin-dir <hooks>`, then the workflow's `--add-dir`, Edit deny rule, and `--plugin-dir` when there is one
  * (workflow-flags.ts: each variadic flag is followed by a flag, so a prompt is never read as a folder or a rule).
- * `deny: false` on the cmd.exe path, which node-pty quotes only for a space: a shim that runs `%*` inside a ( ) block
- * would end the block at the rule's `)`, and the session would not start.
+ * `deny: false` on the cmd.exe path, which carries the rule in a settings file instead (see `build`).
  */
 const pluginFlags = (o: CommandBase, deny: boolean) => ['--plugin-dir', o.pluginDir, ...(o.workflowDir === undefined ? [] : workflowFlags(o.workflowDir, { platform: o.platform, deny }))]
 
@@ -103,18 +133,28 @@ function build(o: CommandBase, flags: string[], prompt: string | undefined): Ses
   const base = { cwd: o.repo, env }
   if (!win || !/\.(cmd|bat)$/i.test(o.claude)) return { ...base, program: o.claude, args: withPrompt }
 
-  const windows = o.windows ?? { readShim: readShimFile, cmdPath }
+  const windows = o.windows ?? { readShim: readShimFile, cmdPath, writeFile: writeSettingsFile }
   const run = windows.readShim(o.claude, o.env)
   if (run === 'no node') return 'node not found'
   if (run !== 'unreadable') return { ...base, program: run.file, args: [...run.pre, ...withPrompt] }
 
   // A shim only cmd.exe can read. node-pty quotes an arg with a space and escapes any quote in it, so no free
   // text can pass through cmd.exe intact: the session starts with no prompt, and the user types it.
-  if ([o.claude, o.pluginDir, o.workflowDir ?? ''].some((p) => CMD_UNSAFE.test(p))) return 'unsafe claude path'
+  // The workflow's Edit deny rule can't go on this line: node-pty quotes only an arg with a space, and a shim that runs
+  // `%*` inside a ( ) block (pnpm's does) would end the block at the rule's `)`. So it goes in a settings file, a plain
+  // path, passed with `--settings`. From https://code.claude.com/docs/en/cli-reference: `--settings` takes a "Path to a
+  // settings JSON file or an inline JSON string. Values you set here override the same keys in your `settings.json`
+  // files for this session, but most lists merge with theirs." From https://code.claude.com/docs/en/settings, on lists:
+  // "Claude Code combines the lists instead of picking one, so each file can add entries without removing another
+  // file's." So the user's own deny rules stay.
+  const settings = o.workflowDir === undefined ? undefined : denySettingsFile(o.configDir, o.workflowDir)
+  if ([o.claude, o.pluginDir, o.workflowDir ?? '', settings ?? ''].some((p) => CMD_UNSAFE.test(p))) return 'unsafe claude path'
   const cmd = windows.cmdPath(o.env)
   if (cmd === undefined) return 'cmd.exe not found'
+  // No file, no start: the session would run with no deny rule.
+  if (settings !== undefined && !windows.writeFile(settings, denySettingsText(o.workflowDir!))) return 'settings not written'
   // `call` first: cmd.exe strips the quotes of the line after /c only when it starts with a quote.
-  const args = ['/d', '/c', 'call', o.claude, ...flags, ...pluginFlags(o, false)]
+  const args = ['/d', '/c', 'call', o.claude, ...flags, ...pluginFlags(o, false), ...(settings === undefined ? [] : ['--settings', settings])]
   return prompt === undefined ? { ...base, program: cmd, args } : { ...base, program: cmd, args, typeYourself: prompt }
 }
 

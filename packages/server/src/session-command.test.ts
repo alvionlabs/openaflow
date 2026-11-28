@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { resumeCommand, sessionCommand, type SessionCommand, type SessionCommandInput, type ShimRead } from './session-command.ts'
+import { denySettingsFile, resumeCommand, sessionCommand, type SessionCommand, type SessionCommandInput, type ShimRead } from './session-command.ts'
 
 const WIN = process.platform === 'win32'
 const SESSION = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b'
@@ -263,10 +263,17 @@ function win(over: Partial<SessionCommandInput> = {}, windows = fakeWindows({ re
 }
 
 /** The shim read and the cmd.exe lookup, faked: both read real Windows files, which Linux has none of. */
-function fakeWindows(o: { read: ShimRead; cmd?: string | undefined }) {
+function fakeWindows(o: { read: ShimRead; cmd?: string | undefined; write?: boolean }) {
   const reads: string[] = []
+  const writes: [string, string][] = []
   return {
     reads,
+    writes,
+    writeFile: (file: string, text: string) => {
+      if (o.write === false) return false
+      writes.push([file, text])
+      return true
+    },
     readShim: (file: string) => {
       reads.push(file)
       return o.read
@@ -405,6 +412,8 @@ describe('the workflow plugin', () => {
   const WIN_WORKFLOW = 'C:\\Program Files\\OpenAFlow\\resources\\workflows\\claude-pod'
   const DENY = 'Edit(//opt/openaflow/resources/workflows/claude-pod/**)'
   const WIN_DENY = 'Edit(//c/Program Files/OpenAFlow/resources/workflows/claude-pod/**)'
+  const WIN_DENY_FILE = denySettingsFile('C:\\Users\\me\\AppData\\Roaming\\openaflow-server', WIN_WORKFLOW)
+  const WIN_DENY_JSON = JSON.stringify({ permissions: { deny: [WIN_DENY] } })
   const resume = (over: Partial<SessionCommandInput> = {}) => {
     const { skill: _skill, text: _text, ...rest } = linux(over)
     return resumeCommand(rest)
@@ -418,11 +427,13 @@ describe('the workflow plugin', () => {
     // Through an npm shim: node plus its script first.
     const shim = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW })))
     expect(shim.args).toEqual([CLI, '--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--disallowedTools', WIN_DENY, '--plugin-dir', WIN_WORKFLOW, '/pod:plan add tags'])
-    // Through cmd.exe: a folder with a space stays one arg, quoted by node-pty, and the prompt waits for the user. No
-    // deny rule: node-pty quotes only an arg with a space, and a shim that expands %* inside a ( ) block ends early at
-    // the rule's unquoted `)`.
-    const cmd = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))))
-    expect(cmd.args.slice(4)).toEqual(['--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW])
+    // Through cmd.exe: a folder with a space stays one arg, quoted by node-pty, and the prompt waits for the user. The
+    // deny rule goes in a settings file, a plain path: node-pty quotes only an arg with a space, and a shim that expands
+    // %* inside a ( ) block would end early at the rule's unquoted `)`.
+    const fw = fakeWindows({ read: 'unreadable' })
+    const cmd = ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, fw)))
+    expect(cmd.args.slice(4)).toEqual(['--session-id', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW, '--settings', WIN_DENY_FILE])
+    expect(fw.writes).toEqual([[WIN_DENY_FILE, WIN_DENY_JSON]])
     expect(cmd.typeYourself).toBe('/pod:plan add tags')
     // Left out, or undefined: the hooks plugin only, as before.
     expect(ok(sessionCommand(linux({ workflowDir: undefined }))).args).toEqual(['--session-id', SESSION, '--plugin-dir', HOOKS, '/pod:plan add tags'])
@@ -433,9 +444,35 @@ describe('the workflow plugin', () => {
     expect(r.args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS, '--add-dir', WORKFLOW, '--disallowedTools', DENY, '--plugin-dir', WORKFLOW])
     expect(r.typeYourself).toBeUndefined()
     // Through cmd.exe: both folders and the add-dir, still no prompt.
-    const { skill: _skill, text: _text, ...rest } = win({ claude: 'C:\\pnpm\\claude.bat', workflowDir: WIN_WORKFLOW }, fakeWindows({ read: 'unreadable' }))
-    expect(ok(resumeCommand(rest)).args).toEqual(['/d', '/c', 'call', 'C:\\pnpm\\claude.bat', '--resume', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW])
+    const fw = fakeWindows({ read: 'unreadable' })
+    const { skill: _skill, text: _text, ...rest } = win({ claude: 'C:\\pnpm\\claude.bat', workflowDir: WIN_WORKFLOW }, fw)
+    expect(ok(resumeCommand(rest)).args).toEqual(['/d', '/c', 'call', 'C:\\pnpm\\claude.bat', '--resume', SESSION, '--plugin-dir', WIN_PLUGIN, '--add-dir', WIN_WORKFLOW, '--plugin-dir', WIN_WORKFLOW, '--settings', WIN_DENY_FILE])
+    expect(fw.writes).toEqual([[WIN_DENY_FILE, WIN_DENY_JSON]])
     expect(ok(resume({ workflowDir: undefined })).args).toEqual(['--resume', SESSION, '--plugin-dir', HOOKS])
+  })
+
+  test('the cmd.exe settings file', () => {
+    // One file a workflow folder, in the config folder: the same folder in another case names the same file.
+    expect(WIN_DENY_FILE).toMatch(/^C:\\Users\\me\\AppData\\Roaming\\openaflow-server\\workflow-deny\\[0-9a-f]{16}\.json$/)
+    expect(denySettingsFile('C:\\Users\\me\\AppData\\Roaming\\openaflow-server', WIN_WORKFLOW.toUpperCase())).toBe(WIN_DENY_FILE)
+    expect(denySettingsFile('C:\\Users\\me\\AppData\\Roaming\\openaflow-server', 'D:\\other\\wf')).not.toBe(WIN_DENY_FILE)
+    // No workflow: no file and no --settings.
+    const none = fakeWindows({ read: 'unreadable' })
+    expect(ok(sessionCommand(win({}, none))).args).not.toContain('--settings')
+    expect(none.writes).toEqual([])
+    // A failed write starts nothing: the session would run with no deny rule.
+    const failing = fakeWindows({ read: 'unreadable', write: false })
+    expect(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, failing))).toBe('settings not written')
+    const { skill: _s, text: _t, ...rest } = win({ workflowDir: WIN_WORKFLOW }, failing)
+    expect(resumeCommand(rest)).toBe('settings not written')
+    // A config folder cmd.exe would read is refused before any write.
+    const unsafe = fakeWindows({ read: 'unreadable' })
+    expect(sessionCommand(win({ workflowDir: WIN_WORKFLOW, configDir: 'C:\\Users\\a&b\\openaflow-server' }, unsafe))).toBe('unsafe claude path')
+    expect(unsafe.writes).toEqual([])
+    // Not on the other paths: they pass the rule itself.
+    const direct = fakeWindows({ read: { file: 'C:\\nodejs\\node.exe', pre: [CLI] } })
+    expect(ok(sessionCommand(win({ workflowDir: WIN_WORKFLOW }, direct))).args).not.toContain('--settings')
+    expect(direct.writes).toEqual([])
   })
 
   test('no workflow, no add-dir', () => {
